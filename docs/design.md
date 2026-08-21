@@ -106,7 +106,7 @@ Draft nodes may be linked before they have artifacts. Such a link uses the draft
 
 Force-layout/reset applies to currently visible DAG. It places upstream nodes before downstream nodes, then relaxes positions globally until card rectangles have no overlap while preserving readable links and canvas bounds. Canvas need not display every project artifact.
 
-Each node card has a download action for its current artifact. Clicking an image preview opens the full artifact in a separate browser window/tab. The top bar selects the Codex model and reasoning effort for future Generate runs; defaults are `gh/gpt-5.6-luna` and `medium`.
+Each node card has a download action for its current artifact. Clicking an image preview opens the full artifact in a separate browser window/tab. The top bar selects bare Codex model IDs (`gpt-5.6-luna`, `gpt-5.6-terra`, `gpt-5.6-sol`) and reasoning effort for future Generate runs. A separate `use gh/ prefix` checkbox controls whether the harness passes the model as `gh/<model>`; it defaults off. Effort defaults to `medium`.
 
 ## Future and non-goals
 

@@ -24,10 +24,11 @@ const canonical = path => realpathSync(resolve(String(path)));
 const inside = (child, parent) => { const value = relative(resolve(parent), resolve(child)); return value === "" || (!value.startsWith("..") && !value.startsWith("/")); };
 export const methodsFor = type => [...methodRegistry].filter(([key]) => key.startsWith(`${type}/`)).map(([, method]) => method.id);
 export const methods = Object.fromEntries([...typeRegistry.keys()].map(type => [type, methodsFor(type)]));
-export const codexModels = ["gh/gpt-5.6-luna", "gh/gpt-5.6-terra", "gh/gpt-5.6-sol"];
+export const codexModels = ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"];
 export const codexEfforts = ["none", "low", "medium", "high", "xhigh", "max", "ultra"];
 const defaultModel = codexModels[0], defaultEffort = "medium";
 export const registryInfo = { types: [...typeRegistry.values()], methods, models: codexModels, efforts: codexEfforts, defaults: { model: defaultModel, effort: defaultEffort } };
+const normalizeModel = value => { const model = typeof value === "string" ? value.replace(/^gh\//, "") : ""; return codexModels.includes(model) ? model : defaultModel; };
 const ensureNodeDir = workdir => { mkdirSync(workdir, { recursive: true }); return workdir; };
 const layoutSize = { width: 300, height: 520, gapX: 60, gapY: 60 };
 function layoutNodes(items) {
@@ -121,12 +122,12 @@ export async function generate(body, emitEvent = emit) {
   const manifest = nodePath ? readManifest(nodePath) : null;
   const type = normalizeType(body.type || manifest?.value?.type || typeOf(nodePath), nodePath, typeOf(nodePath));
   const method = normalizeMethod(body.method || manifest?.value?.method);
-  const model = codexModels.includes(body.model) ? body.model : defaultModel, effort = codexEfforts.includes(body.effort) ? body.effort : defaultEffort;
+  const model = normalizeModel(body.model), useGhPrefix = body.useGhPrefix === true, codexModel = useGhPrefix ? `gh/${model}` : model, effort = codexEfforts.includes(body.effort) ? body.effort : defaultEffort;
   if (!supported.includes(type) || !methodsFor(type).includes(method)) throw new Error("Unsupported output type or generation method");
   const prompt = body.prompt ?? manifest?.value?.prompt ?? "", inputs = body.inputs ?? manifest?.value?.inputs ?? {};
-  const context = { projectCwd: projectDir, currentNode: { directory: workdir, artifact: nodePath }, directInputNames: Object.keys(inputs).sort(), codex: { model, effort } };
-  writeFileSync(join(workdir, "manifest.json"), JSON.stringify({ version: 1, prompt, inputs, script: null, output: null, type, method, model, effort }, null, 2) + "\n");
-  const codex = process.env.CODEX_BIN || "codex", args = ["exec", "--json", "--model", model, "-c", `model_reasoning_effort=${effort}`, "--sandbox", "danger-full-access", "--skip-git-repo-check", "--ephemeral", assembledPrompt({ workdir, type, method, prompt, inputs, context })];
+  const context = { projectCwd: projectDir, currentNode: { directory: workdir, artifact: nodePath }, directInputNames: Object.keys(inputs).sort(), codex: { model, useGhPrefix, effort } };
+  writeFileSync(join(workdir, "manifest.json"), JSON.stringify({ version: 1, prompt, inputs, script: null, output: null, type, method, model, useGhPrefix, effort }, null, 2) + "\n");
+  const codex = process.env.CODEX_BIN || "codex", args = ["exec", "--json", "--model", codexModel, "-c", `model_reasoning_effort=${effort}`, "--sandbox", "danger-full-access", "--skip-git-repo-check", "--ephemeral", assembledPrompt({ workdir, type, method, prompt, inputs, context })];
   const run = { identity, process: null }; runs.set(identity, run);
   emitEvent({ kind: "status", path: identity, text: "Starting Codex" }); emitEvent({ kind: "command", path: identity, text: `${codex} ${args.map(arg => JSON.stringify(arg)).join(" ")}` });
   let child; try { child = spawn(codex, args, { cwd: projectDir, env: { ...process.env, HYPERMAKER_NODE_DIR: workdir }, stdio: ["pipe", "pipe", "pipe"] }); run.process = child; child.stdin.end(); } catch (error) { runs.delete(identity); throw error; }
@@ -146,7 +147,7 @@ export async function generate(body, emitEvent = emit) {
         if (!supported.includes(normalizedResult.type) || !methodsFor(normalizedResult.type).includes(normalizedResult.method)) throw new Error("Invalid agent output type or method");
         if (!existsSync(script) || !existsSync(artifact)) throw new Error("Agent output missing");
         if (!existsSync(join(workdir, "AGENTS.md"))) writeFileSync(join(workdir, "AGENTS.md"), "");
-        writeFileSync(join(workdir, "manifest.json"), JSON.stringify({ version: 1, prompt: normalizedResult.prompt, inputs, script: relative(workdir, script), output: relative(workdir, artifact), type: normalizedResult.type, method: normalizedResult.method, model, effort }, null, 2) + "\n");
+        writeFileSync(join(workdir, "manifest.json"), JSON.stringify({ version: 1, prompt: normalizedResult.prompt, inputs, script: relative(workdir, script), output: relative(workdir, artifact), type: normalizedResult.type, method: normalizedResult.method, model, useGhPrefix, effort }, null, 2) + "\n");
         updateCanvas(identity, { ...normalizedResult, script, artifact }); emitEvent({ kind: "complete", path: identity, result: { ...normalizedResult, script, artifact } });
         runs.delete(identity); settled = true; done(normalizedResult);
       } catch (error) { finishFailure(error); }

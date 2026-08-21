@@ -59,6 +59,10 @@ test("browser: method options expose only implemented methods", async () => {
   assert.deepEqual(await card.locator('[data-field="method"] option').allTextContents(), ['llm']);
   await card.locator('[data-field="type"]').selectOption('audio'); assert.deepEqual(await card.locator('[data-field="method"] option').allTextContents(), ['bark.cpp', 'tts.cpp']); await page.close();
 });
+test("browser: model prefix is separate setting", async () => {
+  const page = await browser.newPage(); await page.goto(`http://127.0.0.1:${port}/`); const model = page.locator('#codex-model'), prefix = page.locator('#codex-gh-prefix');
+  assert.deepEqual(await model.locator('option').allTextContents(), ['gpt-5.6-luna', 'gpt-5.6-terra', 'gpt-5.6-sol']); assert.equal(await prefix.isChecked(), false); await prefix.check(); assert.equal(await prefix.isChecked(), true); await page.close();
+});
 
 test("browser: Remotion appears for image and video cards", async () => {
   const page = await browser.newPage(); await page.goto(`http://127.0.0.1:${port}/`); await page.mouse.dblclick(160, 160); const card = page.locator('.card').first();

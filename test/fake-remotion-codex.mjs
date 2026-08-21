@@ -1,12 +1,13 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { chromium } from "playwright";
 const dir = process.env.HYPERMAKER_NODE_DIR || process.cwd();
 mkdirSync(dir, { recursive: true });
 const entry = join(dir, "remotion-entry.jsx");
 const script = join(dir, "render-remotion.mjs");
 const video = Boolean(process.env.REMOTION_TEST_VIDEO);
 const artifact = join(dir, video ? "remotion-square.mp4" : "remotion-square.png");
-const browser = "/home/z/.cache/ms-playwright/chromium_headless_shell-1234/chrome-headless-shell-linux64/chrome-headless-shell";
+const browser = chromium.executablePath();
 const browserArgs = { browserExecutable: browser, chromiumOptions: { executablePath: browser } };
 writeFileSync(entry, `import React from 'react';\nimport { AbsoluteFill, registerRoot } from 'remotion';\nconst Root = () => <AbsoluteFill style={{background:'#7c3aed',justifyContent:'center',alignItems:'center',color:'white',fontSize:72}}>Remotion</AbsoluteFill>;\nregisterRoot(Root);\n`);
 writeFileSync(entry, `import React from 'react';\nimport { AbsoluteFill, Composition, registerRoot } from 'remotion';\nconst Scene = () => <AbsoluteFill style={{background:'#7c3aed',justifyContent:'center',alignItems:'center',color:'white',fontSize:72}}>Remotion</AbsoluteFill>;\nconst Root = () => <Composition id="Main" component={Scene} durationInFrames={${video ? 2 : 1}} fps={30} width={320} height={180} />;\nregisterRoot(Root);\n`);

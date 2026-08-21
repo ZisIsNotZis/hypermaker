@@ -86,6 +86,11 @@ test("always creates empty AGENTS memory when agent omits it", async () => {
 test("rejects unimplemented generation methods", async () => {
   await assert.rejects(() => generate({ nodeId: "draft:bad-method", workdir: join(process.cwd(), ".hypermaker", "nodes", `bad-${Date.now()}`), type: "text", method: "builtin", prompt: "x", inputs: {} }), /Unsupported output type or generation method/);
 });
+test("normalizes model IDs and optionally adds gh prefix", async () => {
+  const root = mkdtempSync(join(tmpdir(), "hypermaker-model-")), fake = join(root, "codex"), workdir = join(process.cwd(), ".hypermaker", "nodes", `model-${Date.now()}`);
+  writeFileSync(fake, `#!/bin/sh\nprintf '%s\\n' "$*" > ${JSON.stringify(join(root, "args"))}\nnode ${JSON.stringify(join(process.cwd(), "test/fake-codex.mjs"))}\n`); chmodSync(fake, 0o755); mkdirSync(workdir, { recursive: true }); const old = process.env.CODEX_BIN; process.env.CODEX_BIN = fake;
+  try { await generate({ nodeId: "draft:model", workdir, type: "text", method: "llm", prompt: "x", model: "gpt-5.6-terra", useGhPrefix: true }); assert.match(readFileSync(join(root, "args"), "utf8"), /--model gh\/gpt-5\.6-terra/); } finally { if (old) process.env.CODEX_BIN = old; else delete process.env.CODEX_BIN; }
+});
 
 test("ignores empty normalized Codex events without crashing", () => {
   assert.equal(eventFromLine(JSON.stringify({ item: { type: "command_execution", output: "" } }), "n"), null);

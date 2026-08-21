@@ -30,7 +30,7 @@ Keep type and method registries filesystem-data-driven. Each `types/<type>/index
 
 ## Agent adapter
 
-Launch one autonomous Codex CLI process per Generate. Different nodes run in parallel; one node has one active run. Codex `cwd` is the application project directory; prompt gives the absolute current node directory and restricts generated writes there. The selected model is passed with `--model`; selected effort is passed as Codex `model_reasoning_effort` configuration. Defaults are `gh/gpt-5.6-luna` and `medium`. Context includes current prompt, direct linked inputs, names, paths, types, previews, manifests/scripts, method instructions, and current node files. Project-local skills are discovered by Codex from that working directory rather than named in the assembled prompt. Log exact command before launch. Preserve raw process lines separately from normalized UI events.
+Launch one autonomous Codex CLI process per Generate. Different nodes run in parallel; one node has one active run. Codex `cwd` is the application project directory; prompt gives the absolute current node directory and restricts generated writes there. The selected bare model ID is passed with `--model`, optionally prefixed with `gh/` by a separate setting; selected effort is passed as Codex `model_reasoning_effort` configuration. Defaults are bare `gpt-5.6-luna`, prefix off, and `medium`. Context includes current prompt, direct linked inputs, names, paths, types, previews, manifests/scripts, method instructions, and current node files. Project-local skills are discovered by Codex from that working directory rather than named in the assembled prompt. Log exact command before launch. Preserve raw process lines separately from normalized UI events.
 
 Normalize process output and agent result type/method casing, then emit each event immediately to node, SSE clients, stdout, and `dev.log`:
 
@@ -64,4 +64,4 @@ E2E: import generated output, see upstream DAG, add/rename input, edit prompt, G
 
 ## Defaults
 
-Local web app; React/Vite; Node/TypeScript; Codex CLI; HTTP + SSE; stdin answers; one run/node and parallel nodes; sibling `manifest.json`; no canvas persistence, copying, versions, plugins, or custom types; full agent network; current-node-only writes; default Codex model `gh/gpt-5.6-luna`; default effort `medium`.
+Local web app; React/Vite; Node/TypeScript; Codex CLI; HTTP + SSE; stdin answers; one run/node and parallel nodes; sibling `manifest.json`; no canvas persistence, copying, versions, plugins, or custom types; full agent network; current-node-only writes; default Codex model `gpt-5.6-luna`; prefix off; default effort `medium`.
