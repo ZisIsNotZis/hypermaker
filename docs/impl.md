@@ -26,7 +26,7 @@ Manifest paths use relative paths. Writes use current schema version and old sup
 
 ## Registries
 
-Keep type and method registries filesystem-data-driven. Each `types/<type>/index.mjs` declares its ID, MIME types, extensions, and preview kind. Each implemented method is `types/<type>/methods/<method>.mjs` and declares compact instructions and common-tool inventory. Load the registry once at startup and derive import detection, selectable methods, prompt guides, and UI metadata from it. Register `llm` for text, and `hyperframe` plus `remotion` for image/video. Remotion scripts use project-local Remotion packages to render one still or video artifact; the agent owns composition source, render invocation, inspection, and repair. Keep future methods such as `bark.cpp` and `tts.cpp` out of the selectable registry until implemented. No plugin installer or arbitrary custom renderer in v1.
+Keep type and method registries filesystem-data-driven. Each `types/<type>/index.mjs` declares its ID, MIME types, extensions, and preview kind. Each implemented method is `types/<type>/methods/<method>.mjs` and declares compact instructions and common-tool inventory. Load the registry once at startup and derive import detection, selectable methods, prompt guides, and UI metadata from it. Register `llm` for text, `hyperframe` plus `remotion` for image/video, and `tts.cpp` plus `bark.cpp` for audio. Remotion scripts use project-local Remotion packages to render one still or video artifact; audio scripts invoke the prebuilt local tts.cpp or bark.cpp CLI and render one WAV artifact; the agent owns source, invocation, inspection, and repair. No plugin installer or arbitrary custom renderer in v1.
 
 ## Agent adapter
 

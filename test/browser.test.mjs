@@ -57,7 +57,7 @@ test("browser: arrows stay above cards, cards raise, and unrelated events preser
 test("browser: method options expose only implemented methods", async () => {
   const page = await browser.newPage(); await page.goto(`http://127.0.0.1:${port}/`); await page.mouse.dblclick(160, 160); const card = page.locator('.card').first();
   assert.deepEqual(await card.locator('[data-field="method"] option').allTextContents(), ['llm']);
-  await card.locator('[data-field="type"]').selectOption('audio'); assert.equal(await card.locator('[data-field="method"] option').count(), 0); await page.close();
+  await card.locator('[data-field="type"]').selectOption('audio'); assert.deepEqual(await card.locator('[data-field="method"] option').allTextContents(), ['bark.cpp', 'tts.cpp']); await page.close();
 });
 
 test("browser: Remotion appears for image and video cards", async () => {

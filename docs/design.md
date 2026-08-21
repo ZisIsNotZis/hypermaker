@@ -93,7 +93,7 @@ Preview is UI display of current artifact. It does not run renderer, create prox
 
 ## Generation methods
 
-Methods are extensible and associated with supported output types. A method contributes instructions and structured details alongside shared prompt. Current methods are `text -> llm`, `image/video -> hyperframe`, and `image/video -> remotion`. Remotion generation produces one ordinary rendered image or video artifact plus its source script; the harness does not inspect or subtype the source. Planned, unavailable methods include `audio -> bark.cpp` or `tts.cpp`; unavailable methods must not appear as selectable options. There is no `builtin` generation method. Output types and methods are registered in the filesystem under `types/<output-type>/`; each type declares MIME/extensions and each method lives under that type's `methods/` directory.
+Methods are extensible and associated with supported output types. A method contributes instructions and structured details alongside shared prompt. Current methods are `text -> llm`, `image/video -> hyperframe`, `image/video -> remotion`, and `audio -> tts.cpp` or `bark.cpp`. Audio methods produce one ordinary WAV artifact plus their source script; the harness does not inspect or subtype the source. There is no `builtin` generation method. Output types and methods are registered in the filesystem under `types/<output-type>/`; each type declares MIME/extensions and each method lives under that type's `methods/` directory.
 
 ## Canvas
 

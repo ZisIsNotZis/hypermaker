@@ -38,6 +38,7 @@ No diffusion or DiT model is required. Hypermaker is deliberately about code-gen
 - Build a DAG by dragging cards together.
 - Generate plain UTF-8 text with Codex.
 - Generate still images and videos with HyperFrames or Remotion methods.
+- Generate WAV speech with local `tts.cpp` or `bark.cpp` methods.
 - Import existing files and recursively discover their manifest-backed parents.
 - Feed direct upstream artifacts into downstream prompts with names and metadata.
 - Watch the latest agent message while a node runs.

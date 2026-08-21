@@ -39,6 +39,10 @@ test("supports remotion image and video methods in registry", () => {
   assert.deepEqual(methodsFor("video"), ["hyperframe", "remotion"]);
 });
 
+test("supports local audio methods in registry", () => {
+  assert.deepEqual(methodsFor("audio"), ["bark.cpp", "tts.cpp"]);
+});
+
 test("generates a real Remotion image artifact", { timeout: 120000 }, async () => {
   const root = mkdtempSync(join(tmpdir(), "hypermaker-remotion-")), fake = join(root, "codex"), workdir = join(process.cwd(), ".hypermaker", "nodes", `remotion-${Date.now()}`);
   writeFileSync(fake, `#!/bin/sh\nnode ${JSON.stringify(join(process.cwd(), "test/fake-remotion-codex.mjs"))}\n`); chmodSync(fake, 0o755); mkdirSync(workdir, { recursive: true });
