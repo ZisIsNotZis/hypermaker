@@ -1,0 +1,1 @@
+export const method = { id: "llm", guide: "Available: Node.js, Python, shell, filesystem APIs. Write and run one small reproducible script, inspect once, repair only if invalid. Do not search packages/docs, enumerate fonts, use npx, or install/network. Plain text only unless Markdown requested.", tools: ["Node.js", "Python", "shell", "filesystem APIs"] };

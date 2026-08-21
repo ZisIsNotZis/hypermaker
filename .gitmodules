@@ -1,0 +1,6 @@
+[submodule "vendor/remotion"]
+	path = vendor/remotion
+	url = https://github.com/remotion-dev/skills
+[submodule "vendor/hyperframes"]
+	path = vendor/hyperframes
+	url = https://github.com/heygen-com/hyperframes

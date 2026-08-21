@@ -1,0 +1,22 @@
+{
+  "name": "hypermaker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node server/index.mjs",
+    "test": "node --test --test-concurrency=1 test/*.test.mjs",
+    "test:e2e": "node --test test/browser.test.mjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.62.1"
+  },
+  "dependencies": {
+    "@remotion/bundler": "4.0.513",
+    "@remotion/cli": "4.0.513",
+    "@remotion/compositor-linux-x64-gnu": "4.0.513",
+    "@remotion/renderer": "4.0.513",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "remotion": "4.0.513"
+  }
+}
