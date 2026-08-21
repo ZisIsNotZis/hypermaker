@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "node server/index.mjs",
+    "start": "node server/index.mjs",
     "test": "node --test --test-concurrency=1 test/*.test.mjs",
     "test:e2e": "node --test test/browser.test.mjs"
   },

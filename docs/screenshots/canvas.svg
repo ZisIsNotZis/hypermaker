@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 760" role="img" aria-labelledby="title desc">
+  <title id="title">Hypermaker canvas preview</title>
+  <desc id="desc">A dark node canvas with three connected artifact cards.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#12141A"/><stop offset="1" stop-color="#252536"/></linearGradient>
+    <linearGradient id="edge" x1="0" y1="0" x2="1" y2="0"><stop stop-color="#F7C65C"/><stop offset="1" stop-color="#8E7CFF"/></linearGradient>
+    <filter id="shadow"><feDropShadow dx="0" dy="18" stdDeviation="16" flood-color="#000" flood-opacity=".38"/></filter>
+    <pattern id="dots" width="28" height="28" patternUnits="userSpaceOnUse"><circle cx="2" cy="2" r="1" fill="#686A78" opacity=".34"/></pattern>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0 0 10 5 0 10Z" fill="#FF9A73"/></marker>
+  </defs>
+  <rect width="1440" height="760" rx="22" fill="url(#bg)"/><rect width="1440" height="760" rx="22" fill="url(#dots)"/>
+  <rect width="1440" height="72" rx="22" fill="#191B22"/><path d="M0 72h1440" stroke="#383A47"/>
+  <g font-family="Inter,Arial,sans-serif" fill="#F4F1EA"><text x="32" y="45" font-size="23" font-weight="700">hypermaker</text><text x="230" y="43" font-size="13" fill="#9DA1B0">artifact canvas</text><rect x="1082" y="20" width="150" height="32" rx="8" fill="#2D303C"/><text x="1100" y="41" font-size="12" fill="#F7C65C">gh/gpt-5.6-luna</text><rect x="1242" y="20" width="88" height="32" rx="8" fill="#2D303C"/><text x="1265" y="41" font-size="12" fill="#BEB7FF">medium</text></g>
+  <path d="M388 374C500 374 524 260 618 260M388 374C500 374 524 520 618 520M938 260c102 0 112 116 214 116" fill="none" stroke="url(#edge)" stroke-width="5" marker-end="url(#arrow)" opacity=".95"/>
+  <g filter="url(#shadow)" font-family="Inter,Arial,sans-serif">
+    <g transform="translate(92 236)"><rect width="296" height="276" rx="12" fill="#242732" stroke="#555A6A"/><rect width="296" height="44" rx="12" fill="#303442"/><text x="18" y="28" font-size="14" fill="#FFF">character_brief.txt</text><rect x="16" y="60" width="264" height="90" rx="7" fill="#15171D"/><text x="30" y="88" font-size="12" fill="#AEB3C2">A compact character brief</text><text x="30" y="109" font-size="12" fill="#AEB3C2">for the next generation node…</text><text x="18" y="180" font-size="11" fill="#9EA4B4">text · llm · idle</text><rect x="16" y="198" width="264" height="55" rx="7" fill="#15171D"/><text x="28" y="221" font-size="12" fill="#EDEAF1">Generate a useful brief</text><text x="28" y="240" font-size="12" fill="#EDEAF1">for a creative project.</text></g>
+    <g transform="translate(618 122)"><rect width="320" height="276" rx="12" fill="#242732" stroke="#F7C65C" stroke-width="2"/><rect width="320" height="44" rx="12" fill="#3B3740"/><text x="18" y="28" font-size="14" fill="#FFF">portrait.png</text><rect x="16" y="60" width="288" height="90" rx="7" fill="#171924"/><circle cx="160" cy="103" r="31" fill="#F7C65C" opacity=".9"/><path d="M114 148c14-34 78-34 92 0" fill="#FF7B72"/><text x="18" y="180" font-size="11" fill="#9EA4B4">image · remotion · idle</text><rect x="16" y="198" width="288" height="55" rx="7" fill="#15171D"/><text x="28" y="221" font-size="12" fill="#EDEAF1">Use @character_brief</text><text x="28" y="240" font-size="12" fill="#EDEAF1">to create a portrait.</text></g>
+    <g transform="translate(1152 258)"><rect width="252" height="276" rx="12" fill="#242732" stroke="#8E7CFF" stroke-width="2"/><rect width="252" height="44" rx="12" fill="#353346"/><text x="18" y="28" font-size="14" fill="#FFF">scene.mp4</text><rect x="16" y="60" width="220" height="90" rx="7" fill="#171924"/><path d="M32 133 92 85l46 34 37-27 45 41Z" fill="#8E7CFF" opacity=".7"/><text x="18" y="180" font-size="11" fill="#9EA4B4">video · hyperframe · idle</text><rect x="16" y="198" width="220" height="55" rx="7" fill="#15171D"/><text x="28" y="221" font-size="12" fill="#EDEAF1">Assemble the final</text><text x="28" y="240" font-size="12" fill="#EDEAF1">scene from direct inputs.</text></g>
+  </g>
+  <text x="32" y="728" font-family="Inter,Arial,sans-serif" font-size="12" fill="#858A9B">double-click to create · drag cards to link · inspect every artifact</text>
+</svg>

@@ -1,3 +1,6 @@
 dev.log
 .hypermaker
 node_modules
+dist
+playwright-report
+test-results

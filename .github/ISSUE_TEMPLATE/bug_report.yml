@@ -1,0 +1,24 @@
+name: Bug report
+description: Report a reproducible problem in Hypermaker
+title: "bug: "
+labels: [bug]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Tell us what you expected and what you observed.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduce
+      description: Include the shortest steps, prompt, input paths, and relevant dev.log lines.
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      placeholder: Node version, OS, browser, Codex CLI version

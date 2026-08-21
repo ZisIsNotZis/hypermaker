@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title desc">
+  <title id="title">Hypermaker</title>
+  <desc id="desc">A luminous artifact graph inside a rounded square.</desc>
+  <defs>
+    <linearGradient id="glow" x1="24" y1="20" x2="232" y2="236" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F7C65C"/>
+      <stop offset=".48" stop-color="#FF7B72"/>
+      <stop offset="1" stop-color="#8E7CFF"/>
+    </linearGradient>
+    <filter id="soft" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="7" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <rect x="10" y="10" width="236" height="236" rx="58" fill="#13151B" stroke="#30333D" stroke-width="6"/>
+  <path d="M61 82a21 21 0 0 1 21-21h92a21 21 0 0 1 21 21v92a21 21 0 0 1-21 21H82a21 21 0 0 1-21-21V82Z" fill="#1C1E26" stroke="url(#glow)" stroke-width="7"/>
+  <path d="M76 96h104M96 76v37M160 76v37" fill="none" stroke="#777A86" stroke-width="4" opacity=".65"/>
+  <g fill="none" stroke="url(#glow)" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" filter="url(#soft)">
+    <path d="M128 172V130M128 130 98 105M128 130l30-25M128 151l-28 22M128 151l28 22"/>
+  </g>
+  <g fill="#FFF8E8" stroke="url(#glow)" stroke-width="5">
+    <circle cx="128" cy="172" r="10"/><circle cx="98" cy="105" r="9"/><circle cx="158" cy="105" r="9"/><circle cx="100" cy="173" r="9"/><circle cx="156" cy="173" r="9"/>
+  </g>
+</svg>
