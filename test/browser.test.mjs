@@ -63,6 +63,14 @@ test("browser: model prefix is separate setting", async () => {
   const page = await browser.newPage(); await page.goto(`http://127.0.0.1:${port}/`); const model = page.locator('#codex-model'), prefix = page.locator('#codex-gh-prefix');
   assert.deepEqual(await model.locator('option').allTextContents(), ['gpt-5.6-luna', 'gpt-5.6-terra', 'gpt-5.6-sol']); assert.equal(await prefix.isChecked(), false); await prefix.check(); assert.equal(await prefix.isChecked(), true); await page.close();
 });
+test("browser: quality selector and edge context menu unlink", async () => {
+  const page = await browser.newPage({ viewport: { width: 1400, height: 900 } }); await page.goto(`http://127.0.0.1:${port}/`);
+  await page.mouse.dblclick(160, 160); await page.mouse.dblclick(580, 160); await page.waitForTimeout(100);
+  const cards = page.locator('.card'); await cards.nth(0).locator('.prompt').fill('source'); await cards.nth(1).locator('.prompt').fill('target');
+  const a = await cards.nth(0).boundingBox(), b = await cards.nth(1).boundingBox(); await page.mouse.move(a.x + 140, a.y + 35); await page.mouse.down(); await page.mouse.move(b.x + 140, b.y + 35); await page.mouse.up(); await page.waitForTimeout(100);
+  assert.equal(await page.locator('[data-field="quality"]').count(), 2); await page.locator('[data-field="quality"]').first().selectOption('realistic'); assert.equal(await page.locator('[data-field="quality"]').first().inputValue(), 'realistic'); assert.equal(await page.locator('.edge').count(), 1);
+  await page.locator('.edge-hit').dispatchEvent('contextmenu', { bubbles: true, cancelable: true }); await page.waitForTimeout(100); assert.equal(await page.locator('.edge').count(), 0); await page.close();
+});
 
 test("browser: Remotion appears for image and video cards", async () => {
   const page = await browser.newPage(); await page.goto(`http://127.0.0.1:${port}/`); await page.mouse.dblclick(160, 160); const card = page.locator('.card').first();

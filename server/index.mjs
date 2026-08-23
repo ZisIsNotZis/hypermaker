@@ -3,6 +3,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, realp
 import { dirname, extname, join, normalize, relative, resolve } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { qualities, quality } from "../types/quality.mjs";
 
 const root = dirname(fileURLToPath(import.meta.url)), projectDir = resolve(root, "..");
 const publicDir = join(root, "../public"), nodeRoot = resolve(root, "../.hypermaker/nodes"), logPath = resolve(root, "../dev.log");
@@ -27,7 +28,7 @@ export const methods = Object.fromEntries([...typeRegistry.keys()].map(type => [
 export const codexModels = ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"];
 export const codexEfforts = ["none", "low", "medium", "high", "xhigh", "max", "ultra"];
 const defaultModel = codexModels[0], defaultEffort = "medium";
-export const registryInfo = { types: [...typeRegistry.values()], methods, models: codexModels, efforts: codexEfforts, defaults: { model: defaultModel, effort: defaultEffort } };
+export const registryInfo = { types: [...typeRegistry.values()], methods, qualities, models: codexModels, efforts: codexEfforts, defaults: { model: defaultModel, quality: "standard", effort: defaultEffort } };
 const normalizeModel = value => { const model = typeof value === "string" ? value.replace(/^gh\//, "") : ""; return codexModels.includes(model) ? model : defaultModel; };
 const ensureNodeDir = workdir => { mkdirSync(workdir, { recursive: true }); return workdir; };
 const layoutSize = { width: 300, height: 520, gapX: 60, gapY: 60 };
@@ -103,11 +104,12 @@ const typePrompts = {
   audio: "OUTPUT AUDIO: produce exactly one playable audio file with the requested format, duration, sample rate, and channels. Use an informative .wav or .mp3 name.",
   video: "OUTPUT VIDEO: produce exactly one playable rendered video with the requested dimensions, frame rate, duration, and codec. Use an informative .mp4 or .webm name."
 };
-export function assembledPrompt({ workdir, type, method, prompt, inputs, context }) {
+export function assembledPrompt({ workdir, type, method, quality: selectedQuality, prompt, inputs, context }) {
   const shared = `You are Hypermaker generation agent. Project: ${projectDir}. Node: ${workdir}. Write script, exactly one ${type} artifact, and AGENTS.md only in node. Inspect output once; repair only if invalid. Return JSON only: {prompt,script,artifact,type,method,error}.`;
   const inputPrompt = Object.entries(inputs || {}).sort(([a], [b]) => a.localeCompare(b)).map(([name, reference]) => { try { return inputSection(name, reference); } catch { return [`## Input: ${name}`, `Directory: ${typeof reference === "string" ? dirname(resolve(reference)) : "(unknown)"}`, `Artifact unavailable: ${reference}`].join("\n\n"); } }).join("\n\n") || "(no direct linked inputs)";
   const methodGuide = methodRegistry.get(`${type}/${method}`);
-  return [`# SHARED PROMPT\n${shared}`, `# OUTPUT TYPE\n${typePrompts[type] || `Produce one valid ${type} artifact.`}`, `# GENERATION METHOD\n${methodGuide ? `${methodGuide.guide} Available tools: ${methodGuide.tools.join(", ")}.` : `Produce one valid artifact using the available project tools.`}`, `# CURRENT AGENTS.md\n${readAgentMemory(workdir)}`, `# DIRECT INPUTS\n${inputPrompt}`, `# CONTEXT\n${JSON.stringify(context || {}, null, 2)}`, `# USER PROMPT\n${prompt}`].join("\n\n");
+  const chosenQuality = quality[selectedQuality] ? selectedQuality : "standard";
+  return [`# SHARED PROMPT\n${shared}`, `# OUTPUT TYPE\n${typePrompts[type] || `Produce one valid ${type} artifact.`}`, `# GENERATION METHOD\n${methodGuide ? `${methodGuide.guide} Available tools: ${methodGuide.tools.join(", ")}.` : `Produce one valid artifact using the available project tools.`}`, `# QUALITY\n${chosenQuality}: ${quality[chosenQuality]}`, `# CURRENT AGENTS.md\n${readAgentMemory(workdir)}`, `# DIRECT INPUTS\n${inputPrompt}`, `# CONTEXT\n${JSON.stringify(context || {}, null, 2)}`, `# USER PROMPT\n${prompt}`].join("\n\n");
 }
 function draftDir(workdir, fallback) { const value = resolve(workdir || fallback || join(nodeRoot, crypto.randomUUID())); if (!inside(value, nodeRoot)) throw new Error("Draft workdir outside node root"); return value; }
 function updateCanvas(identity, result) { const canvas = canvases.get("default"), draft = canvas?.get(identity); if (!draft) return; for (const node of canvas.values()) for (const [name, input] of Object.entries(node.inputs || {})) if (input === identity) node.inputs[name] = result.artifact; canvas.set(identity, { ...draft, workdir: dirname(result.artifact), path: result.artifact, script: result.script, type: result.type, method: result.method, prompt: result.prompt, status: result.error ? "warning" : "idle", error: result.error || undefined }); }
@@ -125,9 +127,10 @@ export async function generate(body, emitEvent = emit) {
   const model = normalizeModel(body.model), useGhPrefix = body.useGhPrefix === true, codexModel = useGhPrefix ? `gh/${model}` : model, effort = codexEfforts.includes(body.effort) ? body.effort : defaultEffort;
   if (!supported.includes(type) || !methodsFor(type).includes(method)) throw new Error("Unsupported output type or generation method");
   const prompt = body.prompt ?? manifest?.value?.prompt ?? "", inputs = body.inputs ?? manifest?.value?.inputs ?? {};
+  const selectedQuality = quality[body.quality] ? body.quality : quality[manifest?.value?.quality] ? manifest.value.quality : "standard";
   const context = { projectCwd: projectDir, currentNode: { directory: workdir, artifact: nodePath }, directInputNames: Object.keys(inputs).sort(), codex: { model, useGhPrefix, effort } };
-  writeFileSync(join(workdir, "manifest.json"), JSON.stringify({ version: 1, prompt, inputs, script: null, output: null, type, method, model, useGhPrefix, effort }, null, 2) + "\n");
-  const codex = process.env.CODEX_BIN || "codex", args = ["exec", "--json", "--model", codexModel, "-c", `model_reasoning_effort=${effort}`, "--sandbox", "danger-full-access", "--skip-git-repo-check", "--ephemeral", assembledPrompt({ workdir, type, method, prompt, inputs, context })];
+  writeFileSync(join(workdir, "manifest.json"), JSON.stringify({ version: 1, prompt, inputs, script: null, output: null, type, method, quality: selectedQuality, model, useGhPrefix, effort }, null, 2) + "\n");
+  const codex = process.env.CODEX_BIN || "codex", args = ["exec", "--json", "--model", codexModel, "-c", `model_reasoning_effort=${effort}`, "--sandbox", "danger-full-access", "--skip-git-repo-check", "--ephemeral", assembledPrompt({ workdir, type, method, quality: selectedQuality, prompt, inputs, context })];
   const run = { identity, process: null }; runs.set(identity, run);
   emitEvent({ kind: "status", path: identity, text: "Starting Codex" }); emitEvent({ kind: "command", path: identity, text: `${codex} ${args.map(arg => JSON.stringify(arg)).join(" ")}` });
   let child; try { child = spawn(codex, args, { cwd: projectDir, env: { ...process.env, HYPERMAKER_NODE_DIR: workdir }, stdio: ["pipe", "pipe", "pipe"] }); run.process = child; child.stdin.end(); } catch (error) { runs.delete(identity); throw error; }
@@ -147,7 +150,7 @@ export async function generate(body, emitEvent = emit) {
         if (!supported.includes(normalizedResult.type) || !methodsFor(normalizedResult.type).includes(normalizedResult.method)) throw new Error("Invalid agent output type or method");
         if (!existsSync(script) || !existsSync(artifact)) throw new Error("Agent output missing");
         if (!existsSync(join(workdir, "AGENTS.md"))) writeFileSync(join(workdir, "AGENTS.md"), "");
-        writeFileSync(join(workdir, "manifest.json"), JSON.stringify({ version: 1, prompt: normalizedResult.prompt, inputs, script: relative(workdir, script), output: relative(workdir, artifact), type: normalizedResult.type, method: normalizedResult.method, model, useGhPrefix, effort }, null, 2) + "\n");
+        writeFileSync(join(workdir, "manifest.json"), JSON.stringify({ version: 1, prompt: normalizedResult.prompt, inputs, script: relative(workdir, script), output: relative(workdir, artifact), type: normalizedResult.type, method: normalizedResult.method, quality: selectedQuality, model, useGhPrefix, effort }, null, 2) + "\n");
         updateCanvas(identity, { ...normalizedResult, script, artifact }); emitEvent({ kind: "complete", path: identity, result: { ...normalizedResult, script, artifact } });
         runs.delete(identity); settled = true; done(normalizedResult);
       } catch (error) { finishFailure(error); }

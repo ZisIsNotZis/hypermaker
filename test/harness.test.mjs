@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, chmodSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { assembledPrompt, discover, eventFromLine, generate, methodsFor } from "../server/index.mjs";
+import { assembledPrompt, discover, eventFromLine, generate, methodsFor, registryInfo } from "../server/index.mjs";
 
 test("discovers manifest DAG and deduplicates shared input", () => {
   const root = mkdtempSync(join(tmpdir(), "hypermaker-")), shared = join(root, "shared.txt"); writeFileSync(shared, "shared");
@@ -62,17 +62,22 @@ test("generates a real Remotion video artifact", { timeout: 120000 }, async () =
 test("assembles only direct inputs with injected memory, metadata, and fixed section order", async () => {
   const root = mkdtempSync(join(tmpdir(), "hypermaker-prompt-")), workdir = join(root, "node"), parent = join(root, "parent.txt"), image = join(root, "asset.png");
   mkdirSync(workdir, { recursive: true }); writeFileSync(join(workdir, "AGENTS.md"), "remember plain output\n"); writeFileSync(parent, "direct text\n"); writeFileSync(image, Buffer.from("not-a-real-image")); writeFileSync(join(root, "make-parent.js"), "export default () => 'direct text';\n"); writeFileSync(join(root, "AGENTS.md"), "input memory\n"); writeFileSync(join(root, "manifest.json"), JSON.stringify({ version: 1, inputs: {}, script: "make-parent.js", output: "parent.txt", type: "text", method: "llm" }));
-  const prompt = assembledPrompt({ workdir, type: "text", method: "llm", prompt: "user request", inputs: { "parent.txt": parent, "asset.png": image }, context: { inputs: { "parent.txt": parent, "asset.png": image } } });
-  const sections = ["# SHARED PROMPT", "# OUTPUT TYPE", "# GENERATION METHOD", "# CURRENT AGENTS.md", "# DIRECT INPUTS", "# CONTEXT", "# USER PROMPT"];
+  const prompt = assembledPrompt({ workdir, type: "text", method: "llm", quality: "standard", prompt: "user request", inputs: { "parent.txt": parent, "asset.png": image }, context: { inputs: { "parent.txt": parent, "asset.png": image } } });
+  const sections = ["# SHARED PROMPT", "# OUTPUT TYPE", "# GENERATION METHOD", "# QUALITY", "# CURRENT AGENTS.md", "# DIRECT INPUTS", "# CONTEXT", "# USER PROMPT"];
   for (let i = 1; i < sections.length; i++) assert.ok(prompt.indexOf(sections[i - 1]) < prompt.indexOf(sections[i]));
   assert.match(prompt, /remember plain output/); assert.match(prompt, /direct text/); assert.match(prompt, /asset\.png/); assert.match(prompt, /bytes/); assert.match(prompt, /make-parent\.js/); assert.match(prompt, /export default/); assert.match(prompt, /input memory/); assert.doesNotMatch(prompt, /read and update/);
 });
 
 test("keeps generation prompt compact while retaining method inventory and AGENTS memory", () => {
-  const prompt = assembledPrompt({ workdir: "/tmp/node", type: "text", method: "llm", prompt: "x", inputs: {}, context: {} });
+  const prompt = assembledPrompt({ workdir: "/tmp/node", type: "text", method: "llm", quality: "standard", prompt: "x", inputs: {}, context: {} });
   assert.match(prompt, /Node: \/tmp\/node/);
   assert.match(prompt, /Node\.js, Python, shell/);
   assert.doesNotMatch(prompt, /npx\/network|search for packages|generic skill files/);
+});
+test("quality registry is exposed and prompt section is ordered", () => {
+  assert.deepEqual(registryInfo.qualities.map(x => x.id), ["sketch", "demo", "standard", "artistic", "realistic"]);
+  const prompt = assembledPrompt({ workdir: "/tmp/node", type: "image", method: "hyperframe", quality: "realistic", prompt: "x", inputs: {}, context: {} });
+  assert.ok(prompt.indexOf("# GENERATION METHOD") < prompt.indexOf("# QUALITY")); assert.ok(prompt.indexOf("# QUALITY") < prompt.indexOf("# CURRENT AGENTS.md")); assert.match(prompt, /Highest-fidelity pass/);
 });
 
 test("always creates empty AGENTS memory when agent omits it", async () => {
