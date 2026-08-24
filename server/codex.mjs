@@ -25,7 +25,7 @@ export function generate({ node, workspace, context = {}, model, effort, useGhPr
       if (buffer.trim()) lines.push(buffer.trim());
       if (code !== 0) return fail(new Error(`Codex exited with code ${code}`));
       try {
-        const result = finalJson(lines), artifact = safe(nodeDir, result?.artifact), script = result?.script ? safe(nodeDir, result.script) : null;
+        const result = finalJson(lines); if (!result) throw new Error("Codex returned no artifact JSON"); const artifact = safe(nodeDir, result.artifact), script = result.script ? safe(nodeDir, result.script) : null;
         if (!existsSync(artifact)) throw new Error("Agent artifact does not exist");
         const type = typeForFile(artifact); if (type !== node.type) throw new Error(`Artifact type mismatch: expected ${node.type}`);
         if (!existsSync(join(nodeDir, "AGENTS.md"))) writeFileSync(join(nodeDir, "AGENTS.md"), "", "utf8");
