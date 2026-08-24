@@ -13,8 +13,10 @@ export function generate({ node, workspace, context = {}, model, effort, useGhPr
   const nodeDir = join(workspace.workdir, String(node.id)); mkdirSync(nodeDir, { recursive: true });
   const prompt = assemblePrompt({ node, workspace, context });
   const log = join(nodeDir, "codex.jsonl");
-  const command = process.env.CODEX_BIN || "codex";
-  const args = ["exec", "--json", "--model", modelName(model, useGhPrefix), "-c", `model_reasoning_effort=${effort || "medium"}`, "--sandbox", "danger-full-access", "--skip-git-repo-check", "--ephemeral", prompt];
+  const configured = process.env.CODEX_BIN || "codex";
+  const command = configured.endsWith(".mjs") ? process.execPath : configured;
+  const commandArgs = configured.endsWith(".mjs") ? [configured] : [];
+  const args = [...commandArgs, "exec", "--json", "--model", modelName(model, useGhPrefix), "-c", `model_reasoning_effort=${effort || "medium"}`, "--sandbox", "danger-full-access", "--skip-git-repo-check", "--ephemeral", prompt];
   return new Promise((done, fail) => {
     const child = spawn(command, args, { cwd: workspace.projectCwd || process.cwd(), env: { ...process.env, HYPERMAKER_NODE_DIR: nodeDir }, stdio: ["ignore", "pipe", "pipe"] });
     appendFileSync(join(workspace.projectCwd || process.cwd(), "dev.log"), `[${new Date().toISOString()}] command: ${command} ${args.slice(0, -1).map(x => JSON.stringify(x)).join(" ")}\n${prompt}\n`);
