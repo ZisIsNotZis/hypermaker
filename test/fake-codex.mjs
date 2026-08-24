@@ -12,4 +12,6 @@ mkdirSync(outputDir, { recursive: true });
 writeFileSync(join(outputDir, "compose.js"), "export default function compose(){return 'ok'}\n");
 writeFileSync(join(outputDir, "xiaoming_persona.txt"), "程序员小明：热爱编程。\n");
 writeFileSync(join(outputDir, "AGENTS.md"), "Keep text artifacts plain UTF-8.\n");
-console.log(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: JSON.stringify({ prompt: "optimized Chinese prompt", script: "compose.js", artifact: "xiaoming_persona.txt", type: "text", method: "LLM", error: null }) } }));
+const result = { prompt: "optimized Chinese prompt", script: "compose.js", artifact: "xiaoming_persona.txt", type: "text", method: "LLM", error: null };
+const output = process.argv[process.argv.indexOf("--output-last-message") + 1]; if (output) writeFileSync(output, JSON.stringify(result));
+console.log(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: JSON.stringify(result) } }));

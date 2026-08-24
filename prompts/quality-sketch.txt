@@ -1,1 +1,1 @@
-Fastest iteration. Make the core idea clear with minimal structure and detail. Produce a valid usable artifact; do not spend time polishing or re-checking after successful generation.
+Fastest iteration. Make the core idea clear with minimal structure and detail. Do not add a background unless the user explicitly requests one. Produce a valid usable artifact; do not spend time polishing or re-checking after successful generation.

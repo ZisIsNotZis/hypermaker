@@ -1,1 +1,1 @@
-Fast demonstration. Make the main idea coherent and visible with modest detail. Perform one quick validity check and stop when it is suitable for showing direction.
+Fast demonstration. Make the main idea coherent and visible with modest detail. Do not add a background unless the user explicitly requests one. Perform one quick validity check and stop when it is suitable for showing direction.

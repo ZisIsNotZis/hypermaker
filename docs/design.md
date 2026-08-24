@@ -14,7 +14,7 @@ Draft nodes have no directory until Generate. Imported external files are copied
 
 ## Canvas
 
-Double-click empty canvas creates generation node. Cards drag; canvas pans/zooms. Dragging A onto B creates input A on B; source returns after linking. Dragging continues for the complete pointer gesture even when pointer leaves the card title bar. Links are directional arrows above cards. Right-click link cancels it and suppresses browser menu. Clicking any card raises it. Each card has a Delete button; deleting requires double-click and has no confirmation. Reset layout uses dependency layering and collision-free spacing.
+Double-click empty canvas creates generation node. Cards drag; canvas pans/zooms. Artifact preview uses a 4:3 aspect ratio. Dragging A onto B creates input A on B; source returns after linking. Dragging continues for the complete pointer gesture even when pointer leaves the card title bar. Links are directional arrows above cards. Right-click link cancels it and suppresses browser menu. Clicking any card raises it. Each card has a Delete button; clicking it asks for confirmation, then deletes. Reset layout uses dependency layering and collision-free spacing.
 
 Double-click empty canvas creates generation node. Cards drag; canvas pans/zooms. Dragging A onto B creates input A on B; source returns after linking. Dragging onto empty canvas moves card. Links are directional arrows above cards. Right-click link cancels it and suppresses browser menu. Clicking any card raises it. Reset layout uses dependency layering and collision-free spacing.
 
@@ -37,4 +37,4 @@ Prompt sections, exact order:
 
 Direct inputs include directory; artifact filename plus text contents or multimodal path and metadata; source filename and contents when present; and `AGENTS.md` when present. Only direct inputs are included. Text output is plain UTF-8 unless user requests Markdown. `AGENTS.md` always emitted; empty for ordinary nodes.
 
-Quality choices: sketch, demo, standard, artistic, realistic. Preview displays exact artifact; no preview/final generation mode. Types and methods are filesystem registry entries under `types/<type>/methods/<method>`.
+Quality choices: sketch, demo, standard, artistic, realistic. Sketch and demo omit background unless user explicitly asks for one. Preview displays exact artifact; no preview/final generation mode. Types and methods are filesystem registry entries under `types/<type>/methods/<method>`.

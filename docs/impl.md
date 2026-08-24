@@ -16,11 +16,11 @@ Load type, method, and quality registry at startup. MIME/extensions drive type d
 
 ## Codex
 
-Spawn one process per node with repository-root cwd, node directory context, model/effort, optional `gh/` prefix, and closed stdin. Store raw lines. Parse only final JSON; require artifact, allow optional script, enforce node-local paths, ensure type and `AGENTS.md`, then save workspace and emit completion. Runs never block HTTP or other nodes.
+Spawn one process per node with repository-root cwd, node directory context, model/effort, optional `gh/` prefix, and closed stdin. Pass `--json` for trajectory and `--output-last-message` for final result. Tee stdout/stderr unchanged to node `codex.jsonl` and timestamped `dev.log` plus terminal. Ignore trajectory for application logic; parse only final output file. Require artifact, allow optional script, enforce node-local paths, ensure type and `AGENTS.md`, then save workspace and emit completion. Runs never block HTTP or other nodes.
 
 ## HTTP and UI
 
-Provide workspace open/read/save, node create, import, link/unlink, clone/delete, layout, file serving, and asynchronous generation. UI is compact canvas: pointer drag/link/pan, document-level pointer capture for card drags, SVG marker arrows with hit paths, control-only wheel suppression, wrapped text, native media viewers, download/image popup, and preview errors. Delete control executes only on double-click, without confirmation.
+Provide workspace open/read/save, node create, import, link/unlink, clone/delete, layout, file serving, and asynchronous generation. UI is compact canvas: pointer drag/link/pan, drag-end workspace persistence, 4:3 artifact preview, visible SVG marker arrows with hit paths, control-only wheel suppression, wrapped text, native media viewers, download/image popup, and preview errors. Card raising must not move a card during pointerdown on an interactive control. Delete control executes on click after confirmation.
 
 Provide workspace open/read/save, node create, import, link/unlink, clone/delete, layout, file serving, and asynchronous generation. UI is compact canvas: pointer drag/link/pan, SVG marker arrows with hit paths, control-only wheel suppression, wrapped text, native media viewers, download/image popup, and preview errors.
 
