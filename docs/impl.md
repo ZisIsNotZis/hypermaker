@@ -20,6 +20,8 @@ Spawn one process per node with repository-root cwd, node directory context, mod
 
 ## HTTP and UI
 
+Provide workspace open/read/save, node create, import, link/unlink, clone/delete, layout, file serving, and asynchronous generation. UI is compact canvas: pointer drag/link/pan, document-level pointer capture for card drags, SVG marker arrows with hit paths, control-only wheel suppression, wrapped text, native media viewers, download/image popup, and preview errors. Delete control executes only on double-click, without confirmation.
+
 Provide workspace open/read/save, node create, import, link/unlink, clone/delete, layout, file serving, and asynchronous generation. UI is compact canvas: pointer drag/link/pan, SVG marker arrows with hit paths, control-only wheel suppression, wrapped text, native media viewers, download/image popup, and preview errors.
 
 ## Verification

@@ -24,3 +24,10 @@ test("canvas creates, links, persists and generates concurrently", async () => {
   let workspace; for (let i = 0; i < 60; i++) { workspace = await (await fetch(`http://127.0.0.1:${port}/api/workspace`)).json(); if (workspace.nodes[1].artifact || workspace.nodes[1].error) break; await new Promise(r => setTimeout(r, 100)); } assert.equal(workspace.nodes[1].artifact, "xiaoming_persona.txt", JSON.stringify(workspace.nodes[1]));
   const reloaded = await browser.newPage(); await reloaded.goto(`http://127.0.0.1:${port}/`); assert.equal(await reloaded.locator(".card").count(), 2); assert.equal(await reloaded.locator(".edge").count(), 1); await page.close(); await reloaded.close();
 });
+
+test("delete needs double click and drag keeps tracking after leaving header", async () => {
+  const page = await browser.newPage({ viewport: { width: 900, height: 600 } }); await page.goto(`http://127.0.0.1:${port}/`);
+  await page.mouse.dblclick(120, 120); await page.waitForTimeout(100); const card = page.locator('.card').first(), header = card.locator('header'), del = card.locator('[data-delete]');
+  await del.click(); assert.equal(await page.locator('.card').count(), 1); await del.dblclick(); await page.waitForTimeout(100); assert.equal(await page.locator('.card').count(), 0);
+  await page.mouse.dblclick(120, 120); const fresh = page.locator('.card').first(), box = await fresh.boundingBox(); await page.mouse.move(box.x + 100, box.y + 15); await page.mouse.down(); await page.mouse.move(box.x + 100, box.y + 180, { steps: 4 }); await page.mouse.move(box.x + 300, box.y + 220, { steps: 4 }); await page.mouse.up(); assert.ok((await fresh.boundingBox()).y > box.y + 100); await page.close();
+});
