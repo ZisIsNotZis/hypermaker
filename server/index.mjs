@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { createReadStream, existsSync, mkdirSync, readFileSync, copyFileSync, cpSync, rmSync } from "node:fs";
-import { extname, join, resolve } from "node:path";
+import { extname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readWorkspace, writeWorkspace, nodeRecord } from "./workspace.mjs";
 import { registryInfo, typeForFile } from "./registry.mjs";
@@ -25,8 +25,8 @@ const server = createServer(async (req, res) => { try {
   if (url.pathname === "/api/registry") return json(res, 200, registryInfo());
   if (url.pathname === "/api/workspace" && req.method === "GET") return json(res, 200, view());
   if (url.pathname === "/api/workspace" && req.method === "POST") { const b = await body(req); workdir = resolve(b.workdir || defaultWorkdir); nodes = readWorkspace(workdir); return json(res, 200, view()); }
-  if (url.pathname === "/api/file") { const file = resolve(url.searchParams.get("path") || ""); if (!file.startsWith(resolve(workdir) + "/")) throw new Error("File outside workspace"); return sendFile(res, file); }
-  if (url.pathname === "/api/node" && req.method === "POST") { const b = await body(req), id = nextId(); nodes[id] = nodeRecord(id, { ...b, inputs: [] }); save(); return json(res, 200, view()); }
+  if (url.pathname === "/api/file") { const file = resolve(url.searchParams.get("path") || ""); const rel = relative(resolve(workdir), file); if (rel.startsWith("..") || rel.startsWith("/")) throw new Error("File outside workspace"); return sendFile(res, file); }
+  if (url.pathname === "/api/node" && req.method === "POST") { const b = await body(req), id = nextId(); nodes[id] = nodeRecord(id, { ...b, inputs: [], method: b.method || "llm", quality: b.quality || "standard" }); save(); return json(res, 200, view()); }
   if (url.pathname === "/api/import" && req.method === "POST") { const b = await body(req), id = nextId(), type = typeForFile(b.path); if (!type) throw new Error("Unsupported asset type"); const name = String(b.path).split(/[\\/]/).pop(); mkdirSync(join(workdir, String(id)), { recursive: true }); copyFileSync(resolve(b.path), join(workdir, String(id), name)); nodes[id] = nodeRecord(id, { x: b.x, y: b.y, type, inputs: [], artifact: name }); save(); return json(res, 200, view()); }
   if (url.pathname === "/api/link" && req.method === "POST") { const b = await body(req), target = getNode(b.target); if (Number(b.source) !== Number(b.target) && !target.inputs.includes(Number(b.source))) target.inputs.push(Number(b.source)); nodes[b.target] = target; save(); return json(res, 200, view()); }
   if (url.pathname === "/api/unlink" && req.method === "POST") { const b = await body(req), target = getNode(b.target); target.inputs = target.inputs.filter(id => id !== Number(b.source)); nodes[b.target] = target; save(); return json(res, 200, view()); }

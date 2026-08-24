@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { join, relative } from "node:path";
+import { join } from "node:path";
 import { methodRegistry, typeRegistry } from "./registry.mjs";
 
 const promptRoot = new URL("../prompts/", import.meta.url);
@@ -28,7 +28,7 @@ export function assemblePrompt({ node, workspace, context = {} }) {
   if (!type || !method) throw new Error("Unsupported output type or generation method");
   const memory = node.id && workspace.workdir ? fileText(join(workspace.workdir, String(node.id), "AGENTS.md")) : "";
   return [
-    block("SHARED PROMPT", text("shared.txt").replaceAll("{{PROJECT}}", workspace.projectCwd || process.cwd()).replaceAll("{{NODE}}", join(workspace.workdir, String(node.id)))),
+    block("SHARED PROMPT", text("shared.txt").replaceAll("{{PROJECT}}", workspace.projectCwd || process.cwd()).replaceAll("{{NODE}}", join(workspace.workdir, String(node.id))).replaceAll("{{TYPE}}", node.type)),
     block("OUTPUT TYPE", `${text(`output-${node.type}.txt`)}\n\n${text(`type-${node.type}.txt`)}`),
     block("GENERATION METHOD", `${method.guide}\nAvailable tools: ${method.tools.join(", ")}.`),
     block("QUALITY", text(`quality-${node.quality || "standard"}.txt`)),
