@@ -7,7 +7,7 @@ import { assemblePrompt } from "./prompt.mjs";
 const inside = (file, dir) => { const r = relative(resolve(dir), resolve(file)); return r === "" || (!r.startsWith("..") && !r.startsWith("/")); };
 const safe = (dir, name) => { if (!name || typeof name !== "string") throw new Error("Agent artifact missing"); const file = resolve(dir, name); if (!inside(file, dir)) throw new Error("Agent output outside node directory"); return file; };
 const modelName = (model, gh) => `${gh ? "gh/" : ""}${String(model || "gpt-5.6-luna").replace(/^gh\//, "")}`;
-const finalJson = lines => [...lines].reverse().map(line => { try { const value = JSON.parse(line); const text = value?.item?.type === "agent_message" ? value.item.text : value?.type === "agent_message" ? value.text : null; return value?.artifact ? value : JSON.parse(text || ""); } catch { return null; } }).find(value => value && value.artifact);
+const finalJson = lines => [...lines].reverse().map(line => { try { const value = JSON.parse(line); const text = value?.item?.type === "agent_message" ? value.item.text : value?.type === "agent_message" ? value.text : null; if (value?.artifact) return value; if (typeof text !== "string") return null; const match = text.match(/\{[\s\S]*\}/); return match ? JSON.parse(match[0]) : null; } catch { return null; } }).find(value => value && value.artifact);
 
 export function generate({ node, workspace, context = {}, model, effort, useGhPrefix, onRaw }) {
   const nodeDir = join(workspace.workdir, String(node.id)); mkdirSync(nodeDir, { recursive: true });
