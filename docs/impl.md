@@ -1,6 +1,10 @@
-# Hypermaker Implementation Plan
+# HyperMaker Implementation Plan
 
 This document is implementation source of truth. Product behavior belongs in [`design.md`](design.md).
+<!-- Current implementation target: workspace.yml is sole graph persistence; node folders are created on import/generate; no manifest/version migration. -->
+<!-- Keep prompt assembly order and learned prompt guidance stable while simplifying transport and UI. -->
+<!-- Migration target: workspace.yml replaces per-artifact manifests; generation remains asynchronous and independent per node. -->
+<!-- Workspace serialization is atomic; node filenames are relative and path-checked before use. -->
 
 ## Architecture
 

@@ -1,8 +1,12 @@
-# Hypermaker Design
+# HyperMaker Design
 
 This document is the product and domain source of truth. Implementation mechanics belong in [`impl.md`](impl.md).
+<!-- Architecture simplification: one active workspace uses workspace.yml and integer node IDs. Node folders hold artifact/script/debug files; no manifest graph. -->
+<!-- Generation is one asynchronous exact-artifact operation. Raw Codex trajectory is retained for debugging, not interpreted by product logic. -->
 
 <!-- UI: generation cards stay compact for dense canvases; artifact preview gets most of the card area. The live agent message is visible only while that node is generating. Generation errors appear inside the artifact preview area. -->
+<!-- Current storage direction: one active workspace at .hypermaker/workspace.yml; integer IDs; node directories contain artifact, optional script, and raw debug log. -->
+<!-- Node directory creation is deferred until import or generation. Draft canvas nodes remain diskless. -->
 
 ## Product
 
