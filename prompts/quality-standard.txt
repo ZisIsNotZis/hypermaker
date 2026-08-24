@@ -1,0 +1,1 @@
+Balanced production. Preserve user intent, complete every requested part, and use sensible composition, readability, pacing, color, and technical settings. Inspect once and repair clear defects. Accept only a complete valid result.
