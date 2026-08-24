@@ -23,3 +23,9 @@ test("node files resolve only inside node workspace", () => {
   assert.equal(workspacePath(dir, 4, "result.txt"), join(dir, "4", "result.txt"));
   assert.throws(() => workspacePath(dir, 4, "../../outside.txt"), /outside/);
 });
+
+test("prompt files exist outside JavaScript source", async () => {
+  const { existsSync } = await import("node:fs");
+  assert.equal(existsSync(join(process.cwd(), "prompts", "shared.txt")), true);
+  assert.equal(existsSync(join(process.cwd(), "prompts", "output-text.txt")), true);
+});

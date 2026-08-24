@@ -1,0 +1,1 @@
+OUTPUT TEXT: produce exactly one plain UTF-8 text file. Do not use Markdown headings, fences, or formatting unless the user explicitly requests Markdown. Use an informative .txt name.

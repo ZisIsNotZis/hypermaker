@@ -1,0 +1,1 @@
+OUTPUT IMAGE: produce exactly one inspectable raster image with the requested dimensions/style. Use an informative .png or .jpg name.

@@ -1,0 +1,1 @@
+OUTPUT VIDEO: produce exactly one playable rendered video with the requested dimensions, frame rate, duration, and codec. Use an informative .mp4 or .webm name.

@@ -1,0 +1,1 @@
+OUTPUT AUDIO: produce exactly one playable audio file with the requested format, duration, sample rate, and channels. Use an informative .wav or .mp3 name.

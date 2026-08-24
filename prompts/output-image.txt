@@ -1,0 +1,1 @@
+Produce exactly one inspectable raster image. Use an informative filename and correct extension.

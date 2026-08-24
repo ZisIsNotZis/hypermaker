@@ -1,0 +1,1 @@
+Produce exactly one plain UTF-8 text file. Do not use Markdown unless user explicitly requests Markdown. Use an informative filename.
