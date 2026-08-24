@@ -14,8 +14,8 @@ export function generate({ node, workspace, context = {}, model, effort, useGhPr
   const prompt = assemblePrompt({ node, workspace, context });
   const log = join(nodeDir, "codex.jsonl");
   const configured = process.env.CODEX_BIN || "codex";
-  const command = configured.endsWith(".mjs") ? process.execPath : configured;
-  const commandArgs = configured.endsWith(".mjs") ? [configured] : [];
+    const command = configured.endsWith(".mjs") ? process.execPath : configured;
+    const commandArgs = configured.endsWith(".mjs") ? [configured] : [];
   const args = configured.endsWith(".mjs") ? commandArgs : ["exec", "--json", "--model", modelName(model, useGhPrefix), "-c", `model_reasoning_effort=${effort || "medium"}`, "--sandbox", "danger-full-access", "--skip-git-repo-check", "--ephemeral", prompt];
   return new Promise((done, fail) => {
     const child = spawn(command, args, { cwd: workspace.projectCwd || process.cwd(), env: { ...process.env, HYPERMAKER_NODE_DIR: nodeDir }, stdio: ["ignore", "pipe", "pipe"] });
@@ -27,6 +27,7 @@ export function generate({ node, workspace, context = {}, model, effort, useGhPr
       if (buffer.trim()) lines.push(buffer.trim());
       if (code !== 0) return fail(new Error(`Codex exited with code ${code}`));
       try {
+        if (configured.endsWith(".mjs")) { /* test adapter may receive no CLI flags */ }
         const result = finalJson(lines); if (!result) throw new Error("Codex returned no artifact JSON"); const artifact = safe(nodeDir, result.artifact), script = result.script ? safe(nodeDir, result.script) : null;
         if (!existsSync(artifact)) throw new Error("Agent artifact does not exist");
         const type = typeForFile(artifact); if (type !== node.type) throw new Error(`Artifact type mismatch: expected ${node.type}`);

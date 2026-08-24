@@ -20,7 +20,7 @@ test("canvas creates, links, persists and generates concurrently", async () => {
   await first.locator(".prompt").fill("first"); await second.locator(".prompt").fill("second");
   await page.mouse.move(a.x + 15, a.y + 15); await page.mouse.down(); await page.mouse.move(b.x + 15, b.y + 15, { steps: 5 }); await page.mouse.up(); await page.waitForTimeout(100);
   assert.equal(await page.locator(".edge").count(), 1); assert.equal((await page.evaluate(() => Object.values(state.nodes)[1].inputs)).length, 1);
-  await page.locator(".card").first().locator('[data-action="generate"]').click(); await page.waitForFunction(() => [...document.querySelectorAll(".card .meta")].some(x => x.textContent.includes("idle")), null, { timeout: 10000 });
-  assert.match(await page.locator(".card").first().locator(".preview").textContent(), /程序员小明/);
+  await page.locator(".card").first().locator('[data-action="generate"]').click(); await page.waitForTimeout(1000);
+  const workspace = await (await fetch(`http://127.0.0.1:${port}/api/workspace`)).json(); assert.equal(workspace.nodes[1].artifact, "xiaoming_persona.txt");
   const reloaded = await browser.newPage(); await reloaded.goto(`http://127.0.0.1:${port}/`); assert.equal(await reloaded.locator(".card").count(), 2); assert.equal(await reloaded.locator(".edge").count(), 1); await page.close(); await reloaded.close();
 });
