@@ -18,9 +18,9 @@ test("canvas creates, links, persists and generates concurrently", async () => {
   assert.equal(await page.locator(".card").count(), 2);
   const first = page.locator(".card").first(), second = page.locator(".card").nth(1), a = await first.boundingBox(), b = await second.boundingBox();
   await first.locator(".prompt").fill("first"); await second.locator(".prompt").fill("second");
-  await page.mouse.move(a.x + 15, a.y + 15); await page.mouse.down(); await page.mouse.move(b.x + 15, b.y + 15, { steps: 5 }); await page.mouse.up(); await page.waitForTimeout(100);
+  await page.mouse.move(a.x + 125, a.y + 15); await page.mouse.down(); await page.mouse.move(b.x + 125, b.y + 15, { steps: 5 }); await page.mouse.up(); await page.waitForTimeout(100);
   assert.equal(await page.locator(".edge").count(), 1); assert.equal((await page.evaluate(() => Object.values(state.nodes)[1].inputs)).length, 1);
-  await page.locator(".card").first().locator('[data-action="generate"]').click(); await page.waitForTimeout(1000);
-  const workspace = await (await fetch(`http://127.0.0.1:${port}/api/workspace`)).json(); assert.equal(workspace.nodes[1].artifact, "xiaoming_persona.txt");
+  const generate = page.locator(".card").first().locator('[data-action="generate"]'); await generate.waitFor({ state: "visible" }); await page.waitForFunction(() => [...document.querySelectorAll('.card [data-action="generate"]')].some(x => !x.disabled)); await generate.click(); await page.waitForTimeout(2000);
+  let workspace; for (let i = 0; i < 20; i++) { workspace = await (await fetch(`http://127.0.0.1:${port}/api/workspace`)).json(); if (workspace.nodes[1].artifact || workspace.nodes[1].error) break; await new Promise(r => setTimeout(r, 100)); } assert.equal(workspace.nodes[1].artifact, "xiaoming_persona.txt");
   const reloaded = await browser.newPage(); await reloaded.goto(`http://127.0.0.1:${port}/`); assert.equal(await reloaded.locator(".card").count(), 2); assert.equal(await reloaded.locator(".edge").count(), 1); await page.close(); await reloaded.close();
 });
