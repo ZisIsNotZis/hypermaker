@@ -78,6 +78,8 @@ Browser tests need a Playwright-compatible Chromium. If your environment blocks 
 npm run test:e2e
 ```
 
+The current release line is `0.1.0` (see [`VERSION`](VERSION)); release notes are in [`CHANGELOG.md`](CHANGELOG.md). The local app is experimental and requires an authenticated Codex CLI for real generation.
+
 ## The mental model
 
 | Thing | Meaning |
@@ -118,9 +120,15 @@ git diff --check
 
 Please keep changes small, test the visible result, preserve plain UTF-8 artifacts, and update the source-of-truth docs when behavior changes. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
+Issues and PRs are welcome. Agents can help triage, investigate, test, document, and implement accepted work; maintainers review and merge.
+
 ## Roadmap
 
 The current shape is a foundation, not a promise of a frozen product. Likely next directions include more artifact types and methods, stronger graph editing, richer media metadata, and better collaboration. The registry boundary exists so experimentation does not require rewriting the core.
+
+## Status and publication boundary
+
+This is a useful, inspectable local prototype; its registry-driven artifact graph is the current product contribution. See [`docs/project-status.md`](docs/project-status.md) for tested evidence and limitations. No new Bilibili video or arXiv paper is being created here.
 
 ## License
 
