@@ -2,7 +2,12 @@
 
 ## Classification
 
-`useful`: a runnable, inspectable local application for composing generated artifacts.
+`useful` (closed milestone): a runnable, inspectable local application for composing generated artifacts.
+
+## Status
+
+Closed as a milestone (2026-09-29). The app reached its experimental goal; no
+active development is planned unless the project's inputs or goals change.
 
 ## Evidence
 
@@ -14,7 +19,12 @@
 
 ## Boundaries
 
-The app is experimental, local-first, and depends on an authenticated Codex CLI for real generation. The repository does not claim hosted collaboration, production reliability, or benchmark results. No new video or paper is being created in this maintenance pass.
+The app is local-first and depends on an authenticated Codex CLI for real
+generation. It does not claim hosted collaboration or production reliability.
+
+## Deferred
+
+No benchmark results, video, or paper were produced; these remain out of scope.
 
 ## Versioning
 

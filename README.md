@@ -18,6 +18,10 @@
   <img src="docs/screenshots/canvas.svg" alt="Hypermaker canvas with connected artifact nodes" width="94%" />
 </p>
 
+> **Status: closed (milestone, 2026-09-29).** The local-first node-based
+> artifact orchestration app reached its experimental goal. No further
+> development is planned unless the project's inputs or goals change.
+
 > Hypermaker started around HyperFrames. It is becoming something broader: a flexible, local-first layer where an agent composes inspectable artifacts one node at a time.
 
 ## Why Hypermaker?
