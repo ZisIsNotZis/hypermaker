@@ -22,4 +22,4 @@ Hypermaker is a local-first, node-based artifact orchestration app. Product beha
 - `test/`: harness and browser tests.
 - `docs/design.md`, `docs/impl.md`: only project source of truth.
 
-For agent-document writing conventions, see `.agents/skills/writing-for-agents/SKILL.md` when modifying this file or adding agent instructions.
+When modifying this file or adding agent instructions, keep them short, imperative and testable, and state the check that catches each rule being broken.
