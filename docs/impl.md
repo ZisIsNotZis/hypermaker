@@ -22,8 +22,6 @@ Spawn one process per node with repository-root cwd, node directory context, mod
 
 Provide workspace open/read/save, node create, import, link/unlink, clone/delete, layout, file serving, and asynchronous generation. UI is compact canvas: pointer drag/link/pan, drag-end workspace persistence, 4:3 artifact preview, visible SVG marker arrows with hit paths, control-only wheel suppression, wrapped text, native media viewers, download/image popup, and preview errors. Card raising must not move a card during pointerdown on an interactive control. Delete control executes on click after confirmation.
 
-Provide workspace open/read/save, node create, import, link/unlink, clone/delete, layout, file serving, and asynchronous generation. UI is compact canvas: pointer drag/link/pan, SVG marker arrows with hit paths, control-only wheel suppression, wrapped text, native media viewers, download/image popup, and preview errors.
-
 ## Verification
 
 TDD seams: workspace round trip/atomic write/path safety; registry; prompt order/direct input metadata; node/import/link persistence; async result validation/concurrency/failure; UI creation, scrolling, drag-link, unlink, persistence, controls, preview/download. Run `npm test`, `npm run test:e2e`, `node --check`, and `git diff --check`.

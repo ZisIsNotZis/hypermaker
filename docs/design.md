@@ -14,9 +14,7 @@ Draft nodes have no directory until Generate. Imported external files are copied
 
 ## Canvas
 
-Double-click empty canvas creates generation node. Cards drag; canvas pans/zooms. Artifact preview uses a 4:3 aspect ratio. Dragging A onto B creates input A on B; source returns after linking. Dragging continues for the complete pointer gesture even when pointer leaves the card title bar. Links are directional arrows above cards. Right-click link cancels it and suppresses browser menu. Clicking any card raises it. Each card has a Delete button; clicking it asks for confirmation, then deletes. Reset layout uses dependency layering and collision-free spacing.
-
-Double-click empty canvas creates generation node. Cards drag; canvas pans/zooms. Dragging A onto B creates input A on B; source returns after linking. Dragging onto empty canvas moves card. Links are directional arrows above cards. Right-click link cancels it and suppresses browser menu. Clicking any card raises it. Reset layout uses dependency layering and collision-free spacing.
+Double-click empty canvas creates generation node. Cards drag; canvas pans/zooms. Artifact preview uses a 4:3 aspect ratio. Dragging A onto B creates input A on B; source returns after linking. Dragging continues for the complete pointer gesture even when pointer leaves the card title bar. Links are directional arrows above cards. Right-click link cancels it and suppresses browser menu. Clicking any card raises it. Each card has a Delete button; clicking it asks for confirmation, then deletes. Reset layout reflows every card into a four-column grid with fixed spacing (no dependency layering yet).
 
 ## Generation
 
