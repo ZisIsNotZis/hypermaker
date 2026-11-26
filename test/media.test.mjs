@@ -30,7 +30,10 @@ async function startApp(port, env) {
   for (let i = 0; i < 40; i++) { try { if ((await fetch(`http://127.0.0.1:${port}/api/registry`)).ok) return app; } catch {} await new Promise(r => setTimeout(r, 100)); }
   throw new Error(`media fixture server on port ${port} did not start`);
 }
-before(async () => { if (skip) return; await startApp(8961, {}); await startApp(8962, { REMOTION_TEST_VIDEO: "1" }); browser = await launchBrowser(); });
+// Pin the switch on both sides: the fixture branches on REMOTION_TEST_VIDEO, so a
+// shell that already exports it would otherwise turn the image case into a video
+// render and fail on the PNG assertion.
+before(async () => { if (skip) return; await startApp(8961, { REMOTION_TEST_VIDEO: "0" }); await startApp(8962, { REMOTION_TEST_VIDEO: "1" }); browser = await launchBrowser(); });
 after(async () => { await browser?.close(); for (const app of apps) app.kill(); });
 
 const post = (port, path, body) => fetch(`http://127.0.0.1:${port}${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }).then(r => r.json());

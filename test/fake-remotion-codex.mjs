@@ -14,7 +14,9 @@ const dir = process.env.HYPERMAKER_NODE_DIR || process.cwd();
 mkdirSync(dir, { recursive: true });
 const entry = join(dir, "remotion-entry.jsx");
 const script = join(dir, "render-remotion.mjs");
-const video = Boolean(process.env.REMOTION_TEST_VIDEO);
+// Boolean("0") is true, so a deliberate REMOTION_TEST_VIDEO=0 would have rendered a
+// video as well. Only an explicit yes means video.
+const video = /^(1|true|yes)$/i.test(String(process.env.REMOTION_TEST_VIDEO || "").trim());
 const artifact = join(dir, video ? "remotion-square.mp4" : "remotion-square.png");
 const fromEnv = [process.env.HYPERMAKER_CHROME, process.env.CHROME_BIN].filter(Boolean)[0];
 const browser = fromEnv || chromium.executablePath();
