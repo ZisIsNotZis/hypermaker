@@ -26,7 +26,15 @@ Test changes:
   asserts the PNG signature plus the 320x180 image the canvas shows. It skips with
   a printed reason when no browser exists, and a fixture that writes text into a
   `.png` file makes it fail, so a green run means something was rendered.
-- `npm test` is 19/19 with a real Chromium (was 18/18).
+- `test/media.test.mjs` now also renders a video: the same fixture with
+  `REMOTION_TEST_VIDEO=1` bundles and calls `renderMedia` with h264 on its own
+  server, and the test asserts the `ftyp`/`avc1`/`moov` container plus a
+  `<video>` the browser decodes at 320x180 with a non-zero duration. The
+  negative control (text written into a `.mp4` file) fails with
+  `a text file must not pass as an ISO base media container`.
+- `npm test` is 20/20 with a real Chromium (was 19/19). What remains unproven
+  is that a realistic composition renders as intended: the render is real, the
+  composition is the fixture's.
 
 ## 0.1.0 — 2026-08-31
 

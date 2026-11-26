@@ -19,6 +19,9 @@ writeFileSync(bin, `#!/bin/sh\nexec node ${JSON.stringify(join(root, "test/fake-
 let app, browser;
 
 before(async () => {
+  // When every test in this file is skipped there is nothing to launch; spinning
+  // up a browser anyway printed a full error banner next to the one skip reason.
+  if (missingBrowser) return;
   app = spawn("node", ["server/index.mjs"], { cwd: root, env: { ...process.env, PORT: String(port), CODEX_BIN: bin, HYPERMAKER_WORKDIR: join(base, "workspace"), HYPERMAKER_RESET_WORKSPACE: "1" } });
   app.stderr.on("data", chunk => process.stderr.write(chunk));
   for (let i = 0; i < 40; i++) { try { if ((await fetch(`http://127.0.0.1:${port}/api/registry`)).ok) break; } catch {} await new Promise(r => setTimeout(r, 100)); }
