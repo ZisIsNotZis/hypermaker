@@ -24,7 +24,7 @@ generation. It does not claim hosted collaboration or production reliability.
 
 ## Deferred
 
-No benchmark results, video, or paper were produced; these remain out of scope.
+No benchmark results, project video, or paper were produced; these remain out of scope. (Generated video *output* is a product feature and is now covered by a real-render test — see [impl.md](impl.md).)
 
 ## Versioning
 
