@@ -1,6 +1,6 @@
 **English** | [简体中文](README.zh-CN.md)
 
-> **Status: canvas re-verified (0.1.0, 2026-11-26).** `npm test` passes 18/18 when a usable Chromium is available (8 real-browser cases). The ordinary user path — create, type, move, overlap and raise, link by dragging one card onto another's title bar, right-click unlink, delete with confirmation, reopen — was exercised end to end in a real browser.
+> **Status: canvas re-verified (0.1.0, 2026-11-26).** `npm test` passes 19/19 when a usable Chromium is available (9 browser cases, one of which renders a real PNG through Remotion). The ordinary user path — create, type, move, overlap and raise, link by dragging one card onto another's title bar, right-click unlink, delete with confirmation, reopen — was exercised end to end in a real browser.
 
 <div align="center">
   <img src="docs/logo.svg" alt="Hypermaker logo" width="112" />
@@ -69,7 +69,7 @@ Server environment variables:
 
 - Build a DAG by dragging cards together; only direct inputs enter a downstream prompt.
 - Generate plain UTF-8 text with the `llm` method.
-- Generate still images and video with the `hyperframe` or `remotion` methods.
+- Generate still images and video with the `hyperframe` or `remotion` methods. A still image is verified end to end through a real Remotion render (`test/media.test.mjs`, `demo` quality, 320x180 PNG asserted by signature and by what the canvas preview displays); video and audio are wired but not yet backed by a real-generation test — see **Verification limits** below.
 - Generate WAV/MP3/OGG speech with the local `tts.cpp` or `bark.cpp` methods.
 - Pick a quality preset — `sketch`, `demo`, `standard`, `artistic`, `realistic` — which changes how much inspection and repair the agent does.
 - Import an existing local file as a constant node (no method, no Generate); the file is copied into its node directory. Import is HTTP-only today (`POST /api/import`), like clone and relayout below.
@@ -82,6 +82,16 @@ Server environment variables:
 - Clone and relayout through the HTTP API (`POST /api/clone`, `POST /api/layout`); the canvas UI does not expose buttons for these yet.
 
 The registry is filesystem-driven. A new output type is a directory under `types/`, and a new method is a file `types/<type>/methods/<method>.mjs`; both are loaded at startup, so the harness has no per-type special cases.
+
+### Verification limits
+
+Everything below is what a local, offline run can show. None of it uses a paid model or a real credential.
+
+- **Text** generation is exercised end to end against `test/fake-codex.mjs`, which writes the artifact a real agent would.
+- **Image** generation is exercised end to end against `test/fake-remotion-codex.mjs`, which really bundles and renders with Remotion; the artifact is checked to be a real PNG. The "agent" is fake, the render is not.
+- **Video** (Remotion `renderMedia`, h264) and **audio** (`tts.cpp`, `bark.cpp`) have no real-generation test. The fixtures exist (`REMOTION_TEST_VIDEO=1`, the audio method guides), but a video render and a TTS run have never been taken as evidence here, so treat those two paths as unproven.
+- **`hyperframe`** image/video and the quality presets are passed to the agent as guidance; they were not measured against a real model.
+- A real Codex CLI run is the one thing a local fixture cannot prove. `test/fake-codex.mjs` reproduces the contract (final artifact JSON on stdout and in `--output-last-message`), not the agent's judgment.
 
 ## The mental model
 

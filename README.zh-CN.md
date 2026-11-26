@@ -16,7 +16,7 @@
   <img src="docs/screenshots/canvas.svg" alt="Hypermaker 画布，三张相连的产物卡片" width="94%" />
 </p>
 
-> **状态：画布已复核（0.1.0，2026-11-26）。** 配可用 Chromium 时 `npm test` 为 18/18（含 8 条真实浏览器用例）；普通使用者路径（新建、输入、移动、重叠后抬升、拖到另一张卡标题栏上连线、右键断线、删除确认、重新打开）已在真实浏览器里逐步走通。
+> **状态：画布已复核（0.1.0，2026-11-26）。** 配可用 Chromium 时 `npm test` 为 19/19（含 9 条浏览器用例，其中一条用 Remotion 真渲染出一张 PNG）；普通使用者路径（新建、输入、移动、重叠后抬升、拖到另一张卡标题栏上连线、右键断线、删除确认、重新打开）已在真实浏览器里逐步走通。
 >
 > 下方原始说明保留：已收尾的里程碑。 这个原型已经达成实验目标；除非项目的
 > 输入或目标发生变化，否则不再计划开发。见 [`docs/project-status.md`](docs/project-status.md)。
@@ -68,7 +68,7 @@ npm run dev
 
 - 拖动卡片彼此相连，搭出 DAG；只有直接输入会进入下游提示词。
 - 用 `llm` 方法生成纯 UTF-8 文本。
-- 用 `hyperframe` 或 `remotion` 方法生成静态图片和视频。
+- 用 `hyperframe` 或 `remotion` 方法生成静态图片和视频。图片有真实的端到端证据（`test/media.test.mjs` via 真实 Remotion 渲染，断言 PNG 签名与画布预览显示）；视频和音频已接线但还没有真实生成测试，见下方**验证边界**。
 - 用本地 `tts.cpp` 或 `bark.cpp` 方法生成 WAV/MP3/OGG 语音。
 - 选择质量档位——`sketch`、`demo`、`standard`、`artistic`、`realistic`——它决定代理检查与返工的力度。
 - 把本地已有文件导入成常量节点（没有方法、不能 Generate），文件会复制进该节点目录。
@@ -166,6 +166,16 @@ git diff --check
 - 基准测试、视频或论文——这个里程碑没有产出，也不在范围内。
 
 注册表这层边界的存在，是为了让以后的实验（新类型、换一个代理）不必重写核心。如果有人接手，就从这条缝开始。
+
+### 验证边界
+
+以下都是本地、离线运行能拿到的证据，没有用到付费模型或真实凭据。
+
+- **文本**：对着 `test/fake-codex.mjs` 跑通全流程，夹具写出的产物与真实代理同形。
+- **图片**：对着 `test/fake-remotion-codex.mjs` 跑通全流程；这个夹具真的 bundle 并用 Remotion 渲染，产物被验证为真 PNG。假的只是“代理”，渲染是真的。
+- **视频**（Remotion `renderMedia`，h264）与**音频**（`tts.cpp`、`bark.cpp`）没有真实生成测试。夹具存在（`REMOTION_TEST_VIDEO=1` 与音频方法说明），但一次视频渲染和一次 TTS 运行都还没被当成证据，请把这两条路径视为未验证。
+- **`hyperframe`** 的图片/视频与质量档位是交给代理的指导，没有对着真实模型量过。
+- 真实 Codex CLI 的运行是本地夹具唯一证不了的事：`test/fake-codex.mjs` 复现的是契约（stdout 与 `--output-last-message` 里的最终产物 JSON），不是代理的判断力。
 
 ## 许可证
 
