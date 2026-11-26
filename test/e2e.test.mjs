@@ -4,7 +4,15 @@ import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { spawn } from "node:child_process";
-import { launchBrowser } from "./browser.mjs";
+import { existsSync } from "node:fs";
+import { browserPath, launchBrowser } from "./browser.mjs";
+
+// Without a Chromium every canvas test would fail eight times with the same
+// Playwright banner. Skip them with one readable reason instead; the unit and
+// canvas-script tests still run.
+const missingBrowser = existsSync(browserPath()) ? null
+  : `no Chromium at ${browserPath()}: run \`npx playwright install chromium\` or set HYPERMAKER_CHROME`;
+const canvasTest = (name, fn) => test(name, missingBrowser ? { skip: missingBrowser } : {}, fn);
 
 const root = process.cwd(), port = 8951, base = mkdtempSync(join(tmpdir(), "hypermaker-e2e-")), bin = join(base, "codex");
 writeFileSync(bin, `#!/bin/sh\nexec node ${JSON.stringify(join(root, "test/fake-codex.mjs"))} "$@"\n`); chmodSync(bin, 0o755);
@@ -44,7 +52,7 @@ const edgeEnds = page => page.evaluate(() => [...document.querySelectorAll(".edg
 }));
 const cardBox = async (page, id) => page.locator(`.card[data-id="${id}"]`).boundingBox();
 
-test("double-click creates a card, typing persists, and Generate produces an artifact", async () => {
+canvasTest("double-click creates a card, typing persists, and Generate produces an artifact", async () => {
   const page = await blankPage({ width: 1100, height: 700 });
   await page.mouse.dblclick(150, 150); await page.waitForTimeout(150);
   assert.equal(await page.locator(".card").count(), 1);
@@ -62,7 +70,7 @@ test("double-click creates a card, typing persists, and Generate produces an art
   await page.close();
 });
 
-test("drag links two cards and right-click removes the link", async () => {
+canvasTest("drag links two cards and right-click removes the link", async () => {
   const page = await blankPage();
   await page.mouse.dblclick(120, 120); await page.waitForTimeout(150);
   await page.mouse.dblclick(620, 120); await page.waitForTimeout(150);
@@ -81,7 +89,7 @@ test("drag links two cards and right-click removes the link", async () => {
   await page.close();
 });
 
-test("link lines stay attached to their cards through pan, zoom and drag", async () => {
+canvasTest("link lines stay attached to their cards through pan, zoom and drag", async () => {
   const page = await blankPage({ width: 1100, height: 700 });
   const created = (await post("/api/node", { x: 100, y: 100, type: "text", method: "llm" })).nodes;
   const source = Object.keys(created).at(-1);
@@ -116,7 +124,7 @@ test("link lines stay attached to their cards through pan, zoom and drag", async
   await page.close();
 });
 
-test("clicking the exposed edge of a covered card raises it, and its controls then work", async () => {
+canvasTest("clicking the exposed edge of a covered card raises it, and its controls then work", async () => {
   const page = await blankPage({ width: 1100, height: 700 });
   const first = Object.keys((await post("/api/node", { x: 40, y: 40, type: "text", method: "llm", prompt: "card one" })).nodes)[0];
   const created = await post("/api/node", { x: 220, y: 60, type: "text", method: "llm", prompt: "card two" });
@@ -168,7 +176,7 @@ test("clicking the exposed edge of a covered card raises it, and its controls th
   await page.close();
 });
 
-test("a link passing behind a card never steals that card's own controls, and stays removable", async () => {
+canvasTest("a link passing behind a card never steals that card's own controls, and stays removable", async () => {
   const page = await blankPage({ width: 1000, height: 620 });
   // Two cards, linked left to right, with the fronts deliberately in line with the link.
   const a = Object.keys((await post("/api/node", { x: 60, y: 200, type: "text", method: "llm", prompt: "left" })).nodes)[0];
@@ -243,7 +251,7 @@ test("a link passing behind a card never steals that card's own controls, and st
   await page.close();
 });
 
-test("a card covered by another can still be generated after being raised", async () => {
+canvasTest("a card covered by another can still be generated after being raised", async () => {
   const page = await blankPage({ width: 900, height: 600 });
   const first = Object.keys((await post("/api/node", { x: 40, y: 90, type: "text", method: "llm", prompt: "underneath" })).nodes)[0];
   await post("/api/node", { x: 150, y: 60, type: "text", method: "llm", prompt: "on top" });
@@ -258,7 +266,7 @@ test("a card covered by another can still be generated after being raised", asyn
   await page.close();
 });
 
-test("drag keeps tracking after the pointer leaves the header, and Delete asks confirmation", async () => {
+canvasTest("drag keeps tracking after the pointer leaves the header, and Delete asks confirmation", async () => {
   const page = await blankPage({ width: 900, height: 600 });
   await page.mouse.dblclick(120, 120); await page.waitForTimeout(150);
   const card = page.locator(".card").first(), box = await card.boundingBox();
@@ -288,7 +296,7 @@ test("drag keeps tracking after the pointer leaves the header, and Delete asks c
   await page.close();
 });
 
-test("reopening the page restores cards, links and generated previews", async () => {
+canvasTest("reopening the page restores cards, links and generated previews", async () => {
   const page = await blankPage();
   await page.mouse.dblclick(120, 120); await page.waitForTimeout(150);
   await page.mouse.dblclick(620, 120); await page.waitForTimeout(150);

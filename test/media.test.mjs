@@ -4,8 +4,7 @@ import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { spawn } from "node:child_process";
-import { chromium } from "playwright";
-import { launchBrowser } from "./browser.mjs";
+import { browserPath, launchBrowser } from "./browser.mjs";
 
 // Image generation is not faked here: test/fake-remotion-codex.mjs bundles and
 // renders with Remotion for real, so a passing run proves the harness, the prompt
@@ -18,7 +17,7 @@ let app, browser;
 // Remotion needs a real browser. Point at one with HYPERMAKER_CHROME/CHROME_BIN,
 // otherwise use Playwright's bundled build; when neither exists, say so instead
 // of reporting a green test that rendered nothing.
-const chrome = [process.env.HYPERMAKER_CHROME, process.env.CHROME_BIN].filter(Boolean)[0] || chromium.executablePath();
+const chrome = browserPath();
 const canRender = existsSync(chrome);
 
 before(async () => {
