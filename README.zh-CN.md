@@ -16,7 +16,9 @@
   <img src="docs/screenshots/canvas.svg" alt="Hypermaker 画布，三张相连的产物卡片" width="94%" />
 </p>
 
-> **状态：已收尾的里程碑（0.1.0）。** 这个原型已经达成实验目标；除非项目的
+> **状态：画布已复核（0.1.0，2026-11-26）。** 配可用 Chromium 时 `npm test` 为 18/18（含 8 条真实浏览器用例）；普通使用者路径（新建、输入、移动、重叠后抬升、拖到另一张卡标题栏上连线、右键断线、删除确认、重新打开）已在真实浏览器里逐步走通。
+>
+> 下方原始说明保留：已收尾的里程碑。 这个原型已经达成实验目标；除非项目的
 > 输入或目标发生变化，否则不再计划开发。见 [`docs/project-status.md`](docs/project-status.md)。
 
 ## 为什么要 Hypermaker？
@@ -73,6 +75,9 @@ npm run dev
 - 多个生成任务可并发进行；每张卡片通过 SSE 显示自己的 `draft` / `running` / `idle` / `error` 状态。
 - 每次运行后都能在磁盘上看到完整的提示词、脚本、产物、`codex.jsonl` 记录和该节点自己的 `AGENTS.md`。
 - 在卡片里直接预览文本、图片、音频和视频，下载产物，确认后删除节点。
+- 处理互相重叠的卡片：最后动过的那张画在最前，点击被压住卡片露出的边缘就能把它抬到最前，之后它的控件照常可用。
+- 连线画在画布坐标系里，平移、缩放和拖卡片时始终贴在卡片边上。
+- 拖空白处平移画布，滚轮以指针为中心缩放；写提示词时卡片不会失去焦点或丢字。
 - 通过 HTTP 接口克隆节点、重排布局（`POST /api/clone`、`POST /api/layout`）；画布界面目前还没给这两个按钮。
 
 注册表由文件系统驱动：新输出类型就是 `types/` 下的一个目录，新方法就是一个 `types/<type>/methods/<method>.mjs` 文件，启动时统一加载，所以 harness 里没有任何按类型写的特例分支。
@@ -116,13 +121,23 @@ docs/                  design.md、impl.md、project-status.md
 
 ```bash
 npm install          # Node.js 20+，会安装 Playwright 与 Remotion 相关包
-npm test             # 确定性 harness/注册表/工作区测试，用假的 Codex
-npm run test:e2e     # 画布测试，需要 Playwright 能启动的 Chromium
+npm test             # 单元 + 画布脚本 + 浏览器测试，全部用假 Codex
+npm run test:e2e     # 只跑画布测试，需要 Playwright 能启动的 Chromium
 node --check server/index.mjs
 git diff --check
 ```
 
 `npm test` 用的是 `test/fake-codex.mjs` 及其同类假实现，不需要任何模型访问。测试时设 `HYPERMAKER_RESET_WORKSPACE=1` 可以从空图开始。
+
+浏览器测试通过 `test/browser.mjs` 启动 Chromium。如果不想跑 `npx playwright install`，可以指向本机已有的浏览器：
+
+```bash
+HYPERMAKER_CHROME=/path/to/chrome npm test
+```
+
+`CHROME_BIN` 也可以作为后备。两个变量都不设时用 Playwright 自带的浏览器；自带浏览器缺失会报 `Executable doesn't exist`。浏览器测试都在全新的工作区里从零搭夹具，不需要联网，也不需要任何凭据。
+
+`node test/journey.mjs` 不在 `npm test` 里：它只完整走一遍普通使用者路径——新建、输入、重叠、抬升、移动、连线、断线、生成、重新打开、删除——每步截一张图到 `.tmp/journey/`（可用 `HYPERMAKER_SHOTS` 改目录），并把每步实际发生了什么以 JSON 打印出来。人可以同时看图和事实，而不用读断言。
 
 ## 如何参与
 
@@ -141,7 +156,7 @@ git diff --check
 - 以整数 id 为键的节点图，单个 `workspace.yml` 持久化，原子写入，节点内路径约束。
 - 文件系统注册表：四种输出类型、五个方法（`llm`、`remotion`、`hyperframe`、`tts.cpp`、`bark.cpp`）。
 - 通过 Codex CLI 并发异步生成，按节点经 SSE 汇报状态，产物与脚本经过校验。
-- 画布：新建、拖动、连线、取消连线、平移、缩放、预览、下载、确认删除、导入。
+- 画布：新建、拖动、连线、取消连线、平移、缩放、预览、下载、确认删除（导入目前只有 HTTP 接口 `POST /api/import`，画布上没有按钮）。
 - 确定性测试，以及一套跑在假 Codex 上的 Playwright 浏览器测试。
 
 **暂缓 / 目前不计划**

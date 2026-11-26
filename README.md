@@ -1,6 +1,6 @@
-**项目状态 · 未完成（2026-11-26）**。虽自报封板，实际 npm test 配可用 Chromium 8/10；两条画布端到端测试超时，卡片控件被另一个卡片文本框遮挡。 复核普通页面拖放、删除和重叠卡片控件的可用性，再复跑真实浏览器 E2E。
-
 **English** | [简体中文](README.zh-CN.md)
+
+> **Status: canvas re-verified (0.1.0, 2026-11-26).** `npm test` passes 18/18 when a usable Chromium is available (8 real-browser cases). The ordinary user path — create, type, move, overlap and raise, link by dragging one card onto another's title bar, right-click unlink, delete with confirmation, reopen — was exercised end to end in a real browser.
 
 <div align="center">
   <img src="docs/logo.svg" alt="Hypermaker logo" width="112" />
@@ -72,10 +72,13 @@ Server environment variables:
 - Generate still images and video with the `hyperframe` or `remotion` methods.
 - Generate WAV/MP3/OGG speech with the local `tts.cpp` or `bark.cpp` methods.
 - Pick a quality preset — `sketch`, `demo`, `standard`, `artistic`, `realistic` — which changes how much inspection and repair the agent does.
-- Import an existing local file as a constant node (no method, no Generate); the file is copied into its node directory.
+- Import an existing local file as a constant node (no method, no Generate); the file is copied into its node directory. Import is HTTP-only today (`POST /api/import`), like clone and relayout below.
 - Run several generations concurrently; each card shows its own `draft` / `running` / `idle` / `error` state over SSE.
 - Inspect the exact prompt, script, artifact, `codex.jsonl` transcript and node-local `AGENTS.md` on disk after every run.
 - Preview text, image, audio and video natively in the card, download the artifact, and delete a node (with confirmation) from the canvas.
+- Work on overlapping cards: the card you touched last is drawn in front, and clicking a covered card's exposed edge brings it forward, so its controls stay reachable.
+- Link lines are drawn in canvas space, so they stay attached to their cards through pan, zoom and drag.
+- Pan the canvas by dragging empty space, zoom with the wheel (anchored at the pointer), and edit the prompt without the card losing focus or text.
 - Clone and relayout through the HTTP API (`POST /api/clone`, `POST /api/layout`); the canvas UI does not expose buttons for these yet.
 
 The registry is filesystem-driven. A new output type is a directory under `types/`, and a new method is a file `types/<type>/methods/<method>.mjs`; both are loaded at startup, so the harness has no per-type special cases.
@@ -119,13 +122,23 @@ Project source of truth: [`docs/design.md`](docs/design.md) for product behavior
 
 ```bash
 npm install          # Node.js 20+, installs Playwright and the Remotion packages
-npm test             # deterministic harness/registry/workspace tests, fake Codex
-npm run test:e2e     # canvas tests; needs a Chromium that Playwright can launch
+npm test             # unit + canvas-script + browser tests on fake Codex
+npm run test:e2e     # canvas tests only; needs a Chromium Playwright can launch
 node --check server/index.mjs
 git diff --check
 ```
 
 `npm test` uses `test/fake-codex.mjs` and its siblings, so it needs no model access. In the tests, set `HYPERMAKER_RESET_WORKSPACE=1` to start from an empty graph.
+
+The browser tests launch Chromium through `test/browser.mjs`. If `npx playwright install` is not an option, point the helper at a Chromium you already have:
+
+```bash
+HYPERMAKER_CHROME=/path/to/chrome npm test
+```
+
+`CHROME_BIN` works as a fallback. Without either variable Playwright uses its bundled browser, and a missing bundle is reported as `Executable doesn't exist`. The browser tests build every fixture from scratch on a fresh workspace, so they need no network and no credentials.
+
+`node test/journey.mjs` is not part of `npm test`: it walks the ordinary-user path once — create, type, overlap, raise, move, link, unlink, generate, reopen, delete — and screenshots each step into `.tmp/journey/` (or `HYPERMAKER_SHOTS`). It prints, as JSON, what it did at each step, so a person can look at the pictures and the facts instead of reading assertions.
 
 ## How to contribute
 
