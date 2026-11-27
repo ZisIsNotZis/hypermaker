@@ -28,6 +28,7 @@
 import { readFileSync } from "node:fs";
 import { gunzipSync } from "node:zlib";
 import { fileURLToPath } from "node:url";
+import { expandNumerals } from "./numbers.mjs";
 // Loaded once, on first use: a test that never speaks should not pay the 3 MB parse, and a
 // module-level read would make importing this file a side effect on the filesystem.
 let DICT = null;
@@ -247,13 +248,19 @@ const RULES = [
 // have the old stress. This is the same lesson a second time, from the other direction: the
 // pronunciation fix broke old takes by changing a table in place, and the fix for *that* was
 // versioning. Versioning is what lets this one ship at all.
-export const READING_SETS = ["rules-1", "cmudict-1", "cmudict-2"];
+export const READING_SETS = ["rules-1", "cmudict-1", "cmudict-2", "cmudict-3"];
 // What this build renders when nobody says otherwise.
-export const CURRENT_READINGS = "cmudict-2";
+export const CURRENT_READINGS = "cmudict-3";
 // The sets that read words from the vendored dictionary. `cmudict-2` differs from `cmudict-1`
-// only in the stress it records per word, so the same word sounds the same in both - which is
-// what lets a take made by either be recognised as the same words (see `bindTake`).
-const DICTIONARY_SETS = new Set(["cmudict-1", "cmudict-2"]);
+// only in the stress it records per word, and `cmudict-3` from `cmudict-2` only in numerals
+// (`voice/numbers.mjs`), so every word they share sounds the same in all three - which is what
+// lets a take made by any of them be recognised as the same words (see `bindTake`).
+const DICTIONARY_SETS = new Set(["cmudict-1", "cmudict-2", "cmudict-3"]);
+// The sets that read a numeral as the words a person would say (`8:30` -> eight thirty).
+// The older sets must keep reading digits one at a time, to the sample: that is what their
+// published takes sound like, and re-reading them would make every such take look like a lie
+// about its own script - the defect the reading sets exist to prevent.
+const NUMERAL_SETS = new Set(["cmudict-3"]);
 
 export function checkReadings(name) {
   if (READING_SETS.includes(name)) return name;
@@ -266,6 +273,14 @@ export function pronounce(word, readings = CURRENT_READINGS) {
   const set = checkReadings(readings);
   const clean = String(word).toLowerCase().replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, "");
   if (!clean) return [];
+  // A numeral is read as the words a person would say, but only by a set that does numerals.
+  // Every older set falls through to its own digit-by-digit reading below, unchanged, so the
+  // audio it published still reproduces exactly. `25` tried as a whole token first: `2nd` is
+  // an ordinal, and `5` alone is still a digit the exceptions table reads.
+  if (NUMERAL_SETS.has(set)) {
+    const spoken = expandNumerals(String(word).toLowerCase().replace(/^[^a-z0-9$£€%:.',-]+|[^a-z0-9$£€%:.',-]+$/g, ""));
+    if (spoken) return spoken.flatMap(w => pronounce(w, set));
+  }
   // The dictionary answers nearly every word, and it answers with the word's real
   // pronunciation rather than what its spelling suggests. The hand-written list stays ahead
   // of it only for readings the dictionary's first entry gets wrong for narration (`CHOSEN`),
@@ -310,12 +325,31 @@ export function pronounce(word, readings = CURRENT_READINGS) {
 // reads both from one place and cannot be handed one word's sounds with another's metre.
 export function tokenize(text, readings = CURRENT_READINGS) {
   checkReadings(readings);
-  // Only the set that carries stress asks for it. `cmudict-1` and `rules-1` must render exactly
-  // the bytes they always have, or every take they made would stop reproducing.
-  const withStress = readings === "cmudict-2";
-  const words = String(text).split(/\s+/).filter(Boolean);
+  // Which sets carry a stress mark: `cmudict-2` added it, and `cmudict-3` changed nothing about
+  // it. `cmudict-1` and `rules-1` must render exactly the bytes they always have, or every take
+  // they made would stop reproducing.
+  const withStress = readings === "cmudict-2" || readings === "cmudict-3";
+  // A numeral is broken into the words it is said as *before* anything else looks at the token,
+  // so `1,200` becomes two tokens with their own stress from their own dictionary entries. Doing
+  // the expansion inside `pronounce` instead would have made one token out of "one thousand two
+  // hundred", and the synthesizer stresses the first syllable of a token - which is not where any
+  // of those three words puts its emphasis.
+  // The pause belongs to the last word of the numeral, because it comes after the phrase -
+  // which is why the closing punctuation is lifted off the token before it is read and put
+  // back on the final word. Leaving it on made `1990.` and `8:30.` unreadable: the full stop
+  // made the shape fail every pattern, so a sentence-final number was refused while the same
+  // number mid-sentence was read correctly.
+  const split = raw => {
+    if (!NUMERAL_SETS.has(readings) || !/[0-9]/.test(raw)) return [{ raw }];
+    const tail = /[.!?,;:]+$/.exec(raw)?.[0] ?? "";
+    const body = raw.slice(0, raw.length - tail.length).replace(/^[^A-Za-z0-9$£€%]+/, "");
+    const said = expandNumerals(body);
+    if (!said) return [{ raw }];
+    return said.map((word, i) => ({ raw: i === said.length - 1 ? word + tail : word }));
+  };
+  const words = String(text).split(/\s+/).filter(Boolean).flatMap(split);
   const unreadable = [];
-  const tokens = words.map(raw => {
+  const tokens = words.map(({ raw }) => {
     const cleaned = raw.replace(/^[^A-Za-z0-9']+|[^A-Za-z0-9']+$/g, "");
     const punctuation = /[.!?]$/.test(raw) ? "sentence" : /[,;:]$/.test(raw) ? "clause" : "";
     // A token with no letters or digits left is punctuation, and punctuation is a pause.

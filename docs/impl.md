@@ -216,6 +216,22 @@ what they always did. `tokenize()` attaches `stress` to a token only for `cmudic
 `synthesize()` uses it when it names a syllable the word actually has - an index past the end
 is treated as "no note", because following it would move the emphasis onto the next word.
 
+Numerals are the same problem a third time, and were solved the same way. The voice read a
+number digit by digit and refused any token that was not letters or digits, so `8:30`, `1,200`
+and `21st` could not be rendered at all and `1990` was said "one nine nine zero".
+`voice/numbers.mjs` turns a written numeral into the words a person says, and `cmudict-3` is
+`cmudict-2` plus that reading. It is a new set rather than an edit because the digit-by-digit
+reading is what older takes sound like: `test/numbers.test.mjs` pins `cmudict-2`'s reading of
+`1990`, pins that a numeral-free sentence renders byte-identically under `cmudict-3`, and
+verifies a `cmudict-2` take of a sentence with a year through `voice/verify-take.mjs`. The
+expansion happens in `tokenize()`, not in `pronounce()`: `1,200` has to become four *tokens* so
+each word carries its own stress from its own dictionary entry, and one token would have been
+stressed on its first syllable only. Closing punctuation is lifted off the token before the
+numeral is read and put back on the last word - leaving it on made a sentence-final `1990.`
+unreadable while the same number mid-sentence worked. The reader returns `null` for shapes it
+does not handle (`km`, `ft`, `3/4/2024`, `1990-1995`, a mismatched ordinal suffix), and those
+tokens are refused by name as before.
+
 Whether the emphasis landed where the dictionary says is then read back out of the file by
 `voice/check-stress.mjs`, which enumerates every stress assignment for the script, renders
 each through the real `renderParagraph`, and reports the one that reproduces the samples

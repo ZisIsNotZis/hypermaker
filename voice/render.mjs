@@ -57,7 +57,7 @@ if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith
   const out = arg("out");
   const text = arg("text") ?? (arg("file") ? readFileSync(arg("file"), "utf8") : null);
   if (!out || text == null) {
-    console.error("usage: node voice/render.mjs --text \"...\" --out narration.wav [--timeline out.json] [--rate 1.1] [--pitch 112] [--readings rules-1|cmudict-1|cmudict-2]\n       node voice/render.mjs --file script.txt --out narration.wav\n       node voice/render.mjs --check narration.wav --words \"...\"\n\n--readings picks the table that decides how each word is read; the take records it, because\nthe same words read by a different table are a different recording. It defaults to this\nbuild's table, and naming one it does not have is an error rather than a fallback.\n\ncmudict-2 is cmudict-1 plus the stress of each word, so the emphasis lands on the syllable the\ndictionary marks instead of always on the first: 'machine' is ma-CHINE, not MA-chine.\nrules-1 and cmudict-1 are frozen - audio made by them still verifies exactly as it did.\nTo hear which syllable a file actually stresses: node voice/check-stress.mjs --wav file.wav\n--timeline file.json (exit 0 = every word where the dictionary puts it, 4 = read but stressed\nelsewhere, 2 = could not be read).");
+    console.error("usage: node voice/render.mjs --text \"...\" --out narration.wav [--timeline out.json] [--rate 1.1] [--pitch 112] [--readings rules-1|cmudict-1|cmudict-2|cmudict-3]\n       node voice/render.mjs --file script.txt --out narration.wav\n       node voice/render.mjs --check narration.wav --words \"...\"\n\n--readings picks the table that decides how each word is read; the take records it, because\nthe same words read by a different table are a different recording. It defaults to this\nbuild's table, and naming one it does not have is an error rather than a fallback.\n\ncmudict-2 is cmudict-1 plus the stress of each word, so the emphasis lands on the syllable the\ndictionary marks instead of always on the first: 'machine' is ma-CHINE, not MA-chine.\ncmudict-3 is cmudict-2 plus numerals read as words: '8:30' is eight thirty, '1990' is nineteen\nninety, '1,200' is one thousand two hundred, '$5' is five dollars, '40%' is forty percent.\nrules-1, cmudict-1 and cmudict-2 are frozen - audio made by them still verifies exactly as it\ndid, including their digit-by-digit reading of every number.\nTo hear which syllable a file actually stresses: node voice/check-stress.mjs --wav file.wav\n--timeline file.json (exit 0 = every word where the dictionary puts it, 4 = read but stressed\nelsewhere, 2 = could not be read).");
     process.exit(1);
   }
   // One phrase per line, blank lines skipped: that is the shape an agent writes a script in,
@@ -65,7 +65,7 @@ if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith
   const phrases = text.split(/\r?\n/).map(line => line.trim()).filter(Boolean).map(line => ({ text: line }));
   const unreadable = phrases.flatMap(p => audit(p.text).unreadable);
   if (unreadable.length) {
-    console.error(`this voice has no way to say: ${[...new Set(unreadable)].join(", ")}. It reads English letters and digits only; rewrite the line in English words.`);
+    console.error(`this voice has no way to say: ${[...new Set(unreadable)].join(", ")}. It reads English words and the numeral shapes listed above; write the rest in words.`);
     process.exit(2);
   }
   let rendered;

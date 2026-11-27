@@ -1,5 +1,52 @@
 # Changelog
 
+
+## Unreleased — a number in a script is said, not spelled out, 2026-11-27
+
+Ordinary narration lines with numbers in them could not be made, or were made as different
+sentences. Measured on the build this slice started from, with the real renderer:
+
+| line | before | now |
+| --- | --- | --- |
+| `The train leaves at 8:30.` | **refused** — `8:30` is not letters or digits | eight thirty |
+| `The house was built in 1990.` | "one nine nine zero" | nineteen ninety |
+| `We sold 1,200 copies.` | **refused** | one thousand two hundred |
+| `It costs $5.` | "five" — the unit vanished | five dollars |
+| `Prices rose 40% last year.` | "four zero" | forty percent |
+| `The 21st century began in 2001.` | **refused** | twenty first … two thousand one |
+
+A creator does not meet a robotic take of their sentence in those cases; they meet a card that
+cannot be generated, or one whose audio says a different sentence while the card shows theirs.
+
+- **`voice/numbers.mjs` reads a numeral the way a person says it**: clock times, years
+  (`1100`–`2999`, without a separator, not a round hundred), ordinals with the suffix checked
+  against the number (`2st` is a typo, not a reading), decades, thousands separators, decimals,
+  money (with its unit, and `$0.50` as fifty cents) and percentages.
+- **It is a new frozen reading set, `cmudict-3`**, not an edit to an existing one. The
+  digit-by-digit reading is what takes published before it sound like, so `rules-1`,
+  `cmudict-1` and `cmudict-2` keep their reading to the sample: a sentence with no numeral in
+  it renders **byte-identically** under `cmudict-3` and `cmudict-2`, and a `cmudict-2` take of a
+  sentence containing a year still verifies through `voice/verify-take.mjs` and is named as
+  `cmudict-2` rather than mislabelled.
+- **The expansion happens in `tokenize()`, not `pronounce()`**, so `1,200` becomes four tokens
+  and each word takes its own stress from its own dictionary entry. One token would have been
+  stressed on its first syllable and nowhere else. Closing punctuation is lifted off before the
+  numeral is read and put back on the last word - without that, a sentence-final `1990.` was
+  refused while the same number mid-sentence worked.
+- **Unknown shapes are still refused by name.** `km`, `ft`, `3/4/2024`, `1990-1995` and a
+  mismatched ordinal suffix return no reading, and the render fails with the same message as
+  before. A guessed date would be a sentence confidently about a different day.
+- **The method guide and `voice/render.mjs --usage` say both halves**: the shapes that are read,
+  and the shapes that are refused, so an agent writing a script does not assume `km` works.
+- **Negative control:** disabling the numeral table and re-running the voice suite fails exactly
+  the three numeral tests (the same reading, the speech render, and the older-take verification)
+  and passes the other eighteen.
+- **Tests: 114/114** with a usable Chromium (was 108/108). Six new in `test/numbers.test.mjs`.
+
+Still unproven, and unchanged by this: nobody has listened. The tests measure a signal and
+compare it with a script; they cannot say a person understood the sentence, and there is no
+recogniser on this machine to stand in for one. `node voice/listening-test.mjs` is still the
+way to settle it.
 ## Unreleased — an honest take whose record was rounded still verifies, and a wrong start is not a wrong script, 2026-11-27
 
 A supervisor found a fourth case at the same entry point, and unlike the first three it was not
