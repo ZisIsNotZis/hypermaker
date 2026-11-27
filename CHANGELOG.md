@@ -1,5 +1,73 @@
 # Changelog
 
+## Unreleased — a revision can be read back, and one canvas cannot fall into another, 2026-11-28
+
+The story this slice was given: make something from a line of text and a picture, change
+one of those materials, make a second take, then look at both and be able to say which
+material and which instruction actually went into which take - and go back to the first
+take's meaning and keep editing it. Walked through the real browser entry, the story did
+work; what it could not do was answer the reading-back part.
+
+**A take said what it was asked for, never what it was made of.** The record already held
+it - each version keeps a frozen copy of each source, and each source names the artifact it
+came from, publish prefix included (`versions/v2-poster.png`). The card printed `poster.png`
+for every take, because `shown()` strips that prefix, and the compare panes named no
+material at all. Two films made from two different posters therefore read `made from #2
+image poster.png`, identically. The card now prints the material's version as a qualifier
+(`poster.png (v1)`), and each compare pane prints its own take's materials, so the two
+panes disagree exactly when the material changed between them.
+
+**The next press is now stated before it happens.** `made from` describes the artifact on
+the card. Once the card upstream had been generated again, those were no longer the bytes
+the next run would freeze - a supervisor went back to an older take, edited its prompt and
+pressed Generate, and only found out afterwards which material the new take had eaten. When
+the live links disagree with the take on the card, the card says `next Generate uses …`
+and names the material that would be frozen; unlinking the last input says it would use no
+material, rather than falling silent. Silence when they agree, because a line that repeats
+the one above it teaches people to stop reading both.
+
+**A run belongs to the workspace it was started in.** Three failures, one cause: a live run
+was treated as a property of the server process and of a bare node id, while ids are per
+workspace. Opening B while A was generating made B's card 1 look busy and refused its
+Generate; the run that finished while B was open wrote its artifact, prompt and sources
+into B's card 1; and coming back to A mid-run rewrote A's own live card as interrupted.
+`running`, its attempt directories, and every line of a run now carry the workspace, and a
+finished run's outcome is written into the run's own `workspace.yml` (queued per
+workspace) instead of whichever canvas is on screen. Coming back to a workspace whose run
+is still going keeps Stop working.
+
+**Opening a workspace is one switch.** It used to set the path and then await recovery,
+which puts back the files of a card whose run died - seconds of copying for a large card.
+For that window the server answered with the new workspace's path and the old workspace's
+cards. Now the new workspace's file is written first and the path and cards change
+together; a failed open (a file where a folder was meant, a read-only directory) leaves the
+canvas that was open exactly as it was, and the next open still works - a rejected promise
+was once stored as "the open queue" and made every later open fail until a restart. An open
+also waits for outcomes already queued for its workspace, so a run that finishes during an
+open appears in the open's own reply.
+
+**A key declared after its first use crashed the ordinary start.** The live-run tables are
+keyed by workspace and card; that key was declared below the module-load `adopt()` that uses
+it, so starting the server against a workspace that already had cards threw
+`Cannot access 'slot' before initialization` and exited, while an empty workspace never
+entered the loop and started fine. Every test that opened a workspace from scratch was
+exactly the case that could not catch it.
+
+Tests: `test/revision.test.mjs` (a take's material version on the card and per compare pane,
+restoring the older meaning, surviving a reload, and the `next Generate` line) and
+`test/workspace-switch.test.mjs` (eight cases: starting against existing cards, a failed
+open leaving the canvas intact and the next open working, a read-only directory refused
+without disturbing the canvas, a run finishing during an open, the two workspaces' cards
+not borrowing each other's runs in either direction, a half-open workspace never being
+visible, and Stop still reaching the run after switching away and back). Negative controls,
+run in an isolated export of `f9b79de`: seven of the eight fail there, each at the
+assertion that names its own failure; `test/revision.test.mjs` fails at its first assertion
+(`got "made from #1 text result.txt"`). One of them was written badly first and passed
+against the old server - a single shared release gate let the second test's run stop
+blocking, so the two runs never overlapped - which is why each gate is now keyed by the
+instruction it releases.
+Suite: **155/155** with a usable Chromium.
+
 ## Unreleased — one press is one run, from the press itself, 2026-11-28
 
 A supervisor found that two open canvases pressing Generate on the same card at the same
@@ -32,7 +100,7 @@ take; Stop during the preparation leaves the approved take, publishes nothing, s
 process, and the card can be used again afterwards; and a settled run does not release the
 claim of the run that follows it. With the claim deferred back to the spawn, the first of
 these fails with two `202`s - the negative control - and the other two stay green, which is
-what they are for. Suite: **146/146** with a usable Chromium, 24 skipped here.
+what they are for. Suite: **155/155** with a usable Chromium, 24 skipped here.
 
 ## Unreleased — a card can be redone without losing what you put beside it, 2026-11-28
 

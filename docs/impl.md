@@ -80,6 +80,30 @@ presses twice over two connections with the snapshot step held open
 (`HYPERMAKER_HOLD_BEFORE_GUARD_MS`, tests only), and fails with two 202s when the claim is
 taken at the spawn instead. SIGINT/SIGTERM cancel live agents so no renderer outlives the server.
 
+## One workspace at a time, and runs that outlive a switch
+
+`running` and `attemptDirs` are keyed by workspace *and* card (`slot(dir, id)`), because node
+ids are per workspace and a run outlives the request that opened another one. Keying by the
+id alone made B's card 1 look busy while A's run was going, refuse its Generate, and point
+its attempt directory into A. A run captures its workspace at the press and takes it
+explicitly on every later line; `finishIn` puts the outcome into the open graph only when the
+graph is the run's own, and otherwise into that workspace's own `workspace.yml`.
+
+Every write to a `workspace.yml` is queued per directory (`serial(dir, work)`), and opening a
+workspace is one of those writes. Two writers used to read the same file, apply their own
+change and each write back, so the later one undid the earlier: a run that finished while its
+workspace was being opened was overwritten by the opener's save of a graph read before the
+result existed. The opener also sets `workdir`/`nodes` only after the new file has been
+written, so a failed open leaves the previous canvas and state untouched - and the queue never
+stores a rejection, or one bad path would fail every later open until a restart. An open waits
+for the writes already queued for its workspace before replying, so its own reply is the
+finished state.
+
+The key is declared above `adopt`, which runs at module load: below it, starting against a
+workspace that already had cards threw `Cannot access 'slot' before initialization` and the
+server exited, while an empty workspace never entered the loop. `test/workspace-switch.test.mjs`
+covers the start-against-existing-cards case as a separate process for that reason.
+
 ## HTTP and UI
 
 Provide workspace open/read/save, node create, import, link/unlink, clone/delete, layout, file serving, asynchronous generation, and cancel. The card shows *Generating…* with a Stop button while a run is live; Stop is hidden otherwise. The stored error renders on the card both when it happens and on a fresh page load — a card built by `shell()` used to skip it, so a failure was visible only until the page was reopened. UI is compact canvas: pointer drag/link/pan, drag-end workspace persistence, 4:3 artifact preview, visible SVG marker arrows with hit paths, control-only wheel suppression, wrapped text, native media viewers, download/image popup, and preview errors. Card raising must not move a card during pointerdown on an interactive control. Delete control executes on click after confirmation.

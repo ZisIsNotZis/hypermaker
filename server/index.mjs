@@ -23,6 +23,13 @@ if (process.env.NODE_ENV === "test" || process.env.HYPERMAKER_RESET_WORKSPACE ==
 // that grows with every interruption.
 async function adopt(graph, dir = workdir) {
   for (const [id, node] of Object.entries(graph)) {
+    // "Running" on disk means cut off only when this process is not running it. The
+    // record is written at the press, so opening another workspace and coming back to
+    // this one while the run is still alive used to rewrite its own live card as
+    // "Run interrupted" - the run then finished onto a card that already claimed it had
+    // died, and the person saw an error followed by a result.
+    const live = running.get(slot(dir, Number(id)));
+    if (node.status === "running" && live) continue;
     if (node.status === "running") { await recover(dir, id, node); graph[id] = { ...node, status: "error", error: "Run interrupted: the server stopped before the agent finished" }; }
     else await recover(dir, id, node);
   }
@@ -33,6 +40,17 @@ async function adopt(graph, dir = workdir) {
 // stops the whole process group). Nothing else may start a second run for the
 // same node while it is there.
 const clients = new Set(), running = new Map();
+// Both live-run tables are keyed by workspace *and* card. Node ids are per workspace, so
+// a run in one workspace and a card in another share an id; keying by the id alone let
+// the second workspace's card take the first one's live run - it looked busy, its
+// Generate was refused, and its attempt directory pointed into the other workspace.
+//
+// Declared here, above `adopt`, because opening a workspace runs `adopt` during module
+// load: with the key defined further down, a `const` in its temporal dead zone threw
+// `Cannot access 'slot' before initialization` and the server exited - but only for a
+// workspace that already had cards, since an empty one never enters the loop. The empty
+// workspaces the tests create were exactly the case that did not hit it.
+const slot = (dir, id) => `${dir}\u0000${id}`;
 // Where each live run is working. Useful to a person looking at a slow card ("what is
 // it doing?") and the honest way for a test to wait for an agent to be really alive.
 const attemptDirs = new Map();
@@ -258,7 +276,7 @@ function freezeSources(workdir, id, sources = []) {
 // The stored status is the last run's outcome; a live run overrides it. A run that
 // the server itself cut off is written to disk as an error at startup, so a card
 // never quietly turns back into a draft after a crash.
-const view = () => ({ workdir, nodes: Object.fromEntries(Object.entries(nodes).map(([id, n]) => [id, { ...nodeRecord(id, n), id: Number(id), workdir: existsSync(join(workdir, id)) ? join(workdir, id) : null, status: running.has(Number(id)) ? "running" : (n.status || (n.artifact ? "idle" : "draft")), attempt: attemptDirs.get(Number(id)) ?? null }])) });
+const view = () => ({ workdir, nodes: Object.fromEntries(Object.entries(nodes).map(([id, n]) => [id, { ...nodeRecord(id, n), id: Number(id), workdir: existsSync(join(workdir, id)) ? join(workdir, id) : null, status: claimFor(id) ? "running" : (n.status || (n.artifact ? "idle" : "draft")), attempt: claimFor(id) ? attemptDirs.get(slot(workdir, Number(id))) ?? null : null }])) });
 const save = () => writeWorkspace(workdir, nodes);
 const emit = event => { const data = `data: ${JSON.stringify(event)}\n\n`; for (const client of clients) client.write(data); };
 const getNode = id => { if (!nodes[id]) throw new Error("Node not found"); return { ...nodes[id], id: Number(id) }; };
@@ -280,18 +298,94 @@ function sendFile(req, res, file) {
   res.writeHead(206, { "content-type": mime, "content-length": end - start + 1, "content-range": `bytes ${start}-${end}/${size}`, "accept-ranges": "bytes" });
   createReadStream(file, { start, end }).pipe(res);
 }
-// A run's slot is released by the run that owns it, never by whatever comes later.
-// A run that settled and had its slot cleared has already allowed the next press to
-// take the slot; a later `running.delete` from the settled run's own tail would then
-// clear the *new* run's claim, and the canvas would offer Generate on a card that is
-// working. Comparing the identity of the claim is what makes that impossible.
-const releaseClaim = (id, claim) => { if (running.get(id) === claim) running.delete(id); };
+// A run belongs to the workspace it was started in, not to this server process. Opening
+// another workspace replaces `nodes` and `workdir` for every later line, including the
+// completion of a run that is still going - and node ids are per workspace, so a
+// finishing run wrote its result, its prompt and its sources into whatever card in the
+// *new* workspace happened to have the same id. Reproduced on the previous commit by the
+// canvas-protection test: opening a second workspace while a card was generating left the
+// new, empty card showing the other workspace's 65 MiB file notice and then its run's
+// outcome. So every line of a run takes its workspace explicitly (`ws`, captured at the
+// press): the bytes go to that workspace's node directory, and `finishIn` writes the
+// outcome into the open graph only when that graph is the run's own.
+const releaseClaim = claim => { const key = slot(claim.workdir, claim.id); if (running.get(key) === claim) running.delete(key); };
+// Every write to a workspace's `workspace.yml` goes through one queue per directory.
+// Two writers could otherwise read the same file, each apply its own change and each
+// write back, and the second silently undid the first. Both cases a supervisor found are
+// this race: a run that finished while its workspace was being opened - the opener saved
+// the graph it had read before the run's result existed, so the artifact was on disk and
+// on neither the canvas nor the record - and a run finishing in a workspace that was not
+// open while the opener's own save was in flight.
+//
+// The queue is per workspace, so it does not serialise unrelated work, and it never
+// carries a failure: an open that fails must not poison the next one (a mistyped path
+// once made every later open fail).
+const queues = new Map();
+function serial(dir, work) {
+  const before = queues.get(dir) ?? Promise.resolve();
+  const run = before.then(work);
+  queues.set(dir, run.catch(() => {}));
+  return run;
+}
+// Opening a workspace is queued too: it is the one other writer of `workspace.yml`.
+function openWorkspace(dir) {
+  return serial(dir, async () => {
+    const graph = await adopt(readWorkspace(dir), dir);
+    // Write before switching. A directory that cannot be written (read-only, a
+    // permission a person does not have) fails here, and the person keeps the canvas
+    // and the state they had - the previous order switched `workdir` first, so a failed
+    // open left the canvas labelled with a workspace it had not opened. This also makes
+    // the switch atomic from the outside: the path and the cards become the new ones
+    // together, after the new file exists.
+    writeWorkspace(dir, graph);
+    workdir = dir;
+    nodes = graph;
+    idCounter = Math.max(0, ...Object.keys(graph).map(Number));
+  });
+}
+// Where a finished run puts its outcome. When the person still has the run's own
+// workspace open this is the in-memory graph, exactly as before. When they have opened
+// another one, the outcome belongs to the workspace the run was started in, and the only
+// honest place for it is that workspace's own `workspace.yml`.
+async function finishIn(workspace, id, patch) {
+  return serial(workspace, () => {
+    if (workspace === workdir) { nodes[id] = nodeRecord(id, { ...nodes[id], ...patch }); save(); return; }
+    const graph = readWorkspace(workspace);
+    if (!graph[id]) return;
+    graph[id] = nodeRecord(id, { ...graph[id], ...patch });
+    writeWorkspace(workspace, graph);
+  });
+}
+// The slot is found by the workspace that is open and the card. Only a run of a
+// *different* workspace is out of reach, and the workspace in the key already says so -
+// so coming back to a workspace whose run is still going keeps Stop and the refusal
+// working. It used to also require a per-open `session`, and then returning mid-run
+// showed the card as generating while Stop answered "not generating" and a second press
+// was accepted, which published one extra version.
+const claimFor = id => running.get(slot(workdir, Number(id)));
 const server = createServer(async (req, res) => { try {
   const url = new URL(req.url, "http://localhost");
   if (url.pathname === "/api/events") { res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" }); clients.add(res); req.on("close", () => clients.delete(res)); return; }
   if (url.pathname === "/api/registry") return json(res, 200, registryInfo());
   if (url.pathname === "/api/workspace" && req.method === "GET") return json(res, 200, view());
-  if (url.pathname === "/api/workspace" && req.method === "POST") { const b = await body(req); workdir = resolve(b.workdir || defaultWorkdir); nodes = await adopt(readWorkspace(workdir), workdir); writeWorkspace(workdir, nodes); idCounter = Math.max(0, ...Object.keys(nodes).map(Number)); return json(res, 200, view()); }
+  // Opening a workspace is one switch, not two: the path and the cards change together.
+  // It used to set `workdir` first and then await `adopt`, which puts back a card whose
+  // run died mid-flight - seconds of file copying. For that whole window the server
+  // reported the new workspace's path with the old workspace's cards, so a canvas that
+  // asked in between showed A's cards labelled as B and could edit or generate into
+  // them. A supervisor hit it by opening B, which had an interrupted run to recover.
+  // Opens are also serialised: two overlapping opens would each build a graph and the
+  // slower one would win with cards read before the other's recovery finished.
+  if (url.pathname === "/api/workspace" && req.method === "POST") {
+    const b = await body(req), next = resolve(b.workdir || defaultWorkdir);
+    await openWorkspace(next);
+    // Anything that finished while this workspace was being opened has already queued
+    // its outcome; let it land before answering, so the reply the canvas paints is the
+    // finished state and not a snapshot from a moment earlier. A run that is still
+    // going has not queued anything, so this never makes an open wait for a render.
+    await serial(next, () => {});
+    return json(res, 200, view());
+  }
   if (url.pathname === "/api/file") { const file = resolve(url.searchParams.get("path") || ""); const rel = relative(resolve(workdir), file); if (rel.startsWith("..") || rel.startsWith("/")) throw new Error("File outside workspace"); return sendFile(req, res, file); }
   if (url.pathname === "/api/node" && req.method === "POST") {
     const b = await body(req), id = nextId();
@@ -325,7 +419,7 @@ const server = createServer(async (req, res) => { try {
   // Generate silently re-does a take they thought they were looking at.
   if (url.pathname === "/api/restore" && req.method === "POST") {
     const b = await body(req), n = getNode(b.id);
-    if (running.has(n.id)) return json(res, 409, { ...view(), error: `Node ${n.id} is generating; stop it before going back to an earlier version` });
+    if (claimFor(n.id)) return json(res, 409, { ...view(), error: `Node ${n.id} is generating; stop it before going back to an earlier version` });
     const list = [...(n.versions || [])], index = list.findIndex(v => Number(v.id) === Number(b.version));
     if (index < 0) return json(res, 404, { ...view(), error: `Node ${n.id} has no version ${b.version}` });
     const chosen = list[index];
@@ -368,6 +462,16 @@ const server = createServer(async (req, res) => { try {
   if (url.pathname === "/api/layout" && req.method === "POST") { Object.entries(nodes).forEach(([id, n], i) => { n.x = i % 4 * 340 + 40; n.y = Math.floor(i / 4) * 280 + 40; }); save(); return json(res, 200, view()); }
   if (url.pathname === "/api/generate" && req.method === "POST") {
     const b = await body(req), n = getNode(b.id);
+    // This run's workspace, captured before the first await past the body. Opening
+    // another workspace replaces `workdir`/`nodes` for the rest of the process, and a
+    // run that finishes afterwards must land in the workspace it was started in - see
+    // `slot` above for the failure this was reproduced from.
+    const ws = workdir;
+    // The card as it stands at the press. Reading it again when the run finishes read
+    // the *other* workspace's card if the person had switched away, so its kept takes
+    // and its script became this run's starting point.
+    const priorRecord = nodes[n.id];
+    const priorVersions = [...(n.versions || [])];
     // Refuse a second run instead of spawning a second agent: two processes writing
     // the same node directory is how an artifact gets silently overwritten.
     //
@@ -381,9 +485,9 @@ const server = createServer(async (req, res) => { try {
     // 8 MiB picture - ran with nothing marked, so a second press in that window was
     // answered 202, got a run directory and a guard of its own, and the two runs
     // published v3 over each other.
-    if (running.has(n.id)) return json(res, 409, { ...view(), error: `Node ${n.id} is already generating` });
-    const claim = { agent: null, stopping: null, cancel: () => { claim.stopping = claim.stopping || new Error("Run stopped by the user"); return claim.agent ? claim.agent.cancel() : true; } };
-    running.set(n.id, claim);
+    if (claimFor(n.id)) return json(res, 409, { ...view(), error: `Node ${n.id} is already generating` });
+    const claim = { id: n.id, workdir: ws, agent: null, stopping: null, cancel: () => { claim.stopping = claim.stopping || new Error("Run stopped by the user"); return claim.agent ? claim.agent.cancel() : true; } };
+    running.set(slot(ws, n.id), claim);
     // Every way out of this request after the claim is a reply to it - the 202, one
     // of the refusals, or the 400 the handler writes when preparing the run throws
     // (an unreadable source, a card the filesystem will not let us guard). A card
@@ -392,13 +496,13 @@ const server = createServer(async (req, res) => { try {
     // reply goes out and no agent was ever made.
     res.on("finish", () => {
       if (claim.agent) return;
-      releaseClaim(n.id, claim);
+      releaseClaim(claim);
       // A refused press and a preparation that threw both leave nothing to recover:
       // the marker that names a run directory would otherwise sit in the card until
       // the next startup looked for a guard that was never finished.
-      endRun(workdir, n.id);
-      if (attemptDirs.get(n.id)) dropAttempt(attemptDirs.get(n.id));
-      attemptDirs.delete(n.id);
+      endRun(ws, n.id);
+      if (attemptDirs.get(slot(ws, n.id))) dropAttempt(attemptDirs.get(slot(ws, n.id)));
+      attemptDirs.delete(slot(ws, n.id));
     });
     // A method whose tool is not on this machine cannot produce anything, and the
     // audio card used to default to exactly such a method (`bark.cpp`, chosen because
@@ -410,7 +514,7 @@ const server = createServer(async (req, res) => { try {
     if (chosen && chosen.available === false) {
       // Nothing was started, so the claim goes back before the refusal is written:
       // a card must not be left saying it is generating a run that does not exist.
-      releaseClaim(n.id, claim);
+      releaseClaim(claim);
       const fallback = methodsFor(n.type).find(m => m.available !== false);
       return json(res, 409, { ...view(), error: `${chosen.id} needs ${(chosen.requires || []).join(", ")} on this machine, which is not there, so nothing was started.${fallback ? ` Choose ${fallback.id} instead - it works with nothing installed.` : ""}` });
     }
@@ -436,7 +540,7 @@ const server = createServer(async (req, res) => { try {
     // is moved onto that name* before anything can overwrite it. The bytes then live
     // under a name no agent writes, and whatever the agent leaves on the old name is
     // an abandoned attempt that can be deleted.
-    const adopted = n.artifact ? adoptLegacy(workdir, n.id, n.artifact) : { file: null, retire: null };
+    const adopted = n.artifact ? adoptLegacy(ws, n.id, n.artifact) : { file: null, retire: null };
     // A crash point for the one ordering that matters here, so a test can stand in
     // the exact window instead of hoping to hit a few microseconds: after the copy
     // exists, before the card names it. Only tests set this.
@@ -444,7 +548,7 @@ const server = createServer(async (req, res) => { try {
     if (adopted.file && adopted.file !== n.artifact) { n.artifact = adopted.file; nodes[n.id] = nodeRecord(n.id, n); save(); }
     // After the save, never before: until the card names the copy, the old path is
     // the only thing that can still play the approved film.
-    if (adopted.retire) rmSync(join(workdir, String(n.id), adopted.retire), { force: true });
+    if (adopted.retire) rmSync(join(ws, String(n.id), adopted.retire), { force: true });
     // A linked input that has never been generated has no artifact, so there is
     // nothing to hand the agent. This used to crash the request with "path must be a
     // string, received null" - the canvas greyed the button out and said nothing,
@@ -452,7 +556,7 @@ const server = createServer(async (req, res) => { try {
     // what would fix it, before anything is created.
     const drafts = givenSources.filter(s => !s.artifact);
     if (drafts.length) {
-      releaseClaim(n.id, claim);
+      releaseClaim(claim);
       const names = drafts.map(s => `#${s.id}`).join(", ");
       return json(res, 409, { ...view(), error: `Generate ${names} first, or unlink ${drafts.length > 1 ? "them" : "it"}: ${drafts.length > 1 ? "those cards have" : "that card has"} no result yet, so this run has no material to use.` });
     }
@@ -460,15 +564,15 @@ const server = createServer(async (req, res) => { try {
     // be, under `<card>/attempts/`, which put the agent's working directory inside the
     // directory holding a creator's own files; a probe found that an agent which tidied
     // its surroundings could delete one at the run's own path and still end idle. A run
-    // now works in `<workdir>/.runs/<card>/<start>`, so nothing it writes, renames or
+    // now works in `<ws>/.runs/<card>/<start>`, so nothing it writes, renames or
     // deletes is next to what a person keeps, and the cleanup is still one recursive
     // delete of a directory the harness created.
-    const attemptDir = beginRun(workdir, n.id);
-    attemptDirs.set(n.id, attemptDir);
-    const runSources = freezeSources(workdir, n.id, givenSources)
+    const attemptDir = beginRun(ws, n.id);
+    attemptDirs.set(slot(ws, n.id), attemptDir);
+    const runSources = freezeSources(ws, n.id, givenSources)
       // A source with no file has none because the card upstream holds nothing yet;
       // `frozen` is a path to a copy, and there is no copy to point at.
-      .map(({ id, type, artifact, file }) => ({ id, type, artifact, file, frozen: file ? join(workdir, String(n.id), file) : null }));
+      .map(({ id, type, artifact, file }) => ({ id, type, artifact, file, frozen: file ? join(ws, String(n.id), file) : null }));
     // The second layer: a snapshot of every file the card held, taken once this run's
     // frozen material copies exist and before the agent starts. A path in a prompt is a
     // request, and `--sandbox danger-full-access` means an agent that ignores it can
@@ -480,16 +584,16 @@ const server = createServer(async (req, res) => { try {
     // the window instead of racing a few milliseconds of file copying. Only tests set
     // it; it changes nothing about what happens, only when.
     if (process.env.HYPERMAKER_HOLD_BEFORE_GUARD_MS) await new Promise(r => setTimeout(r, Number(process.env.HYPERMAKER_HOLD_BEFORE_GUARD_MS)));
-    const guard = await guardCard(join(workdir, String(n.id)), join(attemptDir, guardName));
+    const guard = await guardCard(join(ws, String(n.id)), join(attemptDir, guardName));
     // The card may have been stopped while the snapshot was being taken: there is no
     // process to signal yet, so the press is answerable now, before the run starts.
     if (claim.stopping) {
       // The run directory holds nothing but a guard for a run that never started; the
       // reply's own cleanup drops it. The marker goes now, because it is what a next
       // startup would follow.
-      endRun(workdir, n.id);
-      releaseClaim(n.id, claim);
-      attemptDirs.delete(n.id);
+      endRun(ws, n.id);
+      releaseClaim(claim);
+      attemptDirs.delete(slot(ws, n.id));
       nodes[n.id] = nodeRecord(n.id, { ...nodes[n.id], status: "cancelled", error: claim.stopping.message }); save();
       emit({ kind: "cancelled", id: n.id, error: claim.stopping.message });
       return json(res, 200, view());
@@ -531,7 +635,7 @@ const server = createServer(async (req, res) => { try {
     // poster while the record named the old one.
     const promptNodes = { ...nodes };
     for (const source of runSources) if (source.frozen) promptNodes[source.id] = { ...nodes[source.id], frozen: source.frozen };
-    const agent = runCodex({ node: run, workspace: { workdir, nodes: promptNodes, projectCwd: root }, model: b.model, effort: b.effort, useGhPrefix: b.useGhPrefix, attemptDir });
+    const agent = runCodex({ node: run, workspace: { workdir: ws, nodes: promptNodes, projectCwd: root }, model: b.model, effort: b.effort, useGhPrefix: b.useGhPrefix, attemptDir });
     claim.agent = agent;
     // Stop pressed while the card was still being prepared: there was no process
     // yet, so the claim remembers the press and the run is stopped the moment it
@@ -550,7 +654,7 @@ const server = createServer(async (req, res) => { try {
       // must not be able to make the take that is already spoken look like it read the new
       // text. The material is what the script must be a selection of, and `from` is the card
       // whose words those were, recorded so a reopened canvas can say where they came from.
-      const material = run.type === "audio" && run.method === "narration" ? materialText({ node: run, workspace: { workdir, nodes: promptNodes } }) : null;
+      const material = run.type === "audio" && run.method === "narration" ? materialText({ node: run, workspace: { workdir: ws, nodes: promptNodes } }) : null;
       const narration = material ? verifyNarration({ attemptDir, artifact: result.artifact, material: material.text, from: material.from }) : null;
       if (narration && !narration.ok) throw new Error(`This take is not a narration: ${narration.problems.join("; ")}`);
       // Before anything is published, the card is put back the way the run found it.
@@ -560,7 +664,7 @@ const server = createServer(async (req, res) => { try {
       // Publishing is skipped rather than delayed: a run that modified material it was
       // told not to touch has not shown that its output describes that material, while
       // the take already on the card is still exactly what the person approved.
-      const cardReport = await keepCard(join(workdir, String(n.id)), join(attemptDir, guardName));
+      const cardReport = await keepCard(join(ws, String(n.id)), join(attemptDir, guardName));
       const interference = damageReason(cardReport);
       if (interference) throw new Error(interference);
       // The finished bytes are published under a name no later run can write to, and
@@ -568,16 +672,16 @@ const server = createServer(async (req, res) => { try {
       // filename is scratch, and is free to be overwritten next time. `result.artifact`
       // is relative to the card, so it resolves to the run directory this run was given;
       // publish copies out of it into versions/.
-      const published = publish(workdir, n.id, result.artifact, attemptDir);
-      const previous = kept?.file ? [...(nodes[n.id].versions || []), kept] : (nodes[n.id].versions || []);
+      const published = publish(ws, n.id, result.artifact, attemptDir);
+      const previous = kept?.file ? [...priorVersions, kept] : priorVersions;
       // The run is over and its result is published, so the marker that claims it is in
       // flight has to go before the outcome is saved.
-      endRun(workdir, n.id);
+      endRun(ws, n.id);
       // The script the card records has to outlive the run directory, or a finished take
       // would point at a file that no longer exists. It is small and it is how a person
       // reads what was actually run, so it is published next to the artifact it produced,
       // under the same number: `v2-shot.png` and `v2-render.mjs` are obviously one result.
-      const publishedScript = result.script ? publishScript(workdir, n.id, result.script, published, attemptDir) : null;
+      const publishedScript = result.script ? publishScript(ws, n.id, result.script, published, attemptDir) : null;
       // The take's own record, kept beside the bytes it describes. Without this a published
       // narration could not be re-verified after the fact: the timeline lived only in the
       // run directory, which is dropped as soon as the run succeeds, so
@@ -587,7 +691,7 @@ const server = createServer(async (req, res) => { try {
       // the script and the prompt: `v2-narration.wav` and `v2-narration.timeline.json`.
       if (published && existsSync(join(attemptDir, "timeline.json"))) {
         const takeNo = /^v(\d+)-/.exec(basename(published))?.[1];
-        copyFileSync(join(attemptDir, "timeline.json"), join(workdir, String(n.id), "versions", `${takeNo ? `v${takeNo}-` : ""}${basename(published).replace(/^v\d+-/, "").replace(/\.wav$/i, "")}.timeline.json`));
+        copyFileSync(join(attemptDir, "timeline.json"), join(ws, String(n.id), "versions", `${takeNo ? `v${takeNo}-` : ""}${basename(published).replace(/^v\d+-/, "").replace(/\.wav$/i, "")}.timeline.json`));
       }
       // The exact instruction this result was produced from, kept next to the take.
       // `promptUsed` says it in the record; this is the assembled prompt, which is what
@@ -598,8 +702,8 @@ const server = createServer(async (req, res) => { try {
         // always means "what the result on the card was asked" - where people and
         // earlier versions of this harness already look - and one per published take
         // under versions/, so an earlier take keeps its own words.
-        copyFileSync(askedFile, join(workdir, String(n.id), "prompt.txt"));
-        if (published) copyFileSync(askedFile, join(workdir, String(n.id), "versions", `v${/^v(\d+)-/.exec(basename(published))?.[1] ?? ""}-prompt.txt`));
+        copyFileSync(askedFile, join(ws, String(n.id), "prompt.txt"));
+        if (published) copyFileSync(askedFile, join(ws, String(n.id), "versions", `v${/^v(\d+)-/.exec(basename(published))?.[1] ?? ""}-prompt.txt`));
       }
       const sources = runSources.map(({ id, type, artifact, file }) => ({ id, type, artifact, file }));
       // `inputs` is deliberately left as it is now: a link the person added during
@@ -610,25 +714,29 @@ const server = createServer(async (req, res) => { try {
       // outcome. Writing `idle` first left a window where the card showed a finished
       // film while a second Generate was still refused with "already generating" -
       // publishing takes a copy, so that window got wide enough to hit every time.
-      releaseClaim(n.id, claim);
+      releaseClaim(claim);
       // What the person asked for *this* artifact, frozen at start exactly like the
       // material: `prompt` stays theirs to edit for the next take, `promptUsed`
       // answers "what is on screen and what was it asked to be".
       // The measured narration, when there was one: it describes the take being published, so
       // it moves with the artifact exactly like `sources` does, and it is cleared by any
       // later take that is not a narration.
-      nodes[n.id] = nodeRecord(n.id, { ...nodes[n.id], ...result, artifact: published || result.artifact, script: publishedScript ?? nodes[n.id].script ?? null, sources, narration: narration?.evidence ?? null, promptUsed: run.prompt || "", versions: previous, status: "idle", error: null }); save();
+      const priorScript = priorRecord.script ?? null;
+      await finishIn(ws, n.id, { ...result, artifact: published || result.artifact, script: publishedScript ?? priorScript, sources, narration: narration?.evidence ?? null, promptUsed: run.prompt || "", versions: previous, status: "idle", error: null });
       // After the save, not before: the sweep asks the record what is still reachable,
       // so running it first deleted the script and the per-take prompt this run had
       // just written - the files that say what produced the take now on the card.
-      sweepVersions(workdir, n.id, nodes[n.id]);
+      // The record to sweep against is the one this run just settled, which is the open
+      // graph only while the run's own workspace is still the open one.
+      sweepVersions(ws, n.id, ws === workdir ? nodes[n.id] : readWorkspace(ws)[n.id]);
       // A successful run takes its scratch with it: what a person might want later is
       // the published take and the script beside it, both already under versions/.
       dropAttempt(attemptDir);
-      pruneRuns(workdir, n.id);
+      pruneRuns(ws, n.id);
       // The guard did its job and its files are gone with the run directory.
-      attemptDirs.delete(n.id);
-      emit({ kind: "complete", id: n.id });
+      attemptDirs.delete(slot(ws, n.id));
+      // A canvas that has moved on must not be repainted from another workspace.
+      if (ws === workdir) emit({ kind: "complete", id: n.id });
     }).catch(async error => {
       const status = /stopped/i.test(error.message) ? "cancelled" : "error";
       // Nothing the failed run wrote was ever published, so the artifact, its
@@ -637,21 +745,22 @@ const server = createServer(async (req, res) => { try {
       // stopped or failing agent can be tidying when it dies - so the guard is read
       // back on this path too. A person who pressed Stop expects their own poster to
       // be there afterwards exactly as much as after a success.
-      const report = await keepCard(join(workdir, String(n.id)), join(attemptDir, guardName));
+      const report = await keepCard(join(ws, String(n.id)), join(attemptDir, guardName));
       const damaged = damageReason(report);
       // The abandoned run stays under .runs/ so a person can look at what it produced;
       // the count bound is what stops a hundred retries from filling a disk, and it is
       // the only place anything is deleted.
-      endRun(workdir, n.id);
-      pruneRuns(workdir, n.id);
-      releaseClaim(n.id, claim);
+      endRun(ws, n.id);
+      pruneRuns(ws, n.id);
+      releaseClaim(claim);
       // A Stop stays a Stop even when the stopped run had been damaging the card: the
       // outcome is what the person did, and calling it an error would suggest the run
       // failed on its own. What the run touched is still on the card, in the same
       // sentence, because that is the part they would otherwise never learn.
       const reason = damaged ? `${error.message} ${damaged}` : error.message;
-      nodes[n.id] = nodeRecord(n.id, { ...nodes[n.id], sources: n.sources || null, status, error: reason }); save(); emit({ kind: status === "cancelled" ? "cancelled" : "error", id: n.id, error: reason });
-    }).finally(() => { releaseClaim(n.id, claim); attemptDirs.delete(n.id); });
+      await finishIn(ws, n.id, { sources: n.sources || null, status, error: reason });
+      if (ws === workdir) emit({ kind: status === "cancelled" ? "cancelled" : "error", id: n.id, error: reason });
+    }).finally(() => { releaseClaim(claim); attemptDirs.delete(slot(ws, n.id)); });
     // The press itself answers with the notice, so a person learns before the agent has
     // done any work that a large file is only protected against deletion. It is returned
     // here, after the completion handlers are attached: returning early skipped them and
@@ -659,7 +768,7 @@ const server = createServer(async (req, res) => { try {
     return json(res, 202, protection ? { ...view(), notice: protection } : view());
   }
   if (url.pathname === "/api/cancel" && req.method === "POST") {
-    const b = await body(req), id = Number(b.id), agent = running.get(id);
+    const b = await body(req), id = Number(b.id), agent = claimFor(id);
     if (!agent) return json(res, 409, { ...view(), error: `Node ${id} is not generating` });
     if (!agent.cancel()) return json(res, 409, { ...view(), error: `Node ${id} could not be stopped` });
     return json(res, 200, view());
