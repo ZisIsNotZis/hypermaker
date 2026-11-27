@@ -44,8 +44,34 @@ const reasonFrom = file => {
       const message = event?.error?.message || event?.message;
       if (message && (event.type === "error" || event.type === "turn.failed")) return String(message);
     }
+    // No structured event, but the CLI (or a tool it ran) may still have said why on stderr.
+    // This is the case a person hits with a script the voice refuses: the renderer prints
+    // `this voice has no way to say: ¥500` and exits 2, and the agent stops there. Without
+    // this fallback the card said "the run's directory was modified", which is untrue and
+    // sends the writer looking for the wrong thing. The `[time] stderr: ` prefix the log adds
+    // is stripped, and the first line is taken because the renderer puts the summary there.
+    const said = lines
+      .map(line => /^\[[^\]]*\]\s*stderr:\s?(.*)$/s.exec(line)?.[1])
+      .filter(text => text && text.trim());
+    if (said.length) {
+      const first = said[0].trim().split(/\r?\n/)[0].trim();
+      if (first) return first;
+    }
   } catch {}
   return null;
+};
+// The most useful sentence in a tail of stderr: the first line that is not Node's stack noise,
+// preferring a line the renderer or the CLI wrote as its own message. Node prints a blank line,
+// a `node:internal` header and a `throw err` line before the error that matters.
+const lastLine = text => {
+  const lines = String(text || "").split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  const useful = lines.filter(l => !/^(node:internal|\^+$|at |\}|const err =|throw err)/.test(l));
+  // A refusal prints the token, then the line that says what to change about it, then the
+  // general advice. The middle line is the one a writer can act on (`¥ is a currency this voice
+  // does not name`), so it is preferred; the token line comes next so nothing is lost.
+  return useful.find(l => /is a (?:currency|fraction|mathematical|unit)/.test(l))
+    ?? useful.find(l => /this voice has no way to say|no way to say/.test(l))
+    ?? useful[0] ?? null;
 };
 const finalJson = file => {
   let value = JSON.parse(readFileSync(file, "utf8"));
@@ -110,7 +136,21 @@ export function generate({ node, workspace, context = {}, model, effort, useGhPr
     writeFileSync(join(nodeDir, "codex-command.json"), JSON.stringify({ command, args: args.slice(0, -1), at: new Date().toISOString() }, null, 1), "utf8");
     const commandLog = `[${new Date().toISOString()}] command: ${commandLine}\n${prompt}\n`;
     appendFileSync(devLog, commandLog); process.stdout.write(commandLog);
-    const record = (stream, chunk) => { const raw = chunk.toString(); appendFileSync(log, raw); const line = `[${new Date().toISOString()}] ${stream}: ${raw}`; appendFileSync(devLog, line); process.stdout.write(line); onRaw?.(stream, raw); };
+    // The last thing the CLI said on stderr, kept in memory as well as on disk. A run that
+    // dies before writing its final message still has a reason - the renderer's `this voice has
+    // no way to say: ¥500` arrives exactly this way - and reading it back out of the log file
+    // means guessing at the log's own format. This is the plain fact: the bytes that came out of
+    // the process, in order.
+    let stderrTail = "";
+    const record = (stream, chunk) => {
+      const raw = chunk.toString();
+      if (stream === "stderr") stderrTail = (stderrTail + raw).slice(-4000);
+      appendFileSync(log, raw);
+      const line = `[${new Date().toISOString()}] ${stream}: ${raw}`;
+      appendFileSync(devLog, line);
+      process.stdout.write(line);
+      onRaw?.(stream, raw);
+    };
     child.stdout.on("data", chunk => record("stdout", chunk)); child.stderr.on("data", chunk => record("stderr", chunk));
     // A missing or unexecutable CLI is the most likely first-run problem, and a
     // bare `spawn codex ENOENT` is not something a person can act on.
@@ -124,7 +164,17 @@ export function generate({ node, workspace, context = {}, model, effort, useGhPr
         // harness's own files while "tidying": the CLI then could not write its last
         // message and exited 1 with no reason in its event stream. Say what actually
         // happened, and point at the one cause worth suspecting.
+        //
+        // But first: if the CLI *did* say why, that reason is the answer. A narration
+        // agent whose script contains a symbol the voice cannot say prints
+        // "¥ is a currency this voice does not name" and stops - and the card used to
+        // report "the run's directory was modified", which is both untrue and useless
+        // to a writer holding a line with a ¥ in it. The directory message is kept for
+        // the case where there is no reason at all, which is the case it was written
+        // for.
         if (!existsSync(final)) {
+          const why = reasonFrom(log) || lastLine(stderrTail);
+          if (why) return fail(new Error(`Codex exited with code ${code}: ${why}`));
           return fail(new Error(`Codex exited with code ${code} and did not write its final message (${basename(final)} is missing): the run's directory was modified during the run. A run may write its own files but must not delete ${basename(final)}.`));
         }
         const reason = reasonFrom(log);

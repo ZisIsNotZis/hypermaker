@@ -61,8 +61,15 @@ export function verifyNarration({ attemptDir, artifact, material = null, from = 
         if (Math.abs(start - cursor) > 0.2) problems.push(`phrase ${i + 1} starts at ${start.toFixed(2)}s but the previous one ended at ${cursor.toFixed(2)}s`);
         cursor = start + duration;
       }
-      const unreadable = audit(text).unreadable;
-      if (unreadable.length) problems.push(`phrase ${i + 1} uses words this voice cannot say: ${[...new Set(unreadable)].join(", ")}`);
+      const checked = audit(text);
+      const unreadable = checked.unreadable;
+      if (unreadable.length) {
+        // The token names the problem; the reason names the symbol inside it. Both are needed:
+        // `¥500` says which word failed, and "¥ is a currency this voice does not name" says
+        // what to change about it.
+        const why = [...new Set(checked.reasons || [])];
+        problems.push(`phrase ${i + 1} uses words this voice cannot say: ${[...new Set(unreadable)].join(", ")}${why.length ? ` (${why.join("; ")})` : ""}`);
+      }
       words += ` ${text}`;
     });
     // The file's own length, not the timeline's claim about it. A tolerance for the tail of

@@ -1,5 +1,66 @@
 # Changelog
 
+## Unreleased — a number keeps its meaning, or it is refused, 2026-11-27
+
+A listener heard four ordinary lines and the meaning changed. Measured on the build that
+shipped them, through the real reader:
+
+| line | before | now |
+| --- | --- | --- |
+| `The ticket costs $1250.` | "twelve fifty dollars" — a price read as a year | one thousand two hundred fifty dollars |
+| `It costs £0.50.` | "fifty cents" — the currency replaced | fifty pence |
+| `1,000,000,000,000 dollars` | "one dollars" — the magnitude dropped | one trillion dollars |
+| `It is -3.5 degrees.` | "three point five" — the sign dropped | minus three point five degrees |
+
+A second round on a script **pasted from a page** found three more, all of them silent:
+
+| line | before | now |
+| --- | --- | --- |
+| `−3.5` (U+2212) | "three point five" — read as positive | minus three point five |
+| `¥500`, `₹500` | "five hundred" — the currency dropped | refused, naming the symbol |
+| `½ cup` | nothing — the symbol vanished | refused, naming the symbol |
+| `3.5°`, `1990–1995` | the degree or range mark dropped | refused, naming the symbol |
+
+A number whose reading changes the meaning is worse than a refusal: the take plays, the voice
+is clear, and the sentence is about a different amount. So a sign, a currency and a magnitude
+are never dropped - and a symbol the voice cannot say is refused **by name, with the reason**,
+because `¥ is a currency this voice does not name` is something a writer can act on.
+
+- **`voice/numbers.mjs` takes the reading set**, because four of its readings had to change.
+  Money is read as money and never as a year; each currency says its own subunit; magnitudes up
+  to a trillion are named and **past that refused** (`cardinal` returns no reading instead of
+  truncating); a leading `+`/`-` is said, and so is the pasted minus `−`.
+- **`unsupportedSymbols()` names what it cannot say**: other currencies, fraction symbols,
+  mathematical operators, the degree sign and the range dash. `tokenize` returns the reasons
+  beside the tokens, and both `voice/render.mjs` and the server's narration check pass them on,
+  so the message on the card says which character to replace.
+- **A numeric shape the reader declines is refused, not read as its leftover letters.** `$5M`
+  used to become "five M" and `$M` became "M" - a confident reading of a shape the reader had
+  just said it did not know.
+- **It is a new frozen reading set, `cmudict-4`** (now `CURRENT_READINGS`). `cmudict-3` keeps
+  every reading it published, **the four wrong ones included**, because a take made with it
+  sounds like them: compared against a checkout of the previous commit over 83 numeric tokens
+  and 13 sentences, the two agree exactly, and a `cmudict-3` take of a line containing all four
+  corrected shapes still verifies through `voice/verify-take.mjs` and is named `cmudict-3`.
+  A sentence with no numeral in it still renders **byte-identically** under both tables.
+- **Negative controls:** reverting the reader fails both new test files; reverting **only** the
+  sign reading fails exactly the three sign-related tests and nothing else.
+- **The card says which symbol, not that the run directory misbehaved.** Walking the real entry
+  found this: a card holding `The price is ¥500.` published no take (right) and reported
+  `the run's directory was modified during the run` (wrong and misleading). A narration agent
+  that hits a refused script exits before writing its final JSON, and the server's "no final
+  message" branch had only ever considered a tidied directory. The renderer's own sentence is on
+  the agent's stderr, so it is carried through, preferring `¥ is a currency this voice does not
+  name` over Node's stack noise. `test/refusal-message.test.mjs` fails on the old message.
+- **The renderer's refusal no longer ends `¥500..`** or puts a `The symbols:` label in front of
+  a sentence that already names the character.
+- **Tests: 127/127** with a usable Chromium (was 114/114). Eight new in
+  `test/numbers-fidelity.test.mjs`, four in `test/numbers-pasted.test.mjs`, one in
+  `test/refusal-message.test.mjs`.
+
+Still unproven, and unchanged: nobody has filled in a listening sheet. Both rounds above were a
+person telling us what they heard, on lines they wrote - which is the only way this defect could
+have been found, and is why `node voice/listening-test.mjs` exists.
 
 ## Unreleased — a number in a script is said, not spelled out, 2026-11-27
 

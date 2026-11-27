@@ -28,7 +28,7 @@
 import { readFileSync } from "node:fs";
 import { gunzipSync } from "node:zlib";
 import { fileURLToPath } from "node:url";
-import { expandNumerals } from "./numbers.mjs";
+import { expandNumerals, looksNumeric, unsupportedSymbols, PASTED_MINUS } from "./numbers.mjs";
 // Loaded once, on first use: a test that never speaks should not pay the 3 MB parse, and a
 // module-level read would make importing this file a side effect on the filesystem.
 let DICT = null;
@@ -248,19 +248,30 @@ const RULES = [
 // have the old stress. This is the same lesson a second time, from the other direction: the
 // pronunciation fix broke old takes by changing a table in place, and the fix for *that* was
 // versioning. Versioning is what lets this one ship at all.
-export const READING_SETS = ["rules-1", "cmudict-1", "cmudict-2", "cmudict-3"];
+//
+// `cmudict-4` is `cmudict-3` with four numeral readings corrected, and nothing else changed: a
+// listener heard `$1250` said as "twelve fifty dollars", `£0.50` as "fifty cents", a trillion
+// said as "one", and a minus sign dropped. Each of those is a sentence whose meaning is wrong,
+// which is why they are a new set rather than an edit - `cmudict-3`'s takes, if any exist, must
+// keep reproducing from the table that made them, wrong readings included.
+export const READING_SETS = ["rules-1", "cmudict-1", "cmudict-2", "cmudict-3", "cmudict-4"];
 // What this build renders when nobody says otherwise.
-export const CURRENT_READINGS = "cmudict-3";
+export const CURRENT_READINGS = "cmudict-4";
 // The sets that read words from the vendored dictionary. `cmudict-2` differs from `cmudict-1`
 // only in the stress it records per word, and `cmudict-3` from `cmudict-2` only in numerals
 // (`voice/numbers.mjs`), so every word they share sounds the same in all three - which is what
 // lets a take made by any of them be recognised as the same words (see `bindTake`).
-const DICTIONARY_SETS = new Set(["cmudict-1", "cmudict-2", "cmudict-3"]);
+const DICTIONARY_SETS = new Set(["cmudict-1", "cmudict-2", "cmudict-3", "cmudict-4"]);
 // The sets that read a numeral as the words a person would say (`8:30` -> eight thirty).
 // The older sets must keep reading digits one at a time, to the sample: that is what their
 // published takes sound like, and re-reading them would make every such take look like a lie
 // about its own script - the defect the reading sets exist to prevent.
-const NUMERAL_SETS = new Set(["cmudict-3"]);
+const NUMERAL_SETS = new Set(["cmudict-3", "cmudict-4"]);
+// The sets that promise to refuse a numeric shape they cannot read, rather than reading its
+// leftover letters. `cmudict-3` cannot make that promise retroactively: it shipped reading
+// `$5M` as "five M", and a take made with it must keep reproducing that. The splitter above
+// and the refusal are therefore versioned, like every other reading change.
+const STRICT_NUMERAL_SETS = new Set(["cmudict-4"]);
 
 export function checkReadings(name) {
   if (READING_SETS.includes(name)) return name;
@@ -278,7 +289,7 @@ export function pronounce(word, readings = CURRENT_READINGS) {
   // audio it published still reproduces exactly. `25` tried as a whole token first: `2nd` is
   // an ordinal, and `5` alone is still a digit the exceptions table reads.
   if (NUMERAL_SETS.has(set)) {
-    const spoken = expandNumerals(String(word).toLowerCase().replace(/^[^a-z0-9$£€%:.',-]+|[^a-z0-9$£€%:.',-]+$/g, ""));
+    const spoken = expandNumerals(String(word).toLowerCase().replace(/^[^a-z0-9$£€%:.,+-]+|[^a-z0-9$£€%:.,+-]+$/g, ""), set);
     if (spoken) return spoken.flatMap(w => pronounce(w, set));
   }
   // The dictionary answers nearly every word, and it answers with the word's real
@@ -328,7 +339,9 @@ export function tokenize(text, readings = CURRENT_READINGS) {
   // Which sets carry a stress mark: `cmudict-2` added it, and `cmudict-3` changed nothing about
   // it. `cmudict-1` and `rules-1` must render exactly the bytes they always have, or every take
   // they made would stop reproducing.
-  const withStress = readings === "cmudict-2" || readings === "cmudict-3";
+  // `cmudict-4` changed four numeral readings and nothing about a word, so it carries the same
+  // stress as `cmudict-3` - the same reason, stated once here rather than per set.
+  const withStress = readings === "cmudict-2" || readings === "cmudict-3" || readings === "cmudict-4";
   // A numeral is broken into the words it is said as *before* anything else looks at the token,
   // so `1,200` becomes two tokens with their own stress from their own dictionary entries. Doing
   // the expansion inside `pronounce` instead would have made one token out of "one thousand two
@@ -340,16 +353,51 @@ export function tokenize(text, readings = CURRENT_READINGS) {
   // made the shape fail every pattern, so a sentence-final number was refused while the same
   // number mid-sentence was read correctly.
   const split = raw => {
-    if (!NUMERAL_SETS.has(readings) || !/[0-9]/.test(raw)) return [{ raw }];
+    // Symbol-only tokens are asked about as well (`$M` has no digit and is still a shape this
+    // reader declines), so the gate is "could be a number" rather than "contains a digit".
+    // A symbol this voice cannot say is refused before anything else looks at the token. The
+    // word path below would drop it as punctuation: `¥500` became "five hundred", `½` became
+    // nothing at all, which is a line read as a different sentence or as no sentence.
+    const unsupported = unsupportedSymbols(raw);
+    if (unsupported && STRICT_NUMERAL_SETS.has(readings)) return [{ raw, unsupported }];
+    if (!NUMERAL_SETS.has(readings) || !(/[0-9]/.test(raw) || /^[$£€]/.test(raw))) return [{ raw }];
     const tail = /[.!?,;:]+$/.exec(raw)?.[0] ?? "";
-    const body = raw.slice(0, raw.length - tail.length).replace(/^[^A-Za-z0-9$£€%]+/, "");
-    const said = expandNumerals(body);
-    if (!said) return [{ raw }];
+    // The sign is part of the number, not punctuation around it: stripping everything that is
+    // not a letter or digit turned `-3.5` into `3.5`, which is a different sentence. Only
+    // opening quotes and brackets are removed here.
+    //
+    // `cmudict-3` keeps the old strip, because that is what its published takes sound like: the
+    // reader kept the minus, the splitter for that set removed it, and the audio says "three
+    // point five". Reproducing a take means reproducing the pipeline, not one function in it -
+    // the difference between the two sets is here, and the test that pins it renders bytes.
+    // `−` is U+2212, the minus a document uses, and it has to survive this strip too: the first
+    // version of this fix listed only `-` and the pasted minus was removed here, so `−3.5` was
+    // still read as a positive number by the very build that claimed to have fixed it.
+    const open = readings === "cmudict-3"
+      ? /^[^A-Za-z0-9$£€%]+/
+      : new RegExp(`^[^A-Za-z0-9$£€%+\\-${PASTED_MINUS}]+`);
+    // A lone currency symbol with nothing after it is a stray mark, not an amount: the word path
+    // below drops it as punctuation, which is what it is.
+    const body = raw.slice(0, raw.length - tail.length).replace(open, "");
+    if (!body) return [{ raw }];
+    const said = expandNumerals(body, readings);
+    // A token that *starts* like a number or carries a currency symbol, and that the reader
+    // declines, is refused by name. Falling through to the word path said whatever letters
+    // were left (`$5M` became "five M", `$M` became "M"), which is a confident reading of a
+    // shape the reader had just said it did not know. Only the strict sets refuse: a frozen
+    // table must keep saying what its takes say, including the readings that were wrong.
+    if (!said) return [{ raw, ...(STRICT_NUMERAL_SETS.has(readings) && (looksNumeric(body) || /^[$£€]/.test(body)) ? { refuse: true } : {}) }];
     return said.map((word, i) => ({ raw: i === said.length - 1 ? word + tail : word }));
   };
   const words = String(text).split(/\s+/).filter(Boolean).flatMap(split);
   const unreadable = [];
-  const tokens = words.map(({ raw }) => {
+  const reasons = [];
+  const tokens = words.map(({ raw, refuse, unsupported }) => {
+    // The reason travels with the word, so the renderer can say *which* symbol it cannot say
+    // rather than only that this line failed. `unreadable` stays the list of tokens, because
+    // every caller already relies on it being the names.
+    if (unsupported) { unreadable.push(raw); reasons.push(...unsupported); return null; }
+    if (refuse) { unreadable.push(raw); return null; }
     const cleaned = raw.replace(/^[^A-Za-z0-9']+|[^A-Za-z0-9']+$/g, "");
     const punctuation = /[.!?]$/.test(raw) ? "sentence" : /[,;:]$/.test(raw) ? "clause" : "";
     // A token with no letters or digits left is punctuation, and punctuation is a pause.
@@ -367,7 +415,9 @@ export function tokenize(text, readings = CURRENT_READINGS) {
     // exactly as it always did. Only the set that carries stress answers this.
     return { word: cleaned, phonemes, punctuation, ...(withStress ? { stress: stressOf(cleaned) } : {}) };
   }).filter(Boolean);
-  return { tokens, unreadable };
+  // `reasons` is the same refusal said in the writer's terms: which symbol, and what to write
+  // instead. `unreadable` alone names the token, which is enough for a name but not for `¥`.
+  return { tokens, unreadable, reasons: [...new Set(reasons)] };
 }
 
 // Everything a caller needs to know before speaking: which words this voice can say, and
@@ -381,8 +431,9 @@ export function tokenize(text, readings = CURRENT_READINGS) {
 // same list the synthesizer renders.
 const VOWEL_SET = new Set("IY IH EY EH AE AA AO OW UH UW AH ER AY OY AW".split(" "));
 export function audit(text, readings = CURRENT_READINGS) {
-  const { tokens, unreadable } = tokenize(text, readings);
+  const { tokens, unreadable, reasons } = tokenize(text, readings);
   return {
+    ...(reasons.length ? { reasons } : {}),
     words: tokens.length,
     syllables: tokens.reduce((n, t) => n + t.phonemes.filter(p => VOWEL_SET.has(p)).length, 0),
     unreadable,
