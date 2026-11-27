@@ -78,7 +78,11 @@ const table=v.take&&v.take.voice&&v.take.voice.matched&&v.take.voice.matched.rea
 // had to be realigned to meet its own record. The words and the sound still agree exactly, so
 // this is not a complaint - but a card saying only "matched 1.000" would imply the record was
 // precise, and the samples it moved are the thing that says it was not.
-const rounded=v.take&&v.take.realigned>0?` (timeline's start times rounded; phrases found up to ${v.take.realigned} samples from where it puts them)`:'';const what=src?`read from ${esc(src)}`:`own prompt`;return `<div class="meta narration" title="${esc((where?`The script, with each phrase's start time:\n`+where+'\n\n':'')+`The published bytes were re-rendered from this script to check they say it: ${bind}.`)}">narration: ${esc(v.seconds)}s, ${esc(v.words)} words, ${esc(v.onsets)} syllable onsets, ${esc(v.vowelKinds)} vowel regions, measured ${esc(v.verdict)} · ${what} · ${esc(bind)}${esc(rounded)}${esc(imprecise)}${esc(older)}${esc(aged)}</div>${phrases(n)}`}
+const rounded=v.take&&v.take.realigned>0?` (timeline's start times rounded; phrases found up to ${v.take.realigned} samples from where it puts them)`:'';// How fast it speaks, and whether that was asked for. A writer judging a line by ear needs the
+// number, and a take made at a requested pace should say whether it landed on it - printing
+// only the measured value would hide a request that was missed. Older takes have a measured
+// pace and no request, so they say the pace alone.
+const pace=v&&v.pace&&v.pace.wpm?`${v.pace.askedWpm?`asked ${v.pace.askedWpm} words/min, reads at ${v.pace.wpm}`:`reads at ${v.pace.wpm} words/min`}`:null;const what=src?`read from ${esc(src)}`:`own prompt`;return `<div class="meta narration" title="${esc((where?`The script, with each phrase's start time:\n`+where+'\n\n':'')+`The published bytes were re-rendered from this script to check they say it: ${bind}.`)}">narration: ${esc(v.seconds)}s, ${esc(v.words)} words, ${esc(v.onsets)} syllable onsets, ${esc(v.vowelKinds)} vowel regions, measured ${esc(v.verdict)}${pace?` · ${esc(pace)}`:''} · ${what} · ${esc(bind)}${esc(rounded)}${esc(imprecise)}${esc(older)}${esc(aged)}</div>${phrases(n)}`}
 // Which material went into *this* take - not which material the upstream card holds
 // now. The version is the source card's publish ordinal (`v2`), the same label that
 // card's own title carries; without it two takes of one film both read `poster.png`,

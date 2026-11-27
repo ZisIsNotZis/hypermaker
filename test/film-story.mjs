@@ -205,9 +205,23 @@ try {
   const voiceId = await voice.getAttribute("data-id");
   await linkTitles(linesId, voiceId);
   note("narration input", (await ws()).nodes[voiceId].inputs);
+  // The pace is asked for in the card's own instruction, the way a person would write it, and
+  // the card has to come back saying what was asked and what it got. This is the half of pace
+  // control that is a fact about this build: whether a *model* obeys the same sentence is not
+  // established here - there is no Codex CLI on this machine - and the guide test pins only
+  // that the instruction reaches the agent's prompt.
+  await card(voiceId).locator("[data-prompt]").click();
+  await card(voiceId).locator("[data-prompt]").fill("Read this at 200 words a minute, brisk but clear.");
+  await card(voiceId).locator("[data-prompt]").blur();
+  await page.waitForTimeout(300);
   await press(voiceId);
   const voice1 = expectTake("the narration", await settle(voiceId));
-  note("narration take 1", { artifact: voice1.artifact, error: voice1.error, narration: voice1.narration && { words: voice1.narration.words, seconds: voice1.narration.seconds, verdict: voice1.narration.verdict, correlation: voice1.narration.take && voice1.narration.take.correlation } });
+  note("narration take 1", { artifact: voice1.artifact, error: voice1.error, pace: voice1.narration && voice1.narration.pace, narration: voice1.narration && { words: voice1.narration.words, seconds: voice1.narration.seconds, verdict: voice1.narration.verdict, correlation: voice1.narration.take && voice1.narration.take.correlation } });
+  const paceLine = await card(voiceId).locator(".narration").innerText();
+  note("the card states the pace", paceLine);
+  assert.ok(/asked 200 words\/min/.test(paceLine), `the card does not say what pace was asked for: ${paceLine}`);
+  assert.ok(/reads at 19[0-9]|reads at 20[0-9]/.test(paceLine), `the card does not report the pace it reached: ${paceLine}`);
+  assert.ok(Math.abs(voice1.narration.pace.wpm - 200) <= 4, `asked for 200 words a minute, the take is ${voice1.narration.pace.wpm}`);
 
   // 3. The picture.
   await page.mouse.dblclick(760, 80); await page.waitForTimeout(200);

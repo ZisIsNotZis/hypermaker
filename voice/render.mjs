@@ -14,7 +14,7 @@
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { audit } from "./lexicon.mjs";
-import { renderParagraph, toWav, RATE } from "./synth.mjs";
+import { renderParagraph, toWav, RATE, paceOf, rateForWpm } from "./synth.mjs";
 import { measure } from "./measure.mjs";
 import { bindTake } from "./bind.mjs";
 
@@ -57,7 +57,7 @@ if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith
   const out = arg("out");
   const text = arg("text") ?? (arg("file") ? readFileSync(arg("file"), "utf8") : null);
   if (!out || text == null) {
-    console.error("usage: node voice/render.mjs --text \"...\" --out narration.wav [--timeline out.json] [--rate 1.1] [--pitch 112] [--readings rules-1|cmudict-1|cmudict-2|cmudict-3|cmudict-4]\n       node voice/render.mjs --file script.txt --out narration.wav\n       node voice/render.mjs --check narration.wav --words \"...\"\n\n--readings picks the table that decides how each word is read; the take records it, because\nthe same words read by a different table are a different recording. It defaults to this\nbuild's table, and naming one it does not have is an error rather than a fallback.\n\ncmudict-2 is cmudict-1 plus the stress of each word, so the emphasis lands on the syllable the\ndictionary marks instead of always on the first: 'machine' is ma-CHINE, not MA-chine.\ncmudict-3 is cmudict-2 plus numerals read as words: '8:30' is eight thirty, '1990' is nineteen\nninety, '1,200' is one thousand two hundred, '$5' is five dollars, '40%' is forty percent.\ncmudict-4 is cmudict-3 with money, magnitude and signs read faithfully: '$1250' is one\nthousand two hundred fifty dollars (not a year), '£0.50' is fifty pence, '1,000,000,000,000'\nis one trillion, '-3.5' is minus three point five. A shape past a trillion, or a symbol it\ncannot name ('¥', a fraction, a degree sign), is refused by name instead of being dropped.\nrules-1, cmudict-1, cmudict-2 and cmudict-3 are frozen - audio made by them still verifies\nexactly as it did, including their readings that cmudict-4 corrected.\nTo hear which syllable a file actually stresses: node voice/check-stress.mjs --wav file.wav\n--timeline file.json (exit 0 = every word where the dictionary puts it, 4 = read but stressed\nelsewhere, 2 = could not be read).");
+    console.error("usage: node voice/render.mjs --text \"...\" --out narration.wav [--timeline out.json] [--wpm 150] [--pitch 112] [--readings rules-1|cmudict-1|cmudict-2|cmudict-3|cmudict-4]\n       node voice/render.mjs --file script.txt --out narration.wav\n       node voice/render.mjs --check narration.wav --words \"...\"\n\n--readings picks the table that decides how each word is read; the take records it, because\nthe same words read by a different table are a different recording. It defaults to this\nbuild's table, and naming one it does not have is an error rather than a fallback.\n\ncmudict-2 is cmudict-1 plus the stress of each word, so the emphasis lands on the syllable the\ndictionary marks instead of always on the first: 'machine' is ma-CHINE, not MA-chine.\ncmudict-3 is cmudict-2 plus numerals read as words: '8:30' is eight thirty, '1990' is nineteen\nninety, '1,200' is one thousand two hundred, '$5' is five dollars, '40%' is forty percent.\ncmudict-4 is cmudict-3 with money, magnitude and signs read faithfully: '$1250' is one\nthousand two hundred fifty dollars (not a year), '£0.50' is fifty pence, '1,000,000,000,000'\nis one trillion, '-3.5' is minus three point five. A shape past a trillion, or a symbol it\ncannot name ('¥', a fraction, a degree sign), is refused by name instead of being dropped.\nrules-1, cmudict-1, cmudict-2 and cmudict-3 are frozen - audio made by them still verifies\nexactly as it did, including their readings that cmudict-4 corrected.\n--wpm is the pace to speak at, in words per minute: 150 is ordinary speech, 200 is brisk, 110 is deliberate. It is measured from the rendered bytes and recorded in the timeline beside the multiplier the samples were made with, so the take can show both what was asked for and what it reads at.\n\n--rate is a duration multiplier, not a speed: 0.8 makes a take 20% shorter in time (25% more words per minute), 1.3 makes it 30% longer (23% fewer). It is stated in duration on purpose - speed percentages are the reciprocals of these and quoting one as the other is exactly how this setting came to be documented backwards. It exists because a published take records the exact multiplier that made its bytes and has to keep reproducing from it. --wpm is the one to reach for when writing a script or a guide.\n\nTo hear which syllable a file actually stresses: node voice/check-stress.mjs --wav file.wav\n--timeline file.json (exit 0 = every word where the dictionary puts it, 4 = read but stressed\nelsewhere, 2 = could not be read).");
     process.exit(1);
   }
   // One phrase per line, blank lines skipped: that is the shape an agent writes a script in,
@@ -81,8 +81,39 @@ if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith
     console.error("It reads English words and the numeral shapes listed above; write the rest in words.");
     process.exit(2);
   }
+  // Pace, stated the way a person asks for it. `--rate` is a duration multiplier - higher is
+  // slower, which is the opposite of what its name reads as - so it stays as the exact
+  // setting a take records, and `--wpm` is what a writer or an agent should reach for.
+  //
+  // It is met by measuring rather than by a formula: the render is made at 1.0, the words per
+  // minute of *that* render are counted from its own segment records, and the duration
+  // multiplier is corrected by the ratio. Phrase count and punctuation change how much of a
+  // take is speech versus gap, so a fixed constant would land near the target for one script
+  // and miss for another; one correction pass lands within a couple of per cent because the
+  // renderer scales every duration linearly. The recorded `rate` is still the multiplier the
+  // bytes were made with, so every existing check and every past take is unaffected.
+  const pitch = Number(arg("pitch")) || 112, readings = arg("readings") || undefined;
+  const askedWpm = arg("wpm") == null ? null : Number(arg("wpm"));
+  if (askedWpm != null && (!(askedWpm > 0) || !Number.isFinite(askedWpm))) {
+    console.error(`--wpm must be a positive number of words per minute, got ${JSON.stringify(arg("wpm"))}`);
+    process.exit(1);
+  }
   let rendered;
-  try { rendered = renderParagraph(phrases, { rate: Number(arg("rate")) || 1, pitch: Number(arg("pitch")) || 112, readings: arg("readings") || undefined }); }
+  try {
+    if (askedWpm == null) {
+      rendered = renderParagraph(phrases, { rate: Number(arg("rate")) || 1, pitch, readings });
+    } else {
+      const probe = renderParagraph(phrases, { rate: 1, pitch, readings });
+      const rate = rateForWpm(probe.segments, askedWpm);
+      // Below the multiplier floor the voice stops being the same voice, and saying so is
+      // better than silently clamping to a pace nobody asked for.
+      if (rate < 0.5 || rate > 2.5) {
+        console.error(`${askedWpm} words per minute is outside what this voice can do for this script: it would need a duration multiplier of ${rate.toFixed(2)}, and the voice is limited to 0.5-2.5. It reads this script at ${Math.round(paceOf(probe.segments).wpm)} words per minute as written.`);
+        process.exit(2);
+      }
+      rendered = renderParagraph(phrases, { rate, pitch, readings });
+    }
+  }
   catch (error) { console.error(error.message); process.exit(2); }
   mkdirSync(dirname(out), { recursive: true });
   writeFileSync(out, toWav(rendered.samples, rendered.rate));
@@ -97,7 +128,12 @@ if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith
   // server re-rendered at the rounded speed, and the take's own third phrase failed the check
   // at 0.300. A record that cannot reproduce its own recording is the one thing this file
   // exists to prevent.
-  const timeline = { audio: out, rate: rendered.rate, seconds: rendered.samples.length / rendered.rate, voice: rendered.voice, phrases: rendered.segments };
+  // The pace is part of the record for the same reason the multiplier is: it is what a person
+  // asked for and what they will judge, and it is measurable from the bytes. `askedWpm` is
+  // kept beside the measured value so a card can say "you asked for 150 and this speaks at
+  // 148" rather than silently rounding the request away.
+  const pace = paceOf(rendered.segments);
+  const timeline = { audio: out, rate: rendered.rate, seconds: rendered.samples.length / rendered.rate, voice: rendered.voice, phrases: rendered.segments, pace: { wpm: Number(pace.wpm.toFixed(1)), words: pace.words, seconds: Number(pace.seconds.toFixed(3)), ...(askedWpm == null ? {} : { askedWpm }) } };
   const timelinePath = arg("timeline");
   if (timelinePath) { mkdirSync(dirname(timelinePath), { recursive: true }); writeFileSync(timelinePath, JSON.stringify(timeline, null, 2)); }
   console.log(JSON.stringify({ out, seconds: Number(timeline.seconds.toFixed(2)), voice: timeline.voice, phrases: timeline.phrases.map(p => ({ text: p.text, start: Number(p.start.toFixed(2)), duration: Number(p.duration.toFixed(2)) })) }, null, 2));

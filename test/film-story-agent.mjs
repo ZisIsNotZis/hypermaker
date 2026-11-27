@@ -58,7 +58,18 @@ if (type === "text") {
   writeFileSync(scriptText, text.split(/\r?\n/).map(l => l.trim()).filter(Boolean).join("\n"), "utf8");
   artifact = join(dir, "narration.wav");
   const timeline = join(dir, "timeline.json");
-  execFileSync(process.execPath, [join(process.cwd(), "voice/render.mjs"), "--file", scriptText, "--out", artifact, "--timeline", timeline], { stdio: "inherit" });
+  // The pace is read out of the card's instruction the way the guide tells an agent to: "at
+  // 200 words a minute" and "200 wpm" mean the same thing to a person. A card that asks for
+  // no pace gets the ordinary reading.
+  const paceAsked = /(\d{2,3})\s*(?:words?\s*(?:a|per)\s*minute|wpm)/i.exec(asked);
+  execFileSync(process.execPath, [join(process.cwd(), "voice/render.mjs"), "--file", scriptText, "--out", artifact, "--timeline", timeline, ...(paceAsked ? ["--wpm", paceAsked[1]] : [])], { stdio: "inherit" });
+  if (paceAsked) {
+    // The wording came from the prompt; the number is checked from the timeline afterwards, so
+    // this stand-in cannot claim a pace it did not reach.
+    const recorded = JSON.parse(readFileSync(timeline, "utf8"));
+    if (!recorded.pace || Number(recorded.pace.askedWpm) !== Number(paceAsked[1])) throw new Error(`the card asked for ${paceAsked[1]} words a minute and the tool did not record that request`);
+    if (Math.abs(recorded.pace.wpm - Number(paceAsked[1])) / Number(paceAsked[1]) > 0.02) throw new Error(`asked for ${paceAsked[1]} words a minute and the audio reads at ${recorded.pace.wpm}`);
+  }
   const words = text.replace(/\s+/g, " ").trim();
   const report = JSON.parse(execFileSync(process.execPath, [join(process.cwd(), "voice/render.mjs"), "--check", artifact, "--words", words], { encoding: "utf8" }));
   if (report.verdict !== "speech") throw new Error(`the narration did not measure as speech: ${report.problems.join("; ")}`);

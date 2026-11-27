@@ -1,5 +1,52 @@
 # Changelog
 
+## Unreleased — a narration's pace is a number you can set, and the card says what you got, 2026-11-28
+
+A person asked whether they could control the pace of a film's voice. The only setting was
+`--rate`, and it meant the opposite of what it said.
+
+**The pace knob was documented backwards.** `rate` multiplies every duration, so 0.8 makes a
+take 20% shorter and 1.3 makes it 30% longer - and the code comment, the CLI's usage text, and
+every sentence a writer would have read called 1.3 the *brisk* one. Measured on a 9-word line:
+2.9 s at 0.8, 3.6 s at 1.0, 4.7 s at 1.3. Nothing caught it, because every pace the multiplier
+allows measures as speech (0.5 is 3.85 words/second, 2.5 is 0.78), so the judge has no opinion
+about pace at all. A writer following the documentation produced the wrong take and no check
+disagreed.
+
+The arithmetic was **not** flipped. Every published take records the multiplier that made its
+bytes and has to keep reproducing from it; changing what the number means would make every one
+of them re-render to different audio and fail its own verification. What changed is the setting
+a person is given and the words around the old one:
+
+- `--wpm N` speaks at N words per minute - 110 deliberate, 150 ordinary, 200 brisk. It is met by
+  measurement, not by a constant: the take is rendered at 1.0, its words per minute counted from
+  its own segment records, the multiplier corrected by the ratio, and the take re-rendered once.
+  Across 110-260 wpm on a three-sentence script it lands within about 1%.
+- The timeline records `pace.wpm` and, only when one was asked for, `pace.askedWpm`. The server
+  recomputes the pace from the take's phrase records rather than trusting the tool's own number,
+  and the card prints `asked 200 words/min, reads at 198.9`. Older takes state their pace and
+  name no request, instead of having one invented for them.
+- The documents state the multiplier in duration only, and the percentages are pinned by test:
+  a reviewer caught `0.8 is 20% faster` in a draft, which is 25% more words per minute, not 20%
+  - the reciprocal quoted as the same quantity, which is how the original got backwards.
+- The method guide tells an agent which setting to pass, which not to, and that a line of the
+  script is a sentence with a short gap after it while a blank line adds nothing.
+
+**What is not established.** Whether a *model* reads "brisk" and passes 200. There is no Codex
+CLI on this machine, so no run has been taken where a model chose a pace; `test/guide-pace.test.mjs`
+pins the checkable half - the instruction is in the assembled prompt, with the right numbers and
+the right warning, and the guide's own "within about 1%" claim is true of the tool. There is also
+no pace control on the canvas: an agent can pass `--wpm` and the card shows the result, but a
+person cannot set it by hand yet, and the README says so rather than implying a slider exists.
+
+Tests: `test/pace.test.mjs` (three: a requested pace is the pace the bytes have, the multiplier
+still means what it meant and the recorded multiplier reproduces the take, and a pace out of
+range is refused with the limit and the pace actually reached) and `test/guide-pace.test.mjs`
+(two: the instruction reaches the prompt an agent is given, and the guide's promise is measured).
+Negative control for the guide test: with the two pacing lines removed from the method source it
+fails at `the guide names the setting a writer should pass`. The story now asks for a pace in the
+voice card's own instruction and asserts the card reports both numbers.
+
 ## Unreleased — a short film can be made, compared, and continued, and only one take sounds at a time, 2026-11-28
 
 The slice this round was given: walk a real short-film creation flow - see what material

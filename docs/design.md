@@ -59,4 +59,8 @@ Prompt sections, exact order:
 
 Direct inputs include directory; the frozen copy's path plus the artifact filename it came from, text contents or multimodal metadata; source filename and contents when present; and `AGENTS.md` when present. Only direct inputs are included. Text output is plain UTF-8 unless user requests Markdown. `AGENTS.md` always emitted; empty for ordinary nodes.
 
+## Pace
+
+A spoken take has a pace, stated in words per minute because that is a number with a meaning outside this program: roughly 110 is deliberate, 150 ordinary, 200 brisk. The take records both the pace asked for and the pace it reached, and the card says both, because a person judging a line by ear needs the number and a request that was missed must not read as if it had been met. Every spoken take states the pace it speaks at; only a take that was asked for a pace names the request. A pace this voice cannot reach is refused with the limit and the pace the script actually reaches, rather than quietly rendered at some other speed. A line of the script is a sentence: it becomes one phrase with a short gap after it, and blank lines do not create longer pauses, so silence is shaped by how the script is broken into lines rather than by blank space in it.
+
 Quality choices: sketch, demo, standard, artistic, realistic. Sketch and demo omit background unless user explicitly asks for one. Preview displays exact artifact; no preview/final generation mode. Types and methods are filesystem registry entries under `types/<type>/methods/<method>`.

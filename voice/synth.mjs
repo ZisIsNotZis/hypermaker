@@ -89,7 +89,14 @@ function syllables(phonemes) {
 }
 
 // Speak `tokens` (from lexicon.tokenize) and return an array of floats in -1..1.
-// options.rate scales every duration (1.0 measured, 1.3 brisker, 0.8 deliberate);
+// options.rate multiplies every duration, so it is a *duration* multiplier and nothing else:
+// 0.8 makes a take 20% shorter in time (which is 25% more words per minute, not 20% - the two
+// percentages are reciprocals and quoting one as the other is how this got confusing), and 1.3
+// makes it 30% longer, which is 23% fewer words per minute. This comment used to say the opposite ("1.3 brisker, 0.8
+// deliberate"), and so did the CLI's own usage text - measured, a 9-word line takes 2.9 s at
+// 0.8, 3.6 s at 1.0 and 4.7 s at 1.3. The inversion is left in place rather than flipped,
+// because every published take records the number that made its bytes and must keep
+// reproducing from it; `--wpm` is the setting to reach for, and it says what it means.
 // options.pitch is the base pitch in Hz.
 export function synthesize(tokens, options = {}) {
   const rate = clamp(Number(options.rate) || 1, 0.5, 2.5);
@@ -231,6 +238,26 @@ export function effectiveVoice(options = {}) {
     // bytes into a field nothing enforces. `pronounce` raises the same error.
     readings: options.readings == null ? CURRENT_READINGS : checkReadings(options.readings)
   };
+}
+
+// What a script is currently paced at, in words per minute, from the phrase records the
+// renderer just made. This is the number a person can judge: 150 wpm is ordinary speech,
+// 260 ms per word is brisk, and past ~4 words a second the consonants start colliding.
+// Reported from the rendered segments rather than from a guess about durations, so the
+// number the card shows and the bytes agree.
+export function paceOf(segments) {
+  const words = segments.reduce((n, s) => n + (s.words || 0), 0);
+  const seconds = segments.reduce((n, s) => n + (s.duration || 0), 0);
+  return { words, seconds, wpm: seconds > 0 ? words / seconds * 60 : 0 };
+}
+
+// The duration multiplier that would speak `words` in `seconds` at `wpm`: the bridge between
+// the setting a person asks for and the number the take has to record. It is derived from a
+// real render, not from a constant, because phrase count changes sentence-internal timing.
+export function rateForWpm(segments, wpm) {
+  const at = paceOf(segments);
+  if (!at.wpm || !(wpm > 0)) return 1;
+  return at.wpm / wpm;
 }
 
 // `options.notes` is a test seam and nothing else: an array aligned with every token of the

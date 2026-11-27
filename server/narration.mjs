@@ -19,6 +19,7 @@ import { judge } from "../voice/render.mjs";
 import { audit, CURRENT_READINGS } from "../voice/lexicon.mjs";
 import { wavSamples } from "../voice/wav.mjs";
 import { appearsInOrder, bindTake, spokenWords, wordsOf } from "../voice/bind.mjs";
+import { paceOf } from "../voice/synth.mjs";
 
 // `material` is what the card was reading: the frozen text inputs (or the user prompt when
 // there is no text input), already concatenated by the caller. It is the third thing the
@@ -119,6 +120,18 @@ export function verifyNarration({ attemptDir, artifact, material = null, from = 
     voicedShare: Number(report.voicedShare.toFixed(2)),
     peak: report.peakSample,
     phrases: (timeline?.phrases || []).map(p => ({ text: String(p.text).trim(), start: Number(Number(p.start).toFixed(2)), duration: Number(Number(p.duration).toFixed(2)) })),
+    // How fast it speaks, in words per minute. Computed from the take's own phrase records -
+    // the words each phrase holds and the duration the timeline places on it - rather than
+    // read back from a number the tool wrote about itself, so this says what the bytes do.
+    // A writer deciding whether a line is too rushed needs that number, and every take has
+    // one whether or not anyone asked for a particular pace.
+    pace: (() => {
+      const counted = (timeline?.phrases || []).map(p => ({ words: wordsOf(String(p.text || "")).length, duration: Number(p.duration) || 0 }));
+      const at = paceOf(counted);
+      // `askedWpm` is provenance, not measurement: it appears only when the take was rendered
+      // with `--wpm`, so an older take states its pace without inventing a request behind it.
+      return { wpm: Number(at.wpm.toFixed(1)), words: at.words, seconds: Number(at.seconds.toFixed(2)), ...(timeline?.pace?.askedWpm ? { askedWpm: Number(timeline.pace.askedWpm) } : {}) };
+    })(),
     // How the words over the player were tied to the sound under it: the published bytes
     // were re-rendered from this very script and agreed to this correlation. Kept because
     // it is what a person is trusting when they read the sentence and press play, and it is

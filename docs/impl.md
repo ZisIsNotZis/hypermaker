@@ -127,6 +127,42 @@ Canvas implementation invariants (each has a regression test; two were once live
 
 `types/audio/methods/synth.mjs` exists because the two speech methods name binaries under `~/tts.cpp` and `~/bark.cpp`; when those are absent an audio card had no usable method at all. `synth` asks the agent to synthesize PCM in Node and write the RIFF header itself, so it needs nothing installed, and its guide says plainly that it makes tones and rhythm, not words. It is not a replacement for `tts.cpp`/`bark.cpp`, and the docs never present it as speech.
 
+## Pace
+
+A narration's speed is set with `--wpm`, in words per minute, and that is a fact the tool
+measures rather than a number it echoes. The render is made at 1.0, its words per minute are
+counted from its own segment records (`paceOf`), the duration multiplier is corrected by the
+ratio (`rateForWpm`), and the take is re-rendered once; measured across 110-260 wpm it lands
+within about 1%, because the renderer scales every duration linearly. Both numbers are
+recorded - `pace.wpm` measured, `pace.askedWpm` only when a pace was requested - so a card can
+say `asked 110 words/min, reads at 110.2` and an older take can state its pace without
+inventing a request behind it. The server recomputes the pace from the take's phrase records
+(`server/narration.mjs`), so the number on the card describes the bytes rather than the tool's
+opinion of itself.
+
+`--rate` is a **duration multiplier**, not a speed: 0.8 makes a take 20% shorter in time (25%
+more words per minute) and 1.3 makes it 30% longer (23% fewer words per minute). Quoting one
+percentage as the other is the trap, so only the duration is stated for this setting. Its own
+comment and the CLI's usage text said the opposite (`1.3 brisker, 0.8
+deliberate`), and so did every sentence a writer would have read. Measured on a 9-word line:
+2.9 s at 0.8, 3.6 s at 1.0, 4.7 s at 1.3. Nothing caught it, because every pace the multiplier
+allows (0.5-2.5) measures as speech - 0.5 is 3.85 words/second and 2.5 is 0.78 - so the judge
+has no opinion about pace at all. The arithmetic was therefore left exactly as it was and the
+*documentation and the setting exposed to writers* were fixed instead: every published take
+records the multiplier that made its bytes, and flipping its meaning would make every one of
+them re-render to different audio and fail its own verification. `--wpm` is a new setting on
+top of it, and the timeline still records the multiplier, so `bindTake` and every past take are
+untouched. `test/pace.test.mjs` pins all three: the pace reached, the multiplier still meaning
+what it meant, and a pace outside the range refused with the limit and the pace actually
+reached.
+
+What a real model does with the instruction is **not** established. There is no Codex CLI on
+this machine, so no run has been taken where a model read the guide and chose a pace;
+`test/guide-pace.test.mjs` pins the weaker, checkable half - that the instruction is in the
+prompt the agent is handed, with the right numbers and the right warning about `--rate`, and
+that the guide's own "within about 1%" claim is true of the tool. A take in which a model reads
+"brisk" and passes 200 is still owed.
+
 ## Narration
 
 `narration` is the method that actually reads a card out loud, and the reason it exists is a
@@ -379,7 +415,7 @@ breaking the behaviour:
 
 ## Verification
 
-TDD seams: workspace round trip/atomic write/path safety; registry; prompt order/direct input metadata; node/import/link persistence; async result validation/concurrency/failure; UI creation, scrolling, drag-link, unlink, persistence, controls, preview/download. Run `npm test`, `npm run test:e2e`, `node --check`, and `git diff --check`. `npm test` is 158 declared cases: `test/compare-playback.test.mjs` adds one for one-sound-at-a-time in the compare panel, `test/download-name.test.mjs` adds two for the exported filename, `test/keep-card.test.mjs` adds six for the run directory and the card guard, five of which fail when the guard is disabled; `test/prepare-window.test.mjs` adds three for the run claim, the overlapping press failing with two 202s when the claim is deferred to the spawn; registry/prompt/workspace checks, three canvas-script checks, eight canvas browser cases, two media renders, one audio render, one film built from canvas material, three provenance cases, two WAV measurement cases, seven lifecycle cases, two Stop/failure UI cases, and the short-film story, which is a command rather than part of the suite. Browser tests launch Chromium through `test/browser.mjs`, honoring `HYPERMAKER_CHROME` or `CHROME_BIN` when Playwright's own browser is not installed. Every browser test asserts that the page raised no error, and the assertions are collected rather than thrown from the event listener, because a throw there surfaces after the test has ended.
+TDD seams: workspace round trip/atomic write/path safety; registry; prompt order/direct input metadata; node/import/link persistence; async result validation/concurrency/failure; UI creation, scrolling, drag-link, unlink, persistence, controls, preview/download. Run `npm test`, `npm run test:e2e`, `node --check`, and `git diff --check`. `npm test` is 163 declared cases: `test/pace.test.mjs` adds three for settable, measured pace and the multiplier's unchanged meaning, `test/guide-pace.test.mjs` adds two for the instruction reaching the agent's prompt and the guide's own promise being true, `test/compare-playback.test.mjs` adds one for one-sound-at-a-time in the compare panel, `test/download-name.test.mjs` adds two for the exported filename, `test/keep-card.test.mjs` adds six for the run directory and the card guard, five of which fail when the guard is disabled; `test/prepare-window.test.mjs` adds three for the run claim, the overlapping press failing with two 202s when the claim is deferred to the spawn; registry/prompt/workspace checks, three canvas-script checks, eight canvas browser cases, two media renders, one audio render, one film built from canvas material, three provenance cases, two WAV measurement cases, seven lifecycle cases, two Stop/failure UI cases, and the short-film story, which is a command rather than part of the suite. Browser tests launch Chromium through `test/browser.mjs`, honoring `HYPERMAKER_CHROME` or `CHROME_BIN` when Playwright's own browser is not installed. Every browser test asserts that the page raised no error, and the assertions are collected rather than thrown from the event listener, because a throw there surfaces after the test has ended.
 
 If `/tmp` is small or full, point the fixtures somewhere roomy (`TMPDIR=/var/tmp/x npm test`). Remotion writes real video next to its workspace, and a full scratch disk fails the media cases with `ENOSPC` — which looks like a code failure but is not. A directory on a Windows drive is not a substitute: Chromium cannot create its profile there.
 
