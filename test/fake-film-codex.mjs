@@ -53,9 +53,8 @@ const { execFileSync } = await import("node:child_process");
 const ff = join(process.cwd(), "node_modules/@remotion/compositor-linux-x64-gnu/ffmpeg");
 const check = join(dir, "check.wav");
 execFileSync(ff, ["-hide_banner", "-loglevel", "error", "-y", "-i", artifact, "-map", "0:a:0", "-ac", "1", "-ar", "44100", check]);
-const wav = readFileSync(check), data = wav.subarray(44);
-let peak = 0;
-for (let i = 0; i + 1 < data.length; i += 2) peak = Math.max(peak, Math.abs(data.readInt16LE(i)));
+const { wavStats } = await import("./wav.mjs");
+const { peak } = wavStats(check);
 if (peak === 0) throw new Error("rendered film has a silent audio track");
 
 const script = join(dir, "render-film.mjs");

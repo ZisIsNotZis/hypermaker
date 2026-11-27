@@ -11,11 +11,15 @@
 // directories somewhere inspectable; without it a scratch directory is used and
 // printed, so the artifacts can be opened afterwards.
 import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { launchBrowser } from "./browser.mjs";
 import { freePort, startServer, stopAll, stopServer, waitReady } from "./server.mjs";
+import { wavStats } from "./wav.mjs";
 
 const root = process.cwd();
+// Remotion ships its own ffmpeg; a machine with no system ffmpeg still has this.
+const ffmpeg = join(root, "node_modules/@remotion/compositor-linux-x64-gnu/ffmpeg");
 const shots = process.env.HYPERMAKER_SHOTS || join(root, ".tmp", "chain");
 const workdir = process.env.CHAIN_WORKDIR || mkdtempSync("/var/tmp/hypermaker-chain-");
 const model = process.env.CHAIN_MODEL || "gpt-5.6-luna";
@@ -78,6 +82,38 @@ try {
   await shot("03-audio");
   if (audio.node.error) throw new Error(`audio failed: ${audio.node.error}`);
 
+  // 4. The finished piece: one film card that takes the poster and the WAV as its
+  //    materials, so the result is a single file you can play with sound rather
+  //    than a silent video standing next to an audio file you would have to combine.
+  const film = await post("/api/node", { x: 1120, y: 40, type: "video", method: "remotion", quality: "demo", prompt: "Build one short film from the input cards and return a single .mp4 that plays with sound. Use the input image as the look of the piece: near-black #101217 background, mint #53e0c1 wave lines, the headline fixed. Make the waves travel as a seamless loop at 720x404, 30fps, h264, and keep the picture alive for the whole length of the input audio. Mix the input audio file in as the film's soundtrack so the sound is inside the .mp4. Before finishing, extract the rendered audio and confirm its samples are not all zero, and say what you measured." });
+  const filmId = Number(Object.keys(film.nodes).at(-1));
+  await post("/api/link", { source: imageId, target: filmId });
+  await post("/api/link", { source: audioId, target: filmId });
+  await post("/api/generate", { id: filmId, model, effort });
+  const piece = await settle(filmId);
+  note("the film, made from the poster and the wav", { id: filmId, seconds: piece.seconds, status: piece.node.status, artifact: piece.node.artifact, error: piece.node.error, sources: piece.node.sources });
+  await shot("04-film");
+  if (piece.node.error) throw new Error(`film failed: ${piece.node.error}`);
+
+  // "Has an audio track" is not "has sound": a real run once produced a valid AAC
+  // track of pure digital silence. Decode the track and measure it.
+  const filmFile = join(workdir, String(piece.node.id), piece.node.artifact);
+  const check = join(workdir, "film-audio-check.wav");
+  execFileSync(ffmpeg, ["-hide_banner", "-loglevel", "error", "-y", "-i", filmFile, "-map", "0:a:0", "-ac", "1", "-ar", "44100", check]);
+  const stats = wavStats(check);
+  const audible = stats.peak > 200 && stats.nonzero > 0;
+  note("the film's own audio, measured", { seconds: +(stats.samples / 44100).toFixed(2), peak: stats.peak, nonzeroSamples: stats.nonzero, audible });
+  // Exiting 0 here would be the same lie the container-level check told: a valid
+  // AAC track of digital silence is a failed film, and a person reading only the
+  // exit status has to be able to trust it.
+  if (!audible) throw new Error(`the film's audio is silent (peak ${stats.peak} over ${stats.samples} samples): an audio track is not sound`);
+  const expected = piece.node.sources.find(s => s.type === "audio");
+  if (!expected) throw new Error("the film does not record an audio source, so its sound cannot be traced");
+  const sourceWav = join(workdir, String(expected.id), expected.artifact);
+  const source = wavStats(sourceWav);
+  if (source.peak === 0) throw new Error(`the source WAV ${expected.artifact} is itself silent`);
+  note("the sound came from the canvas material", { source: expected.artifact, sourcePeak: source.peak, sourceSamples: source.samples, sourceSeconds: +(source.samples / 44100).toFixed(2) });
+
   // The point of a media card is that it plays. Read the players, not the status.
   const players = await page.evaluate(async () => {
     const settleMedia = (el, event) => new Promise(r => { if (el.readyState >= 1) return r(); el.addEventListener(event, r, { once: true }); setTimeout(r, 8000); });
@@ -106,7 +142,7 @@ try {
   await post("/api/layout", {});
   await page.reload({ waitUntil: "load" });
   await page.waitForSelector(".card"); await page.waitForTimeout(2500);
-  await shot("04-chain-reopened");
+  await shot("05-chain-reopened");
   note("the chain survives a reopen", {
     nodes: Object.values((await workspace()).nodes).map(n => ({ id: n.id, type: n.type, method: n.method, inputs: n.inputs, artifact: n.artifact, status: n.status })),
     edges: await page.locator(".edge").count()

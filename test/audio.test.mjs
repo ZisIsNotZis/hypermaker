@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { browserPath, launchBrowser } from "./browser.mjs";
 import { freePort, startServer, stopAll, stopServer, waitReady } from "./server.mjs";
+import { wavStats } from "./wav.mjs";
 
 // An audio card is only useful if the file plays and the player can say how long
 // it is. Both halves were once broken in a way the video card hid:
@@ -73,7 +74,7 @@ test("an audio node renders a real WAV and the canvas player can report its leng
   // would let the endpoint regress without this test noticing.
   assert.equal(dataSize / 2 / 44100, 6, "artifact is six seconds of audio");
   assert.ok(bytes.length > 400_000, `artifact is a normal clip size, got ${bytes.length} bytes`);
-  assert.ok(bytes.subarray(44).some((byte, i) => i % 2 === 0 && byte !== 0), "the samples are not silence");
+  assert.ok(wavStats(join(dir, String(id), node.artifact)).nonzero > 0, "the samples are not silence");
 
   // The endpoint answers like a media server: a length, range support, and a 206
   // that carries the slice it actually sent.

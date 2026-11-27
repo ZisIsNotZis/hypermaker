@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
 import { browserPath, launchBrowser } from "./browser.mjs";
 import { freePort, startServer, stopAll, stopServer, waitReady } from "./server.mjs";
+import { wavStats } from "./wav.mjs";
 
 // The outcome a person asked for: put a real poster and a real WAV on the canvas,
 // press Generate on one more card, and get a film you can play *with sound* - not a
@@ -57,10 +58,7 @@ function writeWav(file, seconds = 3) {
 function peakOf(file, scratch) {
   const out = join(scratch, "check.wav");
   execFileSync(ff, ["-hide_banner", "-loglevel", "error", "-y", "-i", file, "-map", "0:a:0", "-ac", "1", "-ar", "44100", out]);
-  const data = readFileSync(out).subarray(44);
-  let peak = 0;
-  for (let i = 0; i + 1 < data.length; i += 2) peak = Math.max(peak, Math.abs(data.readInt16LE(i)));
-  return peak;
+  return wavStats(out).peak;
 }
 
 let app, browser, port, workdir;

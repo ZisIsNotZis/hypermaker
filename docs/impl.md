@@ -58,8 +58,13 @@ an input file (`publicDir` in `bundle()`, `<Audio src={staticFile(...)}/>`), req
 picture to last as long as the sound, and requires the agent to extract the rendered track
 and confirm its samples are not all zero before reporting success.
 
-A later real run of the same shape produced **4.05 s of audible audio at peak 30496** inside a
-720x404 h264 MP4, so the contract is reachable, not merely stated.
+A later real run of the same shape produced **4.05 s of audible audio at peak 11506** inside a
+720x404 h264 MP4, so the contract is reachable, not merely stated. The first published peak for this film was 30496 and it was wrong: the measuring
+script assumed the WAV `data` chunk starts at byte 44, but ffmpeg writes a `LIST` chunk
+first, so 62 header bytes were counted as samples. Walking the chunk table gives **peak
+11506** over 178752 samples, and its correlation with the source 4-second WAV is ~0.9997 -
+that is the number to trust, and `test/wav.mjs` now parses chunks so the mistake cannot
+quietly return.
 
 `prompt.txt` is written **before** the child is spawned. A child can be running before the
 next line of the parent executes, and a run's own type and id are therefore also passed in
@@ -87,7 +92,7 @@ breaking the behaviour:
 
 ## Verification
 
-TDD seams: workspace round trip/atomic write/path safety; registry; prompt order/direct input metadata; node/import/link persistence; async result validation/concurrency/failure; UI creation, scrolling, drag-link, unlink, persistence, controls, preview/download. Run `npm test`, `npm run test:e2e`, `node --check`, and `git diff --check`. `npm test` is 36 cases with a browser: registry/prompt/workspace checks, three canvas-script checks, eight canvas browser cases, two media renders, one audio render, one film built from canvas material, three provenance cases, seven lifecycle cases, and two Stop/failure UI cases. Browser tests launch Chromium through `test/browser.mjs`, honoring `HYPERMAKER_CHROME` or `CHROME_BIN` when Playwright's own browser is not installed. Every browser test asserts that the page raised no error, and the assertions are collected rather than thrown from the event listener, because a throw there surfaces after the test has ended.
+TDD seams: workspace round trip/atomic write/path safety; registry; prompt order/direct input metadata; node/import/link persistence; async result validation/concurrency/failure; UI creation, scrolling, drag-link, unlink, persistence, controls, preview/download. Run `npm test`, `npm run test:e2e`, `node --check`, and `git diff --check`. `npm test` is 38 cases with a browser: registry/prompt/workspace checks, three canvas-script checks, eight canvas browser cases, two media renders, one audio render, one film built from canvas material, three provenance cases, two WAV measurement cases, seven lifecycle cases, and two Stop/failure UI cases. Browser tests launch Chromium through `test/browser.mjs`, honoring `HYPERMAKER_CHROME` or `CHROME_BIN` when Playwright's own browser is not installed. Every browser test asserts that the page raised no error, and the assertions are collected rather than thrown from the event listener, because a throw there surfaces after the test has ended.
 
 If `/tmp` is small or full, point the fixtures somewhere roomy (`TMPDIR=/var/tmp/x npm test`). Remotion writes real video next to its workspace, and a full scratch disk fails the media cases with `ENOSPC` — which looks like a code failure but is not. A directory on a Windows drive is not a substitute: Chromium cannot create its profile there.
 

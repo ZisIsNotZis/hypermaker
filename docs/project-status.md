@@ -28,7 +28,7 @@ pass" means "generation works". Both are true, but for different reasons.
 | Run lifecycle (Stop, failure, restart) | `test/lifecycle.test.mjs`, `test/stop-ui.test.mjs`, real-CLI checks | the agent's slowness and exit codes | process-group Stop, persisted outcome, the card's visible reason |
 | Test isolation | `test/server.mjs` | — | OS-assigned ports and process-group teardown, so a crashed fixture cannot answer a later test |
 | Text via **real Codex CLI** | 2026-11-27, this machine | nothing | one `codex exec` run: wrote and ran `generate.mjs`, produced a `.txt` artifact, 37 s, 48k input tokens |
-| Film from canvas material | `test/film.test.mjs`, one real run | the agent's direction | a real h264 MP4 whose embedded AAC track was measured audible (4.05 s, peak 30496) |
+| Film from canvas material | `test/film.test.mjs`, one real run | the agent's direction | a real h264 MP4 whose embedded AAC track was measured audible (4.05 s, peak 11506 over 178752 samples, ~0.9997 correlated with the source WAV) |
 | Artifact provenance | `test/sources.test.mjs` | — | frozen-at-start sources, kept mid-run links, failure-safe, key-based ids |
 | Audio artifact (`synth`) | `test/audio.test.mjs`, one real run | the agent's taste in sound | PCM synthesis, RIFF header, file endpoint, the decoded `<audio>` with a real duration |
 | Audio speech (`tts.cpp`, `bark.cpp`) | — | everything | nothing: the binaries are not on this machine |
@@ -79,8 +79,8 @@ Two honest gaps a first-time user will meet:
 
 - Product source of truth: [`design.md`](design.md).
 - Implementation source of truth: [`impl.md`](impl.md).
-- `npm test`: 36 cases — 3 registry/prompt, 5 workspace round trips, 3 canvas
-  script checks, 8 browser canvas cases, 2 media renders, 1 audio render, 1 film, 3 provenance, 7
+- `npm test`: 38 cases — 3 registry/prompt, 5 workspace round trips, 3 canvas
+  script checks, 8 browser canvas cases, 2 media renders, 1 audio render, 1 film, 3 provenance, 2 wav measurement, 7
   lifecycle cases, and 2 Stop/failure UI cases. Without a browser it is 18 pass +
   13 skip + 0 fail; every skipped case says which browser it looked for.
 - `node test/chain.mjs`: the content chain above, with `01-poster` …
