@@ -110,7 +110,7 @@ test("canvas text becomes a narration that measures as speech, and a film that c
   const wav = join(workdir, String(narrationId), spoken.artifact);
   const checkReport = JSON.parse(execFileSync(process.execPath, [join(root, "voice/render.mjs"), "--check", wav, "--words", SCRIPT.replace(/\n/g, " ")], { encoding: "utf8" }));
   assert.equal(checkReport.verdict, "speech", `the published WAV is speech, problems: ${checkReport.problems.join("; ")}`);
-  assert.equal(checkReport.syllables, 18, "the sentence has 18 syllables, which is the count the check uses");
+  assert.equal(checkReport.syllables, 19, "the sentence has 19 syllables, which is the count the check uses");
   assert.ok(checkReport.onsets >= checkReport.syllables, `a rise per syllable, got ${checkReport.onsets}`);
   assert.ok(checkReport.vowelKinds >= 5, `the voice moves between vowels, got ${checkReport.vowelKinds} regions`);
 

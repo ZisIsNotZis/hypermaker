@@ -2,24 +2,93 @@
 //
 // There is no speech model on this machine: no espeak, no flite, no GGUF file, neither
 // tts.cpp nor bark.cpp, not even the `flite` filter in the ffmpeg Remotion ships. So the
-// words have to come from rules and a word list that live in this repository. English
-// spelling is famously unhelpful, which is why this file is split the way it is:
+// words have to come from data and rules that live in this repository:
 //
-//   1. a short list of exceptions for the words rules get wrong (`the`, `of`, `one`,
-//      `night`, `through` ...). Missing one is audible, so this list is a fact about the
-//      voice and it is tested;
-//   2. ordered letter-to-sound rules for the rest, applied longest-pattern-first;
-//   3. a refusal for anything it cannot read.
+//   1. a vendored pronouncing dictionary (`vendor/cmudict/dict.txt.gz`, CMUdict, BSD). This
+//      is where nearly every word is answered from, and it is the fix for the defect that
+//      made the voice hard to follow: the letter-to-sound rules below read 27% of ordinary
+//      prose differently from the dictionary - `science` as "S-S-IY-N-S", `change` without
+//      its `j`, `machine` as "match-ain". A listener stumbles on the word, not on the
+//      prosody, so the word is where the fix belongs;
+//   2. the rule engine as a fallback for a word the dictionary does not list (names,
+//      coinages, inflections CMUdict lacks). It is retained precisely because a refusal for
+//      every unknown name would make the voice useless for a creator's own script;
+//   3. a refusal for anything neither can say.
 //
-// The refusal matters as much as the rules. A synthesizer asked to say Chinese text with
-// an English rule set does not produce "roughly the right sounds", it produces noise that
+// The dictionary is committed rather than downloaded because the whole point of this voice
+// is that it works with nothing installed and no network; `voice/build-dict.mjs` regenerates
+// it from a public `cmudict.dict`, and `vendor/cmudict/LICENSE` ships with it.
+//
+// The refusal matters as much as the data. A synthesizer asked to say Chinese text with an
+// English dictionary does not produce "roughly the right sounds", it produces noise that
 // looks like a narration and is not one. `pronounce()` therefore throws for text it cannot
 // spell, and both the command line tool and the server check the words before a WAV is
 // published. A run that says it narrated something it did not read is the exact failure
 // this project keeps writing tests against.
+import { readFileSync } from "node:fs";
+import { gunzipSync } from "node:zlib";
+import { fileURLToPath } from "node:url";
+// Loaded once, on first use: a test that never speaks should not pay the 3 MB parse, and a
+// module-level read would make importing this file a side effect on the filesystem.
+let DICT = null;
+const DICT_PATH = fileURLToPath(new URL("../vendor/cmudict/dict.txt.gz", import.meta.url));
+export function dictionary() {
+  if (DICT) return DICT;
+  const map = new Map();
+  for (const line of gunzipSync(readFileSync(DICT_PATH)).toString("utf8").split("\n")) {
+    if (!line) continue;
+    const tab = line.indexOf("\t");
+    if (tab < 0) continue;
+    // Alternatives are `;`-separated in the vendored file; the first is the dictionary's own
+    // first choice, and `CHOSEN` below overrides it for the few words where the first choice
+    // is the wrong reading for narration.
+    map.set(line.slice(0, tab), line.slice(tab + 1).split(";").map(p => p.split(" ")));
+  }
+  DICT = map;
+  return DICT;
+}
 
-// Vowel letters are the ones whose sound depends on context; consonants are mostly
-// one-to-one, so the exceptions below are heavily weighted towards vowels.
+// CMUdict lists a homograph's readings in an order that is right for most text but not for
+// narration, and this voice has no context to choose with. These are the words where the
+// first-listed reading would be heard as a *different word* in an ordinary sentence:
+//
+//   read   the dictionary's first reading is "red" (past tense); a script says "reed"
+//   live   first is the adjective "lyve"; a sentence uses the verb "liv"
+//   wind   first is the verb "wynd"; a scene has "wind" (the moving air)
+//   close  first is the adjective "klohss"; a sentence says "klohz"
+//
+// The choice is a fact about narration, so it is written down here rather than inferred from
+// neighbours the engine cannot see. Every other homograph keeps the dictionary's own order.
+const CHOSEN = new Map(Object.entries({
+  read: "R IY D", live: "L IH V", wind: "W IH N D", close: "K L OW Z"
+}));
+
+export function chosen(word) {
+  const readings = dictionary().get(word);
+  if (!readings) return null;
+  const prefer = CHOSEN.get(word);
+  if (prefer) {
+    const said = prefer.split(" ");
+    // Only if the dictionary really lists it: a table entry that silently invented a
+    // pronunciation would be exactly the kind of unbacked claim this voice keeps testing.
+    if (readings.some(r => r.join(" ") === prefer)) return said;
+  }
+  return readings[0];
+}
+
+// The vowel phonemes this engine renders. Used to ask of a reading whether it can be spoken
+// at all, and to count syllables for the speech check.
+const VOWELS = new Set("IY IH EY EH AE AA AO OW UH UW AH ER AY OY AW".split(" "));
+
+// A dictionary entry is not automatically speakable: CMUdict lists interjections by their
+// consonants (`hmm` is `HH M`, `shh` is `SH`), which this synthesizer renders as a click
+// because it has no way to voice a consonant cluster with no vowel under it. Such an entry is
+// treated as unlisted, so the rules get their turn and, failing that, the word is refused by
+// name rather than muttered.
+export const speakable = reading => !!reading && reading.some(p => VOWELS.has(p));
+
+// Vowels are the letters whose sound depends on context; consonants are mostly one-to-one,
+// so the exceptions below are heavily weighted towards vowels.
 const EXCEPTIONS = new Map(Object.entries({
   a: "AH", about: "AH B AW T", above: "AH B AH V", across: "AH K R AO S", again: "AH G EH N",
   against: "AH G EH N S", ago: "AH G OW", all: "AO L", almost: "AO L M OW S T", also: "AO L S OW",
@@ -125,13 +194,15 @@ const RULES = [
   ["a", "AE"], ["e", "EH"], ["i", "IH"], ["o", "AA"], ["u", "AH"], ["y", "IH"]
 ];
 
-// A word with no vowel sound at all (`rhythm`, `hmm`) cannot be spoken as written; the
-// rules would produce a consonant cluster that the synthesizer renders as a click.
-const VOWELS = new Set("IY IH EY EH AE AA AO OW UH UW AH ER AY OY AW".split(" "));
-
 export function pronounce(word) {
   const clean = String(word).toLowerCase().replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, "");
   if (!clean) return [];
+  // The dictionary answers nearly every word, and it answers with the word's real
+  // pronunciation rather than what its spelling suggests. The hand-written list stays ahead
+  // of it only for readings the dictionary's first entry gets wrong for narration (`CHOSEN`),
+  // and digits, which it does not list at all.
+  const listed = chosen(clean);
+  if (speakable(listed)) return listed.slice();
   if (EXCEPTIONS.has(clean)) return EXCEPTIONS.get(clean).split(" ");
   if (/^\d+$/.test(clean)) {
     // Multi-digit numbers are read digit by digit rather than refused: no card in this

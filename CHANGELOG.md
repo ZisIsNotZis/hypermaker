@@ -403,3 +403,59 @@ Test changes:
 - Experimental local-first artifact canvas release line.
 - Supports filesystem-registered text, image, audio, and video generation flows.
 - Includes deterministic tests and a Playwright browser test suite.
+
+## Unreleased — the words are the dictionary's, and there is a way to hear the answer, 2026-11-27
+
+The previous slice made the audio and the script provably the same take. A reviewer then asked
+the product question that no amount of signal measurement answers: *open the real film - can I
+understand the lines it needs me to understand?* Checking that honestly turned up a defect
+bigger than the voice's timbre, and produced the first way for a person to answer the question
+with a number instead of an opinion.
+
+- **Pronunciation comes from a vendored pronunciation dictionary, not from spelling rules.**
+  Measured over a paragraph of ordinary English, the rule engine read **30 of the 110 distinct
+  words** differently from the dictionary: `science` as "S-S-IY-N-S", `machine` as "match-ain",
+  `change` with no `j`, `music` as "M-AH-S-IH-K", `wanted` as "W-AE-N-T-EH-D", `building` as
+  "B-UW-L-D-IH-NG". Each of those is a word a listener hears as a *different* word, and that is
+  what makes a narration hard to follow - not the prosody. The readings now come from CMUdict
+  (`vendor/cmudict/`, BSD, notice shipped, 124,087 words, `node voice/build-dict.mjs`
+  regenerates it from a public `cmudict.dict`), loaded lazily so importing the module costs
+  nothing. The rule engine stays as the fallback for names and coinages the dictionary lacks,
+  because refusing every unknown name would make the voice useless for a creator's own script.
+- **Every fixed word was shown to change the audio, not only the table.** A reading that changes
+  in a table and not in the samples would be a cosmetic fix. Each of the 13 changed words was
+  synthesised under both readings and the samples compared: all 13 differ, 0 identical. A word
+  the dictionary lists with no vowel at all (`hmm` is `HH M`) is still refused rather than
+  rendered as a click, and a word neither knows is refused by name.
+- **Homographs are read the way narration uses them.** CMUdict lists `read` as "red" first and
+  `live` as the adjective; a script means "reed" and the verb. A four-word table (`read`, `live`,
+  `wind`, `close`) names the reading, and it is only allowed to name a reading the dictionary
+  actually lists - a typo in it falls back instead of inventing a pronunciation. Homograph
+  alternatives survive the compaction, so the choice is real rather than a lossy one-way import.
+- **`node voice/check-pronunciation.mjs` is the measurement, not an example list.** Hand-picked
+  examples show a defect exists; they cannot say whether a listener stumbles once or thirty
+  times. The script compares the shipped readings with an independent dictionary (`--dict
+  /path/to/cmudict.dict`) over prose and reports agreements, disagreements naming both readings,
+  and words the voice cannot say at all - counted apart, because a limitation is not a wrong
+  answer. Comparing the vendored table with itself would measure nothing, so the tool takes the
+  outside dictionary as an argument and the test does exactly that with a dictionary written in
+  the test.
+- **`node voice/listening-test.mjs` is how a person answers the question.** It renders the real
+  voice and a real h264 film carrying that audio, and writes a **blank** transcript sheet: one
+  numbered line per sentence and no words. The script goes to `key.txt`, kept apart, and the
+  film deliberately shows no caption from the script - the first version put the lines on
+  screen, which hands the listener the answer the sheet exists to withhold. `--score` reports
+  word accuracy against the filled sheet and names the misheard words. It scores by **sound**
+  (`pronounce()` on both sides, so `color` for `colour` is a hit - spelling is not hearing) and
+  it counts a blank line as missed rather than dropping it, because "I could not make that out"
+  is the commonest real answer and must cost something. The tool has **not been answered by a
+  person yet**; `docs/project-status.md` says so, and the number does not exist until one does.
+- **Two defects in the tool found by running it, not by reasoning about it.** The film was
+  declared silent because the peak of a float sample array was compared against the int16 scale
+  (0.64 read as "silence"). The sheet parser swallowed an empty line's text into the next line,
+  so one blank line invented a transcript and shifted every answer after it; the parser is now
+  indexed by the line number written on the sheet. Both are pinned by tests that fill a sheet in.
+- **Tests: 91/91** with a usable Chromium (was 86/86). New: dictionary completeness and
+  renderable-symbol coverage, the regenerable table's kept/dropped counts, the measurement
+  script's agreement and separation of unreadable words, the listening sheet containing no word
+  of the script, and the scorer's sound-based comparison and blank-line accounting.

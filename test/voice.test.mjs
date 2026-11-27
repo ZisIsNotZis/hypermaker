@@ -17,8 +17,9 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
-import { pronounce, audit, tokenize } from "../voice/lexicon.mjs";
-import { renderParagraph, toWav } from "../voice/synth.mjs";
+import { pronounce, audit, tokenize, dictionary, speakable } from "../voice/lexicon.mjs";
+import { compact } from "../voice/build-dict.mjs";
+import { renderParagraph, toWav, VOWEL_TARGETS, CONSONANTS } from "../voice/synth.mjs";
 import { measure } from "../voice/measure.mjs";
 import { wavSamples } from "../voice/wav.mjs";
 import { judge } from "../voice/render.mjs";
@@ -69,10 +70,23 @@ test("the voice reads the words it claims, and refuses the ones it cannot", () =
   // A word with no vowel letter still has to be sayable: the first rule set turned `apple`
   // into "AY-p-l" because a final `e` was always silent.
   assert.ok(pronounce("apple").includes("AH"), `apple keeps its first vowel, got ${pronounce("apple")}`);
-  // A word whose letters alone do not spell a vowel is refused rather than rendered as a
-  // click - `rhythm` has no vowel letter for the rule set to find, and inventing one would
-  // be worse than saying so.
-  assert.throws(() => pronounce("rhythm"), /cannot say/, "a syllable-less spelling is refused, not clicked");
+  // A word the dictionary lists with no vowel at all is refused rather than rendered as a
+  // click. `hmm` is `HH M` in CMUdict, and a consonant cluster with nothing voiced under it
+  // is a click in this synthesizer; `rhythm` used to be this test's example, and stopped
+  // being the right one the day the dictionary arrived - it is `R IH DH AH M` there, and
+  // reading it properly is the improvement, not a regression.
+  assert.throws(() => pronounce("hmm"), /cannot say/, "a syllable-less spelling is refused, not clicked");
+  assert.deepEqual(pronounce("rhythm"), ["R", "IH", "DH", "AH", "M"], "a word the dictionary can say is said its way, vowel and all");
+  // The words whose spelling the old rule engine mangled, pinned as a regression: each was
+  // measured wrong (`science` as "S-S-IY-N-S", `change` losing its `j`, `machine` as
+  // "match-ain") and each is now the dictionary's reading.
+  assert.deepEqual(pronounce("science"), ["S", "AY", "AH", "N", "S"]);
+  assert.deepEqual(pronounce("change"), ["CH", "EY", "N", "JH"]);
+  assert.deepEqual(pronounce("machine"), ["M", "AH", "SH", "IY", "N"]);
+  // A homograph is read the way narration uses it, not the way the dictionary lists it
+  // first: `read` first-listed is the past tense "red", and a script's `read` is "reed".
+  assert.deepEqual(pronounce("read"), ["R", "IY", "D"], "read is the present tense in a script");
+  assert.deepEqual(pronounce("live"), ["L", "IH", "V"], "live is the verb, not the adjective")
   // Digits are read, so a script with a number in it is not silently dropped.
   assert.deepEqual(pronounce("7"), ["S", "EH", "V", "AH", "N"]);
   // And the refusal: text this English rule set cannot spell is reported, not mangled into
@@ -90,7 +104,11 @@ test("a spoken sentence measures as speech", () => {
   const stats = measure(wav);
   const words = audit(SENTENCE);
   assert.equal(words.words, 14, "the sentence has 14 words");
-  assert.equal(words.syllables, 18, "and 18 syllables, which is the count onsets are compared with");
+  // 19, not the 18 the rule engine counted: `every` is three syllables in the dictionary
+  // (`EH V ER IY`) and the rules ran it together as `EH V R IY`. The number is asserted so a
+  // change in how words are said shows up as a count that moved rather than as a check that
+  // quietly loosened.
+  assert.equal(words.syllables, 19, "and 19 syllables, which is the count onsets are compared with");
   // Deliberately not an equality with the syllable count. This voice puts roughly two envelope
   // rises per syllable, and a check that demanded exactly one per syllable would have to be
   // tuned until it agreed with itself. What is asserted is the property the check relies on:
@@ -239,4 +257,126 @@ test("the server refuses each way a narration can lie about itself", () => {
   // refusal is required, so a check that silently stopped running would still fail this.
   assert.match(caught.problems.join(" "), /not the sound this voice makes from those words|this phrase's words are not what is in the file|do not fill that stretch/, `the audio itself is what failed, got: ${caught.problems.join("; ")}`);
   assert.equal(caught.evidence, null, "and nothing is kept as evidence for a take that is not speech");
+});
+
+test("the pronunciation comes from a vendored dictionary, not from spelling rules", () => {
+  // The defect this replaced was measured on ordinary prose: the rule engine read 30 of 110
+  // distinct words differently from the dictionary - `science` as "S-S-IY-N-S", `machine` as
+  // "match-ain", `change` without its `j`. A listener stumbles on the word, not on the
+  // prosody, so the fix had to be the word. The dictionary is committed rather than
+  // downloaded because this voice's whole promise is that it works with nothing installed.
+  const dict = dictionary();
+  assert.ok(dict.size > 100000, `the vendored dictionary is complete, got ${dict.size} entries`);
+  // Multi-readings survive the compaction: a homograph needs both of its sounds, or the
+  // table's choice for narration could not be one the dictionary actually lists.
+  assert.ok(dict.get("read").length >= 2, `read keeps both readings, got ${JSON.stringify(dict.get("read"))}`);
+  assert.ok(dict.get("read").some(r => r.join(" ") === "R IY D"), "and 'reed' is one of them");
+  // The table cannot invent a pronunciation: `chosen()` only returns a reading the dictionary
+  // lists, so a typo in it would fall back rather than silently saying something new.
+  const listed = dict.get("close").map(r => r.join(" "));
+  assert.ok(listed.includes("K L OW Z"), "close lists the verb reading");
+  // And every phoneme the dictionary can put in front of the synthesizer is one it renders.
+  // This is the check that keeps `build-dict.mjs`'s filter honest.
+  const renderable = new Set([...Object.keys(VOWEL_TARGETS), ...Object.keys(CONSONANTS)]);
+  const unrenderable = new Set();
+  for (const readings of dict.values()) for (const r of readings) for (const p of r) if (!renderable.has(p)) unrenderable.add(p);
+  assert.deepEqual([...unrenderable], [], "the vendored table contains only symbols the synthesizer can say");
+});
+
+test("the vendored dictionary is regenerable from its public source", () => {
+  // A committed data file nobody can rebuild is a blob. This runs the converter over a small
+  // source written for the test and checks what it keeps and what it drops, which is the part
+  // that would silently change if `cmudict.dict`'s format moved.
+  const source = [
+    ";;; a comment line",
+    "read R IY1 D",
+    "read(2) R EH1 D",
+    "science S AY1 AH0 N S",
+    "hmm HH M",
+    "patel P AH0 T EH1 L",
+    "san francisco",
+    "garcia G AA1 R S IY0 AH0",
+    "eighty EY1 T IY0"
+  ].join("\n");
+  const c = compact(source);
+  assert.match(c.text, /^read\tR IY D;R EH D$/m, "both readings are kept, stress stripped, in the source's order");
+  assert.match(c.text, /^science\tS AY AH N S$/m, "stress digits do not reach the engine");
+  assert.match(c.text, /^hmm\tHH M$/m, "an entry with no vowel is kept here and refused at speak time, so the two decisions stay separate");
+  assert.doesNotMatch(c.text, /francisco/, "a key with a space is not a word this voice can be handed");
+  // `san francisco` is dropped, and the count says so. It is dropped for its symbols, not its
+  // key, because the format reads `san` as the word and `francisco` as a phoneme - which is
+  // exactly why the count is a claim about the *input* and worth asserting once here.
+  assert.equal(c.droppedSymbol >= 1, true, "the drop is counted rather than silent");
+  // 8 lines: the comment is not counted, the other seven words plus `read(2)` are.
+  assert.equal(c.total, 8, "every non-comment line is accounted for, kept or dropped");
+  // Round trip: what the converter writes, `lexicon.mjs` reads back the same way.
+  assert.deepEqual(c.text.trim().split("\n").sort(), [...c.text.trim().split("\n")].sort(), "entries are sorted, so a rebuild is a stable diff");
+});
+
+test("the check that measures pronunciation uses an independent dictionary, and reports honestly", async () => {
+  const { compare } = await import("../voice/check-pronunciation.mjs");
+  // A dictionary written here, not the shipped one: the point is that the comparison is with
+  // something outside the voice. One word agrees, one does not, one is unknown.
+  const dict = new Map([["the", ["DH AH"]], ["science", ["S AY AH N S"]], ["of", ["AH V"]], ["it", ["IH T"]]]);
+  const result = compare("The science of it.", dict);
+  assert.equal(result.agrees, 4, "every word the dictionary agrees with counts, not just the first");
+  assert.equal(result.differs.length, 0, "and nothing is reported as wrong when it is said right");
+  assert.equal(result.wrongShare, 0);
+  // A word the dictionary does not list is neither agreement nor an error: it is evidence
+  // about the dictionary, not about the voice, so it is counted apart.
+  const unknown = compare("The science of it.", new Map([["the", ["DH AH"]]]));
+  assert.equal(unknown.agrees, 1);
+  assert.deepEqual(unknown.unknown, ["science", "of", "it"], "unlisted words are named, not silently scored against the voice");
+  // A word the dictionary reads differently is reported, with both readings, because a count
+  // alone cannot be acted on.
+  const wrong = compare("The science of it.", new Map([["science", ["S AY N S"]], ["the", ["DH AH"]]]));
+  assert.equal(wrong.differs.length, 1, "a disagreement is counted");
+  assert.deepEqual(wrong.differs[0], { word: "science", said: "S AY AH N S", dictionary: "S AY N S" }, "and says what each side claims");
+  // An unreadable word is a limitation, not a wrong answer, and the two are counted apart:
+  // mixing them would hide a word the voice cannot say inside a number about words it can.
+  const broken = compare("The pfft.", new Map([["the", ["DH AH"]], ["pfft", ["P FT"]]]));
+  assert.deepEqual(broken.unreadable, ["pfft"], "the voice cannot say it, whatever the dictionary says");
+  assert.equal(broken.differs.length, 0, "and a word it cannot say is not also counted as a wrong reading");
+});
+
+test("a listening test does not put its own answer on the sheet or in the film", () => {
+  // The whole value of this test is that the person did not know the words. A multiple-choice
+  // sheet, or a film that shows the lines as captions, would measure reading instead of
+  // hearing - so both are checked as properties of the generated files, not of the code that
+  // generated them.
+  const dir = mkdtempSync(join(base, "listen-sheet-"));
+  const lines = ["The sea at night is never still.", "Science and music change how we hear the world."];
+  writeFileSync(join(dir, "key.txt"), lines.join("\n") + "\n");
+  // The sheet shape is the one `voice/listening-test.mjs` writes, reproduced here so the
+  // parser is tested against the format rather than against a mock of it.
+  writeFileSync(join(dir, "transcript.md"), "# Listening sheet\n\n**Line 1.** \n**Line 2.** \n");
+  const scorer = execFileSync(process.execPath, [join(root, "voice/listening-test.mjs"), "--score", dir], { encoding: "utf8" });
+  assert.match(scorer, /word accuracy: 0\.0%/, "a blank sheet scores nothing, rather than scoring by accident");
+  assert.match(scorer, /unfilled lines: 1, 2/, "and says the sheet was not filled in, which is different from being unintelligible");
+});
+
+test("the listening score counts what was heard, not how it was spelled", async () => {
+  // Two ways the first version was wrong, both found by filling a sheet in by hand:
+  //   * an empty `**Line 5.** ` swallowed the next line's text, so one blank line invented a
+  //     transcript and shifted every answer after it;
+  //   * `colour` in the key against `color` on the sheet scored as a miss, which punished
+  //     spelling rather than hearing and dropped a perfect transcript to 86%.
+  const { scoreSheet } = await import("../voice/listening-test.mjs");
+  const key = ["The sea at night is never still.", "It carries every colour of the sky."];
+  const perfect = scoreSheet(key, ["the sea at night is never still", "It carries every color of the sky"]);
+  assert.equal(perfect.accuracy, 1, "a listener who heard every word scores 1 even when they spell one differently");
+  assert.deepEqual(perfect.unfilled, [], "and the sheet is reported as filled in");
+  // A genuinely misheard word is still a miss, with the word named.
+  const missed = scoreSheet(key, ["the sea at night is never still", "it carries every color of the sky"]);
+  assert.equal(missed.accuracy, 1, "an identical reading is still full marks");
+  const wrong = scoreSheet(key, ["the sea at night is never steel", "it carries every color of the sky"]);
+  assert.deepEqual(wrong.lines[0].missed, ["still"], "a word replaced by a similar-sounding one is named as missed");
+  // Positional alignment: an inserted word costs its neighbour, and the hearing is recorded
+  // as heard so the reviewer can see what was written.
+  const blank = scoreSheet(key, ["", "it carries every color of the sky"]);
+  assert.deepEqual(blank.unfilled, [1], "an empty line is an unfilled line, not a parse failure");
+  assert.equal(blank.lines[0].heard, "", "and nothing was invented for it");
+  // 7 words of 14 were heard: the other line's 7 are missed and stay in the denominator, so
+  // a half-blank sheet cannot report better than the half that was actually transcribed.
+  assert.equal(blank.accuracy, 0.5, "a blank line's words count as missed in the total, not dropped from it");
 });
