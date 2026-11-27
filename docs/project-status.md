@@ -103,14 +103,18 @@ Two honest gaps a first-time user will meet:
 
 - Product source of truth: [`design.md`](design.md).
 - Implementation source of truth: [`impl.md`](impl.md).
-- `npm test`: **75 cases** across 18 files — 4 registry/prompt (`core`), 4 method
+- `npm test`: **177 cases** across 40 files — 4 registry/prompt (`core`), 4 method
   availability/refusal, 6 workspace round trips, 4 canvas-script checks (a fourth now
   pins that a helper used only inside a nested template interpolation is still seen),
   8 browser canvas cases (`e2e`), 2 media renders, 1 audio render, 1 film, 3 provenance,
   2 wav measurement, 8 run-lifecycle, 2 Stop/failure UI, 4 attempt/retry, 11 version,
   1 draft-link, **7 voice** (`voice`: the synthesizer's own measurements, with tone,
   noise, sweep and silence pinned as failures), **2 narration** (a real WAV, a real
-  Remotion film, and a restart), and 5 documentation checks. Without a browser the
+  Remotion film, and a restart), **4 re-read** (`repace`: the pace reached and the
+  earlier take kept, a no-op press making no take, the refusals, and Stop keeping the
+  approved bytes), **3 re-read canvas** (`repace-ui`: the control and its comparison,
+  a linked film that is not re-cut, no control on a card that cannot use it), and 7
+  documentation checks. Without a browser the
   canvas cases skip and say which browser they looked for.
 - `test/docs.test.mjs` pins the facts in these documents that a reader is misled by
   when they rot: the stated test count, the claim that audio has no real-generation

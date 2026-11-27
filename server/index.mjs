@@ -7,6 +7,7 @@ import { methodFor, methodsFor, registryInfo, typeForFile } from "./registry.mjs
 import { assemblePrompt, materialText } from "./prompt.mjs";
 import { generate as runCodex } from "./codex.mjs";
 import { verifyNarration } from "./narration.mjs";
+import { readTake, renderAt, reproducesPrevious, writeScript, stopped, isStopped } from "./repace.mjs";
 import { beginRun, damageReason, endRun, guardCard, guardName, guardNotice, keepCard, pruneRuns, recoverRun, runsRoot } from "./runs.mjs";
 
 const root = resolve(new URL("..", import.meta.url).pathname), publicDir = join(root, "public"), defaultWorkdir = join(root, ".hypermaker");
@@ -456,6 +457,134 @@ const server = createServer(async (req, res) => { try {
     if (backAdopt?.retire) rmSync(join(workdir, String(n.id), backAdopt.retire), { force: true });
     emit({ kind: "restored", id: n.id, version: chosen.id });
     return json(res, 200, view());
+  }
+  // Same words, another pace, without a model and without re-deciding anything else.
+  //
+  // The card a writer has just approved is a recording of a script; asking for it slower is
+  // not a new creative act, and it used to be indistinguishable from one - the only control
+  // was Generate, which re-runs the agent, re-chooses the script and can come back with a
+  // different voice, a different reading table, or nothing at all on a machine where the model
+  // route is unreachable. This route re-reads the take's own recorded words with this
+  // repository's voice, and publishes through the same check an agent take faces.
+  if (url.pathname === "/api/repace" && req.method === "POST") {
+    const b = await body(req), n = getNode(b.id), ws = workdir;
+    if (claimFor(n.id)) return json(res, 409, { ...view(), error: `Node ${n.id} is already generating; stop it before asking for another pace` });
+    // Said as what it is, not as a generic refusal: a tone card has no words, and a take made
+    // by another speech method was not this voice, so "the same recording, slower" does not
+    // exist for either of them.
+    if (n.type !== "audio" || n.method !== "narration") return json(res, 409, { ...view(), error: `Only a card whose method is narration can be re-read at another pace; node ${n.id} is ${n.type}/${n.method || "no method"}.` });
+    const wpm = Number(b.wpm);
+    if (!Number.isFinite(wpm) || wpm <= 0) return json(res, 409, { ...view(), error: `A pace is a positive number of words per minute, got ${JSON.stringify(b.wpm)}.` });
+    // Asking for the pace this take already has is not a new take, and acting on it spends a
+    // version: every no-op press pushes the approved take into `kept` and makes a fresh number
+    // the current one, so two presses on an untouched box fill the comparison panel with takes a
+    // person cannot tell apart - measured 147.2 -> 147.0 on a card nobody meant to change.
+    //
+    // The boundary is the same number the person sees: the box shows the take's pace rounded, so a
+    // request for that integer is the no-op a press without an edit produces. The rendered cycles
+    // are not bit-identical to the request (147.2 reads back at 147.0), so comparing rendered paces
+    // after the fact would let the first no-op through and only catch the second.
+    const currentWpm = Number(n.narration?.pace?.wpm);
+    if (Number.isFinite(currentWpm) && Math.round(wpm) === Math.round(currentWpm)) {
+      return json(res, 200, { ...view(), notice: `This card already reads at ${Math.round(currentWpm)} words a minute, and ${wpm} is the same pace, so no new take was made and nothing changed. Type a different number to hear it at another speed.` });
+    }
+    const cardDir = join(ws, String(n.id));
+    const take = readTake({ cardDir, artifact: n.artifact });
+    // Refusals that are about this card are answered before a run directory exists, so a
+    // person who asked for something impossible is not left with a run marker and no take.
+    if (take.problems.length) return json(res, 409, { ...view(), error: `This card cannot be re-read at another pace: ${take.problems.join("; ")}.` });
+
+    const priorRecord = nodes[n.id], priorVersions = [...(n.versions || [])];
+    const cancelRef = { child: null, stopped: false };
+    const claim = { id: n.id, workdir: ws, agent: null, stopping: null, cancel: () => { cancelRef.stopped = true; claim.stopping = claim.stopping || new Error("Re-read stopped by the user"); if (cancelRef.child) { try { process.kill(-cancelRef.child.pid, "SIGTERM"); } catch { try { cancelRef.child.kill("SIGTERM"); } catch {} } } return true; } };
+    running.set(slot(ws, n.id), claim);
+    const attemptDir = beginRun(ws, n.id);
+    attemptDirs.set(slot(ws, n.id), attemptDir);
+    const ordinal = Math.max(0, ...priorVersions.map(v => Number(v.id) || 0)) + 1;
+    // What this take was asked for, in the words a person would use. It is a real instruction
+    // even though no agent read it, and the card's `asked for` line is where it belongs - the
+    // alternative is a take whose ask reads as the previous take's prompt, which would be the
+    // provenance lie the versions feature exists to prevent.
+    const asked = `re-read the same words at ${wpm} words a minute${take.wpm ? ` (this card read at ${Math.round(take.wpm)})` : ""}`;
+    nodes[n.id] = nodeRecord(n.id, { ...n, status: "running", error: null }); save(); emit({ kind: "started", id: n.id });
+    (async () => {
+      const scriptFile = writeScript(attemptDir, take.script);
+      const rendered = await renderAt({ projectRoot: root, scriptFile, outDir: attemptDir, wpm, voice: take.voice, cancelRef });
+      if (claim.stopping) throw claim.stopping;
+      // The same gate an agent take passes: the timeline must describe this WAV, the WAV must
+      // measure as speech, and the words must be the words. `material` is the recorded script
+      // itself, because that is exactly the claim a re-read makes - these bytes say these
+      // words. The stronger claim, that the words are the card's original material, was made
+      // and checked when the first take was published, and it is still on that take's record.
+      const narration = verifyNarration({ attemptDir, artifact: rendered.artifact, material: take.script, from: priorRecord.narration?.source ?? null });
+      if (!narration.ok) throw new Error(`This re-read is not a narration: ${narration.problems.join("; ")}`);
+      const reproduced = await reproducesPrevious({ projectRoot: root, scriptFile, previousFile: join(cardDir, String(n.artifact)), timeline: take.timeline, scratch: attemptDir, cancelRef });
+      // Last look before anything is copied into `versions/`. The comparison above runs a second
+      // render and takes real time, which is exactly the window a person presses Stop in; the
+      // check after the first render cannot cover it. Publishing is the irreversible step here,
+      // so the stop is answered immediately before it and not only after the work it interrupts.
+      // A hold in the last step before publishing, so a test can stand in the window a person
+      // actually presses Stop in - the comparison render above can take a second, and a test
+      // that raced it would either miss the window or be slow and flaky. Only tests set this,
+      // and it changes nothing about what happens, only when.
+      if (process.env.HYPERMAKER_REPACE_HOLD_BEFORE_PUBLISH_MS) await new Promise(r => setTimeout(r, Number(process.env.HYPERMAKER_REPACE_HOLD_BEFORE_PUBLISH_MS)));
+      if (claim.stopping || cancelRef.stopped) throw claim.stopping ?? stopped();
+      // The integer guard above is what a press without an edit meets. This is the same promise
+      // made of the bytes: if the render came out identical to the take already on the card, then
+      // there is no second take to compare and publishing one would only relabel the same
+      // recording. Nothing is published, and the card says why.
+      if (existsSync(join(cardDir, String(n.artifact))) && readFileSync(join(attemptDir, basename(rendered.artifact))).equals(readFileSync(join(cardDir, String(n.artifact))))) {
+        endRun(ws, n.id); releaseClaim(claim); attemptDirs.delete(slot(ws, n.id)); dropAttempt(attemptDir);
+        await finishIn(ws, n.id, { status: "idle", error: null, notice: `The re-read came out byte for byte identical to the take already on the card, so nothing was published and the take you had is still selected.` });
+        if (ws === workdir) emit({ kind: "complete", id: n.id });
+        return;
+      }
+      const published = publish(ws, n.id, basename(rendered.artifact), attemptDir);
+      if (!published) throw new Error("the re-read rendered but could not be published beside the card");
+      const takeNo = /^v(\d+)-/.exec(basename(published))?.[1];
+      copyFileSync(join(attemptDir, "timeline.json"), join(ws, String(n.id), "versions", `${takeNo ? `v${takeNo}-` : ""}${basename(published).replace(/^v\d+-/, "").replace(/\.wav$/i, "")}.timeline.json`));
+      const publishedScript = publishScript(ws, n.id, "script.txt", published, attemptDir);
+      const kept = priorRecord.artifact ? { id: ordinal, artifact: priorRecord.artifact, file: priorRecord.artifact, sources: priorRecord.sources || [], prompt: priorRecord.promptUsed ?? null, narration: priorRecord.narration ?? null } : null;
+      const evidence = {
+        ...narration.evidence,
+        // What makes this take a *re-read* rather than a new recording is a claim, so it is
+        // recorded as one, with the evidence that supports it and the reason when it cannot be
+        // made. A take made by a build whose voice has changed is still an honest re-read of
+        // the same words; it just cannot also claim that only the pace moved.
+        repace: {
+          from: priorRecord.artifact ?? null,
+          fromWpm: take.wpm,
+          askedWpm: wpm,
+          scriptFrom: take.timelinePath ? basename(take.timelinePath) : null,
+          sameWords: true,
+          onlyThePaceChanged: reproduced.same,
+          ...(reproduced.same ? {} : { notReproduced: reproduced.why }),
+        },
+      };
+      endRun(ws, n.id);
+      releaseClaim(claim);
+      // `status: "idle"` is not decoration: a node record that keeps the `running` it was given
+      // at the press never settles, so the card stayed on *Generating…* forever and every later
+      // press answered "already generating". The operator hit exactly that after a successful
+      // re-read. The agent path gets this from `{...result, status: "idle", error: null}`; this
+      // route has to say it itself.
+      await finishIn(ws, n.id, { artifact: published, script: publishedScript ?? priorRecord.script ?? null, narration: evidence, sources: priorRecord.sources || null, promptUsed: asked, versions: kept ? [...priorVersions, kept] : priorVersions, status: "idle", error: null });
+      sweepVersions(ws, n.id, ws === workdir ? nodes[n.id] : readWorkspace(ws)[n.id]);
+      dropAttempt(attemptDir); pruneRuns(ws, n.id); attemptDirs.delete(slot(ws, n.id));
+      if (ws === workdir) emit({ kind: "complete", id: n.id });
+    })().catch(async error => {
+      // A stop is a stop whether or not the renderer reported it in its own words; the typed
+      // error from `server/repace.mjs` says so directly, so a Stop cannot be mistaken for a
+      // failure of the re-read and, worse, an error card describing a run the user ended.
+      const status = isStopped(error) || /stopped/i.test(error.message) ? "cancelled" : "error";
+      endRun(ws, n.id); pruneRuns(ws, n.id); releaseClaim(claim); attemptDirs.delete(slot(ws, n.id));
+      // Nothing was published, so the take on the card and its versions are exactly what they
+      // were - the approved take is still the one on the card, which is the observable promise a
+      // Stop makes. The abandoned attempt stays under .runs/ for a person to look at.
+      await finishIn(ws, n.id, { sources: priorRecord.sources || null, status, error: error.message });
+      if (ws === workdir) emit({ kind: status === "cancelled" ? "cancelled" : "error", id: n.id, error: error.message });
+    });
+    return json(res, 202, view());
   }
   if (url.pathname === "/api/clone" && req.method === "POST") { const b = await body(req), source = getNode(b.id), id = nextId(); nodes[id] = nodeRecord(id, { ...source, x: source.x + 40, y: source.y + 40, inputs: [...source.inputs], artifact: null, script: null, promptUsed: null, status: null, error: null }); save(); return json(res, 200, view()); }
   if (url.pathname === "/api/delete" && req.method === "POST") { const b = await body(req); delete nodes[b.id]; for (const n of Object.values(nodes)) n.inputs = n.inputs.filter(id => id !== Number(b.id)); if (existsSync(join(workdir, String(b.id)))) rmSync(join(workdir, String(b.id)), { recursive: true, force: true }); if (existsSync(join(workdir, runsRoot, String(b.id)))) rmSync(join(workdir, runsRoot, String(b.id)), { recursive: true, force: true }); save(); return json(res, 200, view()); }

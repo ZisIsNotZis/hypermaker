@@ -1,5 +1,14 @@
 # Evidence kept outside the tests
 
+## `repace-operator-findings.md`
+
+Three defects in the first version of the "read this take again at another pace" route, found by
+an operator walking the canvas rather than by me or by a test I had written: a Stop that published
+anyway, a success that never settled the card, and a no-op press that spent a version. The file
+records what each reproduction printed, what caused it, and the test that now holds it. Read it
+with `docs/impl.md`'s *Reading a take again at another pace*, which describes the design the
+failures were in.
+
 ## `real-run-stopped-at-workspace-discovery.jsonl`
 
 The name says where it stopped, not what was wrong with the network: the first version of this

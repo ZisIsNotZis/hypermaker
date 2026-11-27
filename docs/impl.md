@@ -106,7 +106,7 @@ covers the start-against-existing-cards case as a separate process for that reas
 
 ## HTTP and UI
 
-Provide workspace open/read/save, node create, import, link/unlink, clone/delete, layout, file serving, asynchronous generation, and cancel. The card shows *Generating…* with a Stop button while a run is live; Stop is hidden otherwise. The stored error renders on the card both when it happens and on a fresh page load — a card built by `shell()` used to skip it, so a failure was visible only until the page was reopened. UI is compact canvas: pointer drag/link/pan, drag-end workspace persistence, 4:3 artifact preview, visible SVG marker arrows with hit paths, control-only wheel suppression, wrapped text, native media viewers, download/image popup, and preview errors. Card raising must not move a card during pointerdown on an interactive control. Delete control executes on click after confirmation.
+Provide workspace open/read/save, node create, import, link/unlink, clone/delete, layout, file serving, asynchronous generation, cancel, and `/api/repace` (re-read a published narration at another pace, see *Reading a take again*). The card shows *Generating…* with a Stop button while a run is live; Stop is hidden otherwise. The stored error renders on the card both when it happens and on a fresh page load — a card built by `shell()` used to skip it, so a failure was visible only until the page was reopened. UI is compact canvas: pointer drag/link/pan, drag-end workspace persistence, 4:3 artifact preview, visible SVG marker arrows with hit paths, control-only wheel suppression, wrapped text, native media viewers, download/image popup, and preview errors. Card raising must not move a card during pointerdown on an interactive control. Delete control executes on click after confirmation.
 
 Canvas implementation invariants (each has a regression test; two were once live bugs):
 
@@ -155,6 +155,42 @@ top of it, and the timeline still records the multiplier, so `bindTake` and ever
 untouched. `test/pace.test.mjs` pins all three: the pace reached, the multiplier still meaning
 what it meant, and a pace outside the range refused with the limit and the pace actually
 reached.
+
+## Reading a take again at another pace (`/api/repace`)
+
+Changing the pace of a take that already exists is **not** a generation. The script, the voice,
+the reading table and the pitch are all already decided and recorded; only the speed is new. So
+`server/repace.mjs` reads the words out of the take's own published `timeline.json` (published
+beside the WAV as `versions/v2-narration.timeline.json`), writes them to a `script.txt` in the
+run directory, and invokes `voice/render.mjs --wpm N` with the `--readings` and `--pitch` the
+take recorded. No agent is spawned, which matters twice: the choice being made is mechanical,
+and on a machine where the model route does not answer this is the only way the control can
+work at all.
+
+The result is published through `verifyNarration`, the same gate an agent take faces (timeline
+describes the WAV, the WAV measures as speech, the words are the words), and the take it came
+from is kept as a version. One claim is checked beyond that, because it is what makes a re-read
+worth having rather than a second recording that happens to say the same words: the earlier
+take is re-rendered at the settings **its own record** names and the bytes compared. Identical
+bytes mean `same voice, only the pace changed` is true of the files; different bytes mean the
+card says `same words, a new recording` with the reason, and never the stronger claim.
+
+Three failures were found here after the route first worked, all reported by an operator walking
+the canvas, and each is now pinned:
+
+- **A Stop published anyway.** The comparison render takes about a second, and Stop lands inside
+it. The comparison caught every rejection from its own child - including the one raised by the
+kill - and answered "not reproduced", so the re-read published a new take while the receipt
+said the user stopped it. `server/repace.mjs` now raises a typed `StoppedError`, rethrows it
+through the comparison, the route checks for a stop immediately before `publish`, and
+`HYPERMAKER_REPACE_HOLD_BEFORE_PUBLISH_MS` holds that last step open so the test walks the
+window rather than racing it (the same seam `HYPERMAKER_HOLD_BEFORE_GUARD_MS` already uses).
+- **A success never settled.** The success path published the take without `status: "idle"`, so
+the card stayed on *Generating…* and every later press was refused as "already generating".
+- **A no-op spent a version.** Pressing Read again on an unedited box (showing the take's own
+rounding) made a second take at a pace 0.2 apart and selected it, filling the comparison panel
+with takes nobody can tell apart. A request for the integer the box displays is answered with
+a notice and no take, and a byte-identical render is refused the same way.
 
 What a real model does with the instruction is **not** established, and the reason is narrow.
 `codex-cli 0.172.0` is installed here under `~/.codex/packages/` with credentials present, so a
@@ -424,7 +460,7 @@ breaking the behaviour:
 
 ## Verification
 
-TDD seams: workspace round trip/atomic write/path safety; registry; prompt order/direct input metadata; node/import/link persistence; async result validation/concurrency/failure; UI creation, scrolling, drag-link, unlink, persistence, controls, preview/download. Run `npm test`, `npm run test:e2e`, `node --check`, and `git diff --check`. `npm test` is 170 declared cases: `test/story-entry.test.mjs` adds three for the story's explicit agent choice (a real run with no CODEX_BIN, or one pointed at the stand-in, is refused before anything starts; an ignored CODEX_BIN is reported; the receipt records which agent ran), `test/evidence-claims.test.mjs` adds four pinning the grain of the one real-model attempt: no document may turn that attempt into a claim about the whole model backend, the route and its 451 must be named, the evidence file has to say where the run stopped, and it has to state what it does not prove, `test/pace.test.mjs` adds three for settable, measured pace and the multiplier's unchanged meaning, `test/guide-pace.test.mjs` adds two for the instruction reaching the agent's prompt and the guide's own promise being true, `test/compare-playback.test.mjs` adds one for one-sound-at-a-time in the compare panel, `test/download-name.test.mjs` adds two for the exported filename, `test/keep-card.test.mjs` adds six for the run directory and the card guard, five of which fail when the guard is disabled; `test/prepare-window.test.mjs` adds three for the run claim, the overlapping press failing with two 202s when the claim is deferred to the spawn; registry/prompt/workspace checks, three canvas-script checks, eight canvas browser cases, two media renders, one audio render, one film built from canvas material, three provenance cases, two WAV measurement cases, seven lifecycle cases, two Stop/failure UI cases, and the short-film story, which is a command rather than part of the suite. Browser tests launch Chromium through `test/browser.mjs`, honoring `HYPERMAKER_CHROME` or `CHROME_BIN` when Playwright's own browser is not installed. Every browser test asserts that the page raised no error, and the assertions are collected rather than thrown from the event listener, because a throw there surfaces after the test has ended.
+TDD seams: workspace round trip/atomic write/path safety; registry; prompt order/direct input metadata; node/import/link persistence; async result validation/concurrency/failure; UI creation, scrolling, drag-link, unlink, persistence, controls, preview/download. Run `npm test`, `npm run test:e2e`, `node --check`, and `git diff --check`. `npm test` is 177 declared cases: `test/repace.test.mjs` adds four for re-reading a published take at another pace (the pace reached and the earlier take kept, a no-op press making no take, the refusals, and Stop during the comparison keeping the approved bytes) and `test/repace-ui.test.mjs` adds three for the canvas walk (the control and its comparison, a linked film that is not re-cut, and no control on a card that cannot use it); `test/story-entry.test.mjs` adds three for the story's explicit agent choice (a real run with no CODEX_BIN, or one pointed at the stand-in, is refused before anything starts; an ignored CODEX_BIN is reported; the receipt records which agent ran), `test/evidence-claims.test.mjs` adds four pinning the grain of the one real-model attempt: no document may turn that attempt into a claim about the whole model backend, the route and its 451 must be named, the evidence file has to say where the run stopped, and it has to state what it does not prove, `test/pace.test.mjs` adds three for settable, measured pace and the multiplier's unchanged meaning, `test/guide-pace.test.mjs` adds two for the instruction reaching the agent's prompt and the guide's own promise being true, `test/compare-playback.test.mjs` adds one for one-sound-at-a-time in the compare panel, `test/download-name.test.mjs` adds two for the exported filename, `test/keep-card.test.mjs` adds six for the run directory and the card guard, five of which fail when the guard is disabled; `test/prepare-window.test.mjs` adds three for the run claim, the overlapping press failing with two 202s when the claim is deferred to the spawn; registry/prompt/workspace checks, three canvas-script checks, eight canvas browser cases, two media renders, one audio render, one film built from canvas material, three provenance cases, two WAV measurement cases, seven lifecycle cases, two Stop/failure UI cases, and the short-film story, which is a command rather than part of the suite. Browser tests launch Chromium through `test/browser.mjs`, honoring `HYPERMAKER_CHROME` or `CHROME_BIN` when Playwright's own browser is not installed. Every browser test asserts that the page raised no error, and the assertions are collected rather than thrown from the event listener, because a throw there surfaces after the test has ended.
 
 If `/tmp` is small or full, point the fixtures somewhere roomy (`TMPDIR=/var/tmp/x npm test`). Remotion writes real video next to its workspace, and a full scratch disk fails the media cases with `ENOSPC` — which looks like a code failure but is not. A directory on a Windows drive is not a substitute: Chromium cannot create its profile there.
 

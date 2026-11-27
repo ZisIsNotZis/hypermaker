@@ -1,5 +1,50 @@
 # Changelog
 
+## Unreleased — the same narration can be read again at another pace from the card, without a model, 2026-11-28
+
+The pace was a number you could set with `--wpm`, but only an agent could set it: a person who
+had approved a take and wanted it slower had exactly one control, Generate, which starts a model,
+re-chooses the script, and - on this machine - cannot run at all. So "trying another pace" meant
+"redoing the take and hoping", which is not the thing anybody asked for.
+
+**A narration card now has a pace box and Read again.** The server re-reads the words out of the
+take's OWN published `timeline.json` with `voice/render.mjs`, at the requested pace, keeping the
+reading table and pitch the take recorded, and publishes through the same `verifyNarration` gate an
+agent take faces. There is no agent in the path. Beyond the acoustic checks, the earlier take is
+re-rendered at the settings its own record names and the bytes compared: when they are identical,
+`same voice, only the pace changed` is a fact about the files, and when an older build's take cannot
+be reproduced the card says `same words, a new recording` with the reason instead of assuming. The
+take it came from stays as `kept v1`, and the compare panel plays both.
+
+Walking this found three defects, all in the code written this round, and all found by an operator
+rather than by me:
+
+- **A Stop published anyway.** The comparison re-render takes about a second, and Stop is pressed
+exactly in that window. `reproducesPrevious` caught every rejection from that probe - including the
+one raised by the kill - and answered `same: false`, so the re-read went on to publish a new take
+while the receipt said the user had stopped it. The stop is now a typed error that is rethrown, the
+check is repeated immediately before `publish`, and `test/repace.test.mjs` holds it with a
+`HYPERMAKER_REPACE_HOLD_BEFORE_PUBLISH_MS` seam, the same pattern the guard already uses.
+- **A successful re-read never settled.** The success path wrote the new take without
+`status: "idle"`, so the card sat on *Generating…* forever and every later press was answered
+"already generating". My own first probe hung on this before the operator reported it.
+- **A no-op press spent a version.** Pressing Read again without editing the box (which showed 147)
+produced a second take at 147.0 and selected it - no new intent, one more version, two takes nobody
+can tell apart in the comparison panel. A request for the integer the box displays is now answered
+with a notice and no new take, and a byte-identical render is refused the same way.
+
+**What is still not there.** A pace control before the first read: the box appears once a take
+exists, so the first take's pace still comes from the instruction in the card's prompt. And the
+listening question is untouched - these takes measure as speech and are bound to their scripts, and
+nobody has said whether a person understands them.
+
+Tests: `test/repace.test.mjs` (four: a re-read at another pace keeps the earlier take and measures
+at the pace asked for; the same words at the same pace makes no take; a tone card, an empty card and
+an impossible pace each say why; Stop during the comparison keeps the approved bytes) and
+`test/repace-ui.test.mjs` (two: the canvas walk - find the control, type through a card refresh, ask,
+see the re-read note, find the earlier take, play both panes - and no control on a card that cannot
+use it).
+
 ## Unreleased — a narration's pace is a number you can set, and the card says what you got, 2026-11-28
 
 A person asked whether they could control the pace of a film's voice. The only setting was
@@ -43,9 +88,11 @@ it is a specific link that needs a real, authorized entry point completing disco
 next attempt must say which route it used. `docs/evidence/` holds the transcript and the
 table. The model half is still owed, and `test/guide-pace.test.mjs` pins only the checkable
 half: the instruction is in the assembled prompt, with the right numbers and the right
-warning, and the guide's own "within about 1%" claim is true of the tool. There is also no pace
-control on the canvas: an agent can pass `--wpm` and the card shows the result, but a person
-cannot set it by hand yet, and the README says so rather than implying a slider exists.
+warning, and the guide's own "within about 1%" claim is true of the tool. At the time of that
+change there was also no pace control on the canvas: an agent could pass `--wpm` and the card showed
+the result, but a person could not set it by hand. That was fixed in the entry above - a take can
+now be read again at another pace from the card - and the remaining gap is the first read, whose
+pace still comes from the instruction in the card's prompt.
 
 Tests: `test/pace.test.mjs` (three: a requested pace is the pace the bytes have, the multiplier
 still means what it meant and the recorded multiplier reproduces the take, and a pace out of
