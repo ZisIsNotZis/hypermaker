@@ -41,9 +41,53 @@ Canvas implementation invariants (each has a regression test; two were once live
 - `safe()` takes a function; callers pass `safe(() => promise)`, never a promise. `changeField` resolves the method list first, then patches.
 - Prompt saves are debounced, on blur, and flushed before Generate; `sync()` skips the textarea while it is focused.
 
+## Media
+
+`types/audio/methods/synth.mjs` exists because the two speech methods name binaries under `~/tts.cpp` and `~/bark.cpp`; when those are absent an audio card had no usable method at all. `synth` asks the agent to synthesize PCM in Node and write the RIFF header itself, so it needs nothing installed, and its guide says plainly that it makes tones and rhythm, not words. It is not a replacement for `tts.cpp`/`bark.cpp`, and the docs never present it as speech.
+
+The file endpoint had two defects with one cause. It sent no `content-length` and ignored `Range`, so a media element could not learn a length or seek: Chromium reported `duration: null` for a real WAV, while an MP4 survived on its own `moov` box and looked healthy. The failure was also size-dependent — a 176 KB clip still reported a duration, a 352 KB one did not — so a short test fixture proves nothing. `sendFile` now sends a length, advertises `accept-ranges: bytes`, and answers a range request with `206`, a `content-range`, and exactly that slice (or `416` when unsatisfiable). `test/audio.test.mjs` uses a six-second clip for that reason, and fails with `Infinity` as the duration when the endpoint regresses.
+
+## A film from canvas material
+
+Video has its own method guide rather than re-exporting the image one, because a video card
+is the only card that can be handed audio. A real run showed the cost of staying quiet about
+it: the agent rendered an MP4 whose container carried a valid AAC track of pure digital
+silence (`peak 0` on every sample). Every cheap check passed - MP4 container, audio stream
+present, canvas plays it - and the result was a silent film. The guide now states how to mix
+an input file (`publicDir` in `bundle()`, `<Audio src={staticFile(...)}/>`), requires the
+picture to last as long as the sound, and requires the agent to extract the rendered track
+and confirm its samples are not all zero before reporting success.
+
+A later real run of the same shape produced **4.05 s of audible audio at peak 30496** inside a
+720x404 h264 MP4, so the contract is reachable, not merely stated.
+
+`prompt.txt` is written **before** the child is spawned. A child can be running before the
+next line of the parent executes, and a run's own type and id are therefore also passed in
+the environment (`HYPERMAKER_NODE_TYPE`, `HYPERMAKER_NODE_ID`) rather than re-derived by
+reading that file; reading it early made a test pick the wrong fixture intermittently.
+
+## Provenance of an artifact
+
+A node's `sources` records what a finished artifact was built from: `{id, type, artifact}`
+per input, persisted in `workspace.yml` and shown on the card as `made from #1 image
+poster.png - #3 audio tone.wav`. The rules, each with a regression test that was checked by
+breaking the behaviour:
+
+- **Frozen at start.** The set is captured when the run is launched, not read again when it
+  finishes. A film takes minutes; a person may rewire the canvas while watching it, and
+  reading the links at completion labelled the film with materials it never saw.
+- **Links are the person's.** A link added during a run is not undone when that run
+  finishes: it is preparation for the next run. Only `sources` describes the finished file.
+- **A failed or stopped re-run changes nothing about provenance.** The previous artifact is
+  still the one on the card, so it keeps the sources it was made with.
+- **Identification comes from the map key.** A node loaded from `workspace.yml` carries no
+  `id` field of its own, so reading `s.id` wrote `null` for every source of a workspace read
+  back from disk - which is the ordinary case after a restart. The label read `made from
+  #null image`.
+
 ## Verification
 
-TDD seams: workspace round trip/atomic write/path safety; registry; prompt order/direct input metadata; node/import/link persistence; async result validation/concurrency/failure; UI creation, scrolling, drag-link, unlink, persistence, controls, preview/download. Run `npm test`, `npm run test:e2e`, `node --check`, and `git diff --check`. `npm test` is 30 cases with a browser: registry/prompt/workspace checks, three canvas-script checks, eight canvas browser cases, two media renders, seven lifecycle cases, and two Stop/failure UI cases. Browser tests launch Chromium through `test/browser.mjs`, honoring `HYPERMAKER_CHROME` or `CHROME_BIN` when Playwright's own browser is not installed. Every browser test asserts that the page raised no error, and the assertions are collected rather than thrown from the event listener, because a throw there surfaces after the test has ended.
+TDD seams: workspace round trip/atomic write/path safety; registry; prompt order/direct input metadata; node/import/link persistence; async result validation/concurrency/failure; UI creation, scrolling, drag-link, unlink, persistence, controls, preview/download. Run `npm test`, `npm run test:e2e`, `node --check`, and `git diff --check`. `npm test` is 36 cases with a browser: registry/prompt/workspace checks, three canvas-script checks, eight canvas browser cases, two media renders, one audio render, one film built from canvas material, three provenance cases, seven lifecycle cases, and two Stop/failure UI cases. Browser tests launch Chromium through `test/browser.mjs`, honoring `HYPERMAKER_CHROME` or `CHROME_BIN` when Playwright's own browser is not installed. Every browser test asserts that the page raised no error, and the assertions are collected rather than thrown from the event listener, because a throw there surfaces after the test has ended.
 
 If `/tmp` is small or full, point the fixtures somewhere roomy (`TMPDIR=/var/tmp/x npm test`). Remotion writes real video next to its workspace, and a full scratch disk fails the media cases with `ENOSPC` — which looks like a code failure but is not. A directory on a Windows drive is not a substitute: Chromium cannot create its profile there.
 
@@ -51,6 +95,13 @@ If `/tmp` is small or full, point the fixtures somewhere roomy (`TMPDIR=/var/tmp
 
 `test/lifecycle.test.mjs` covers the run lifecycle with `test/fake-agent.mjs`, whose modes are slow, failing, and process-tree. Each assertion was checked by breaking the behaviour it protects: removing the 409, dropping `status`/`error` from the serializer, removing `adopt()`, and replacing the group kill with a child kill all make the suite red. The Stop and overlap cases wait for the agent to record its argv or start its grandchild first; without that wait an immediate Stop killed nothing and the orphan check passed vacuously.
 
-One real Codex CLI run was taken on 2026-11-27 (`codex-cli 0.172.0`, ChatGPT auth): the agent wrote `generate.mjs`, ran it, and returned a plain-text artifact that the canvas previewed. Stop and a deliberate model rejection were also exercised through the real CLI; the rejected run's card carried the CLI's own message. That is evidence the adapter matches the real binary's contract, not evidence about output quality.
+Real Codex CLI runs were taken on 2026-11-27 (`codex-cli 0.172.0`, ChatGPT auth). The first produced a plain-text artifact; Stop and a deliberate model rejection were exercised the same way, and the rejected card carried the CLI's own message. A later **content chain** produced three artifacts in one workspace through the HTTP entry point: a 1200x675 PNG poster, a 720x405 h264 MP4 (3 s, 30 fps) rendered from that poster taken as a direct input, and a 4-second 44.1 kHz mono WAV rendered from the same input, all previewed by the canvas. `node test/chain.mjs` reproduces exactly that chain, spends real model calls, and writes screenshots plus a JSON record of every checked fact.
+
+Two things that chain taught, which the tests alone had not:
+
+- The agent rendered a correct PNG on the first run without using Remotion at all — it screenshotted with Playwright, because the method guide never said where a browser was. The image was fine; the *method contract* was underspecified. The guide now names `HYPERMAKER_CHROME`/`CHROME_BIN`.
+- The audio card looked green while being unusable: the file existed and played, but the player could not report a length. That is why the audio test reads `audio.duration` and `audio.seekable` from the browser rather than trusting the node's `status`.
+
+What the chain does not show is quality. One render per medium says the path works; it says nothing about whether the words, pacing or composition are good, and the fixture compositions remain two frames and a test tone.
 
 What remains unproven locally: audio (`tts.cpp`, `bark.cpp`), `hyperframe`, and the quality presets against a real model. The fake agent reproduces the artifact contract, not agent judgment. The video path is proven at the harness level only: the render is real, but the two-frame fixture composition is not evidence that a real agent will choose sensible dimensions, codec or duration.

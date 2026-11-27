@@ -43,7 +43,12 @@ export function generate({ node, workspace, context = {}, model, effort, useGhPr
   const promise = new Promise((done, fail) => {
     // detached makes the child a process-group leader, so a cancel can signal the
     // whole tree the agent spawned (shell, node, renderer), not only the CLI.
-    child = spawn(command, args, { cwd: workspace.projectCwd || process.cwd(), env: { ...process.env, HYPERMAKER_NODE_DIR: nodeDir }, stdio: ["ignore", "pipe", "pipe"], detached: true });
+    // Written before the spawn, not after: a child can be running before the next
+    // line executes, and a reader of this directory (a person, or a test fixture
+    // standing in for an agent) must never see the directory without the prompt
+    // that produced it.
+    writeFileSync(join(nodeDir, "prompt.txt"), prompt, "utf8");
+    child = spawn(command, args, { cwd: workspace.projectCwd || process.cwd(), env: { ...process.env, HYPERMAKER_NODE_DIR: nodeDir, HYPERMAKER_NODE_TYPE: node.type, HYPERMAKER_NODE_ID: String(node.id) }, stdio: ["ignore", "pipe", "pipe"], detached: true });
     const commandLine = `${command} ${args.map(x => JSON.stringify(x)).join(" ")}`;
     const commandLog = `[${new Date().toISOString()}] command: ${commandLine}\n${prompt}\n`;
     appendFileSync(devLog, commandLog); process.stdout.write(commandLog);

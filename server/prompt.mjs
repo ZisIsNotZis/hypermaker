@@ -15,6 +15,13 @@ function inputSection(node, inputs, workspace) {
     const artifact = source.artifact ? join(dir, source.artifact) : "";
     const sourceFile = source.script ? join(dir, source.script) : "";
     const lines = [`INPUT ${index + 1}`, `directory: ${dir}`, `artifact: ${source.artifact || "(none)"}`];
+    // A linked card with no artifact yet is the ordinary way a person builds a
+    // chain top-down, and it used to reach the agent as a bare `(none)` - the
+    // agent had no way to know it was supposed to use a file that does not exist
+    // and either failed or invented its own material. Say what is there and what
+    // to do about it, so the failure (if any) is about the material, not the
+    // prompt's silence.
+    if (!source.artifact) lines.push(`note: this input has not been generated yet; it has no artifact to use. Its directory is empty of output, so do not wait for it. Either proceed without it, or say in your final JSON error that input ${index + 1} needs to be generated first.`);
     if (source.type === "text" && artifact && existsSync(artifact)) lines.push("artifact content:", "```", fileText(artifact), "```");
     else if (artifact) lines.push(`artifact path: ${artifact}`);
     if (sourceFile && existsSync(sourceFile)) lines.push(`source: ${source.script}`, "source content:", "```", fileText(sourceFile), "```");

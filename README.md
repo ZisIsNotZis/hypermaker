@@ -1,6 +1,6 @@
 **English** | [简体中文](README.zh-CN.md)
 
-> **Status: canvas usable, generation path verified (0.1.0, 2026-11-27).** `npm test` passes 30/30 when a usable Chromium is available; two cases render for real through Remotion (a PNG and an h264 MP4), seven cover the run lifecycle, and two drive Stop and a failed run in a real browser. The ordinary user path — create, type, move, overlap and raise, link by dragging one card onto another's title bar, right-click unlink, delete with confirmation, reopen — was exercised end to end in a real browser. One **real Codex CLI run** was also taken: the agent wrote and ran a script and returned a text artifact the canvas previewed. What is simulated and what is real is spelled out in [**Verification limits**](#verification-limits).
+> **Status: canvas usable, generation path verified (0.1.0, 2026-11-27).** `npm test` passes 36/36 when a usable Chromium is available; two cases render for real through Remotion (a PNG and an h264 MP4), one renders a real WAV and checks the player can report its length, three pin how an artifact records the materials it was made from, seven cover the run lifecycle, and two drive Stop and a failed run in a real browser. The ordinary user path — create, type, move, overlap and raise, link by dragging one card onto another's title bar, right-click unlink, delete with confirmation, reopen — was exercised end to end in a real browser. One **real Codex CLI run** was also taken: the agent wrote and ran a script and returned a text artifact the canvas previewed. What is simulated and what is real is spelled out in [**Verification limits**](#verification-limits).
 
 <div align="center">
   <img src="docs/logo.svg" alt="Hypermaker logo" width="112" />
@@ -71,7 +71,7 @@ Server environment variables:
 - Build a DAG by dragging cards together; only direct inputs enter a downstream prompt.
 - Generate plain UTF-8 text with the `llm` method.
 - Generate still images and video with the `hyperframe` or `remotion` methods. Both are verified end to end through real Remotion renders (`test/media.test.mjs`, `demo` quality): a 320x180 PNG asserted by signature and by the loaded preview, and a 320x180 h264 MP4 asserted by container and by the `<video>` the browser decodes. Audio is wired but not yet backed by a real-generation test — see **Verification limits** below.
-- Generate WAV/MP3/OGG speech with the local `tts.cpp` or `bark.cpp` methods.
+- Generate audio: the offline `synth` method writes a WAV with nothing installed (tones, chords, rhythm, sound effects), and `tts.cpp`/`bark.cpp` cover speech when those local binaries and a GGUF model exist.
 - Pick a quality preset — `sketch`, `demo`, `standard`, `artistic`, `realistic` — which changes how much inspection and repair the agent does.
 - Import an existing local file as a constant node (no method, no Generate); the file is copied into its node directory. Import is HTTP-only today (`POST /api/import`), like clone and relayout below.
 - Run several generations concurrently, one per card; each card shows its own `draft` / `running` / `idle` / `cancelled` / `error` state over SSE. While a card is running it offers **Stop**, which ends the agent and everything it started; a second Generate on the same card is refused rather than starting a second agent.
@@ -90,9 +90,31 @@ The registry is filesystem-driven. A new output type is a directory under `types
 Everything below is what a local, offline run can show. None of it uses a paid model or a real credential.
 
 - **Text** generation is exercised end to end against `test/fake-codex.mjs`, which writes the artifact a real agent would. Separately, one **real Codex CLI run** was taken on 2026-11-27 (`codex-cli 0.172.0`, ChatGPT auth): the agent wrote `generate.mjs`, ran it, and returned a plain-text artifact the canvas previewed (37 s, ~48k input tokens). That proves the adapter matches the real binary's `exec --json --output-last-message …` contract; it says nothing about output quality.
-- **Image** generation is exercised end to end against `test/fake-remotion-codex.mjs`, which really bundles and renders with Remotion; the artifact is checked to be a real PNG. The "agent" is fake, the render is not.
-- **Video** generation is exercised end to end against the same fixture with `REMOTION_TEST_VIDEO=1`: Remotion bundles, selects, and calls `renderMedia` with h264, and the test asserts an `ftyp`/`avc1`/`moov` container plus a preview `<video>` that decodes 320x180 with a non-zero duration. What this does not prove is that a realistic composition (more than two frames, a real duration, a chosen codec) renders as intended — the harness path is real, the creative choice is the fixture's.
-- **Audio** (`tts.cpp`, `bark.cpp`) still has no real-generation test. The method guides exist, but no TTS run has been taken as evidence here, so treat that path as unproven.
+- **Image** generation is exercised end to end against `test/fake-remotion-codex.mjs`, which really bundles and renders with Remotion; the artifact is checked to be a real PNG. The "agent" is fake, the render is not. A **real Codex CLI run** also rendered a 1200x675 PNG whose preview the canvas showed. It is worth knowing what that run did: the agent produced a correct image, but it reached for a Playwright screenshot because the method guide never told it where a browser was, so Remotion could not start. The guide now names `HYPERMAKER_CHROME`/`CHROME_BIN`.
+- **Video** generation is exercised end to end against the same fixture with `REMOTION_TEST_VIDEO=1`: Remotion bundles, selects, and calls `renderMedia` with h264, and the test asserts an `ftyp`/`avc1`/`moov` container plus a preview `<video>` that decodes 320x180 with a non-zero duration. Beyond the fixture, a **real Codex CLI run** took the generated poster as an input card, rendered a 720x405 h264 MP4 (3 s, 30 fps) from it, and the canvas played it — so a realistic composition is now covered once, by one run. What is still not proven is that the result is *good*: the fixture composition is two frames, and one real render says nothing about wording, pacing or how often a model picks sensible dimensions.
+- **Audio** now has two halves with different standing. The **artifact path** is proven, including against a real model: `test/audio.test.mjs` drives a card whose agent writes a real 6-second 44.1 kHz mono PCM WAV with nothing installed, and asserts the RIFF header, the sample rate, that the data chunk size matches the bytes, that the samples are not silence, and that the canvas player reports the true length and can seek. Separately, a real Codex CLI run produced a 4-second WAV the canvas played (`0:00 / 0:04`) through the new offline `synth` method. **Speech synthesis is not proven**: `tts.cpp` and `bark.cpp` name binaries (`~/tts.cpp/build/bin/tts-cli`, `~/bark.cpp/build/examples/main/main`) that this machine does not have, so no speech run has been taken. `synth` produces tones, chords and rhythm, not words, and its guide says so.
+- **A film from canvas material** is the headline outcome, and it was taken with the real
+  CLI: a real poster card and a real 4-second WAV card were linked to one video card, the
+  agent rendered a 720x404 h264 MP4, and the embedded audio measured **4.05 s, peak 30496,
+  176770 non-zero samples** - audible sound inside the film, not a separate file beside it.
+  `test/film.test.mjs` reproduces that shape with real Remotion renders on both sides. The
+  trap this closed: a real agent earlier produced an MP4 with a valid AAC track of **pure
+  digital silence** (peak 0), and every cheap check - MP4 container, audio stream present,
+  the canvas plays it - passed. The video method guide now requires copying an audio input
+  into `public/`, referencing it through `<Audio src={staticFile(...)}/>`, and **measuring
+  the extracted track** before claiming audio.
+- **Provenance** ("made from #1 image poster.png - #3 audio tone.wav") is a persisted
+  snapshot, not a rendering of the current links, because links are the wrong source of
+  truth in three ways. Each rule is pinned by a test in `test/sources.test.mjs` and each was
+  checked by breaking the behaviour and watching it fail: the set is **frozen when the run
+  starts** (a film takes minutes and the canvas can be rewired meanwhile); a link added
+  mid-run is **kept**, since it is the person's preparation for the next run; and a re-run
+  that **fails or is stopped** leaves the previous artifact's provenance alone, because that
+  is still the artifact on the card. Sources are also identified by **map key, not by a
+  record field**: a node read back from `workspace.yml` has no `id` of its own, so using
+  `s.id` wrote `#null` for every source of a workspace loaded from disk - the ordinary case,
+  since a film is usually made after a restart.
+- **Media serving** used to break players in a way that was easy to miss: the file endpoint sent no `content-length` and ignored `Range`, so Chromium reported `duration: null` for a real WAV while an MP4 survived on its own `moov` box — video looked fine, audio looked broken, same cause. Worse, the failure depended on size: a 176 KB clip still reported a duration, a 352 KB one did not. The endpoint now sends a length, advertises `accept-ranges`, and answers `206` with the exact slice; `test/audio.test.mjs` fails (with `Infinity` as the reported duration) if that regresses.
 - **`hyperframe`** image/video and the quality presets are passed to the agent as guidance; they were not measured against a real model.
 - **The run lifecycle** is covered by `test/lifecycle.test.mjs` and `test/stop-ui.test.mjs`: Stop kills the whole process group (checked against an agent that leaves a writing grandchild), a failure or a Stop is persisted and survives a restart, a run cut off with the server is reported as interrupted, and a missing CLI produces an instruction naming `CODEX_BIN`. Each of those was verified by breaking the behaviour and watching the test go red.
 - `test/fake-codex.mjs` and `test/fake-agent.mjs` reproduce the contract (final artifact JSON, exit codes, error events), not the agent's judgment. Stop and a deliberately rejected model were additionally exercised through the real CLI; the rejected card carried the CLI's own message.
@@ -169,7 +191,7 @@ git diff --check
 **Implemented (0.1.0)**
 
 - Integer-id node graph persisted as one `workspace.yml`, atomic writes, node-local paths.
-- Filesystem registry with four output types and five methods (`llm`, `remotion`, `hyperframe`, `tts.cpp`, `bark.cpp`).
+- Filesystem registry with four output types and six methods (`llm`, `remotion`, `hyperframe`, `synth`, `tts.cpp`, `bark.cpp`); an artifact also records the materials it was made from.
 - Concurrent async generation through the Codex CLI, one run per node, with per-node status over SSE, a real Stop, persisted outcomes and validated artifact/script output.
 - Canvas: create, drag, link, unlink, pan, zoom, preview, download, delete-with-confirmation, import.
 - Deterministic tests plus a Playwright browser suite running against fake Codex binaries.

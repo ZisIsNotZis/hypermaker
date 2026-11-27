@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { createReadStream, existsSync, mkdirSync, readFileSync, copyFileSync, rmSync } from "node:fs";
+import { createReadStream, existsSync, mkdirSync, readFileSync, copyFileSync, rmSync, statSync } from "node:fs";
 import { extname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readWorkspace, writeWorkspace, nodeRecord } from "./workspace.mjs";
@@ -37,14 +37,31 @@ const view = () => ({ workdir, nodes: Object.fromEntries(Object.entries(nodes).m
 const save = () => writeWorkspace(workdir, nodes);
 const emit = event => { const data = `data: ${JSON.stringify(event)}\n\n`; for (const client of clients) client.write(data); };
 const getNode = id => { if (!nodes[id]) throw new Error("Node not found"); return { ...nodes[id], id: Number(id) }; };
-function sendFile(res, file) { if (!existsSync(file)) return json(res, 404, { error: "File not found" }); const type = typeForFile(file), mime = type === "text" ? "text/plain; charset=utf-8" : ({ image: "image", audio: "audio", video: "video" }[type] || "application/octet-stream") + "/" + extname(file).slice(1); res.writeHead(200, { "content-type": mime }); createReadStream(file).pipe(res); }
+// Media previews are a person scrubbing a file, not a download. A response with no
+// content-length and no Range support makes Chromium show a WAV with `duration:
+// null` and a dead progress bar, while an MP4 happens to survive on its own moov
+// box - so video looked fine and audio looked broken for the same reason. Range
+// support is also what lets a large render start playing before it is all sent.
+const mimeFor = file => { const type = typeForFile(file), ext = extname(file).slice(1).toLowerCase(); if (type === "text") return "text/plain; charset=utf-8"; const subtype = { wav: "wav", mp3: "mpeg", ogg: "ogg", png: "png", jpg: "jpeg", jpeg: "jpeg", mp4: "mp4", webm: "webm", mov: "quicktime" }[ext] || ext; return `${({ image: "image", audio: "audio", video: "video" }[type]) || "application"}/${subtype}`; };
+function sendFile(req, res, file) {
+  if (!existsSync(file)) return json(res, 404, { error: "File not found" });
+  const size = statSync(file).size, mime = mimeFor(file);
+  const range = /^bytes=(\d*)-(\d*)$/.exec(String(req.headers.range || ""));
+  if (!range) { res.writeHead(200, { "content-type": mime, "content-length": size, "accept-ranges": "bytes" }); return createReadStream(file).pipe(res); }
+  // A range request must answer 206 with the slice it actually sent, or a player
+  // will keep asking and never settle on a length.
+  const start = range[1] ? Number(range[1]) : 0, end = range[2] ? Math.min(Number(range[2]), size - 1) : size - 1;
+  if (start > end || start >= size) { res.writeHead(416, { "content-range": `bytes */${size}` }); return res.end(); }
+  res.writeHead(206, { "content-type": mime, "content-length": end - start + 1, "content-range": `bytes ${start}-${end}/${size}`, "accept-ranges": "bytes" });
+  createReadStream(file, { start, end }).pipe(res);
+}
 const server = createServer(async (req, res) => { try {
   const url = new URL(req.url, "http://localhost");
   if (url.pathname === "/api/events") { res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" }); clients.add(res); req.on("close", () => clients.delete(res)); return; }
   if (url.pathname === "/api/registry") return json(res, 200, registryInfo());
   if (url.pathname === "/api/workspace" && req.method === "GET") return json(res, 200, view());
   if (url.pathname === "/api/workspace" && req.method === "POST") { const b = await body(req); workdir = resolve(b.workdir || defaultWorkdir); nodes = adopt(readWorkspace(workdir)); writeWorkspace(workdir, nodes); idCounter = Math.max(0, ...Object.keys(nodes).map(Number)); return json(res, 200, view()); }
-  if (url.pathname === "/api/file") { const file = resolve(url.searchParams.get("path") || ""); const rel = relative(resolve(workdir), file); if (rel.startsWith("..") || rel.startsWith("/")) throw new Error("File outside workspace"); return sendFile(res, file); }
+  if (url.pathname === "/api/file") { const file = resolve(url.searchParams.get("path") || ""); const rel = relative(resolve(workdir), file); if (rel.startsWith("..") || rel.startsWith("/")) throw new Error("File outside workspace"); return sendFile(req, res, file); }
   if (url.pathname === "/api/node" && req.method === "POST") { const b = await body(req), id = nextId(); nodes[id] = nodeRecord(id, { ...b, inputs: [], method: b.method || "llm", quality: b.quality || "standard" }); save(); return json(res, 200, view()); }
   if (url.pathname === "/api/import" && req.method === "POST") { const b = await body(req), id = nextId(), type = typeForFile(b.path); if (!type) throw new Error("Unsupported asset type"); const name = String(b.path).split(/[\\/]/).pop(); mkdirSync(join(workdir, String(id)), { recursive: true }); copyFileSync(resolve(b.path), join(workdir, String(id), name)); nodes[id] = nodeRecord(id, { x: b.x, y: b.y, type, inputs: [], artifact: name }); save(); return json(res, 200, view()); }
   if (url.pathname === "/api/link" && req.method === "POST") { const b = await body(req), target = getNode(b.target); if (Number(b.source) !== Number(b.target) && !target.inputs.includes(Number(b.source))) target.inputs.push(Number(b.source)); nodes[b.target] = target; save(); return json(res, 200, view()); }
@@ -61,13 +78,32 @@ const server = createServer(async (req, res) => { try {
     // the same node directory is how an artifact gets silently overwritten.
     if (running.has(n.id)) return json(res, 409, { ...view(), error: `Node ${n.id} is already generating` });
     if (typeof b.prompt === "string") n.prompt = b.prompt;
-    const run = { ...n, status: "running", error: null };
+    // Freeze what this run is given *now*. A film takes minutes; a person may
+    // rewire the canvas while watching it, and reading the links again at
+    // completion would label the film with materials it never saw.
+    const givenInputs = [...(n.inputs || [])];
+    // Take the id from the key, not from the record: a node read back from
+    // workspace.yml has no `id` field of its own (the map key is the id), so
+    // using s.id wrote `null` for every source of a workspace loaded from disk -
+    // which is exactly the ordinary case after a restart.
+    const givenSources = givenInputs.filter(id => nodes[id]).map(id => ({ id: Number(id), type: nodes[id].type, artifact: nodes[id].artifact ?? null }));
+    // A run in flight changes nothing about the artifact already on the card: if the
+    // run fails or is stopped, the card keeps showing the last good artifact, and
+    // that artifact must keep the provenance it was made with. So the frozen set
+    // stays local to this run and is only written when the run succeeds.
+    const run = { ...n, inputs: givenInputs, status: "running", error: null };
     nodes[n.id] = nodeRecord(n.id, run); save(); emit({ kind: "started", id: n.id });
     const agent = runCodex({ node: run, workspace: { workdir, nodes: { ...nodes }, projectCwd: root }, model: b.model, effort: b.effort, useGhPrefix: b.useGhPrefix });
     running.set(n.id, agent);
     agent.then(result => {
-      // The previous artifact is replaced only when the new run succeeded.
-      nodes[n.id] = nodeRecord(n.id, { ...nodes[n.id], ...result, status: "idle", error: null }); save(); emit({ kind: "complete", id: n.id });
+      // The previous artifact is replaced only when the new run succeeded, and the
+      // provenance is the set frozen at start (see `givenSources`), not whatever
+      // the links say by now.
+      // `inputs` is deliberately not restored: a link the person added while this
+      // ran is their preparation for the next run, not something this run gets to
+      // undo. Only `sources` describes the finished artifact, and it comes from
+      // the frozen set.
+      nodes[n.id] = nodeRecord(n.id, { ...nodes[n.id], ...result, sources: givenSources, status: "idle", error: null }); save(); emit({ kind: "complete", id: n.id });
     }).catch(error => {
       const status = /stopped/i.test(error.message) ? "cancelled" : "error";
       nodes[n.id] = nodeRecord(n.id, { ...nodes[n.id], status, error: error.message }); save(); emit({ kind: status === "cancelled" ? "cancelled" : "error", id: n.id, error: error.message });

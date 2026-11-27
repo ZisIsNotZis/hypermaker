@@ -1,1 +1,1 @@
-Produce exactly one playable rendered video. Use an informative filename and correct extension.
+Produce exactly one playable rendered video. Use an informative filename and correct extension. If an input card is an audio file, the rendered video must contain that sound audible: a silent audio track, or no audio track at all, is a failed render rather than a finished film.

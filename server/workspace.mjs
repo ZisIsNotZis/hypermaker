@@ -1,5 +1,5 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 
 const scalar = value => typeof value === "string" ? JSON.stringify(value) : value == null ? "null" : String(value);
 const parseScalar = value => {
@@ -14,8 +14,16 @@ export function serializeWorkspace(nodes = {}) {
     // `status` and `error` are persisted on purpose: a failed or stopped run has to
     // look the same after a restart as it did before one, and a run cut off by a
     // crash must not come back as a quiet draft.
+    // `sources` is the same kind of fact: what a finished artifact was built from.
+    // Links alone cannot answer it, because an input card can be relinked or
+    // deleted later, and then a finished film has no visible provenance.
     const fields = ["x", "y", "inputs", "type", "method", "prompt", "quality", "script", "artifact", "status", "error"];
-    return `${id}:\n${fields.map(field => `  ${field}: ${field === "inputs" ? `[${(node.inputs || []).join(", ")}]` : scalar(node[field])}`).join("\n")}`;
+    const lines = fields.map(field => `  ${field}: ${field === "inputs" ? `[${(node.inputs || []).join(", ")}]` : scalar(node[field])}`);
+    if (Array.isArray(node.sources) && node.sources.length) {
+      const compact = node.sources.map(s => ({ id: Number(s.id), type: s.type, artifact: s.artifact ?? null }));
+      lines.push(`  sources: ${JSON.stringify(compact)}`);
+    }
+    return `${id}:\n${lines.join("\n")}`;
   }).join("\n") + (Object.keys(nodes).length ? "\n" : "");
 }
 
@@ -46,7 +54,7 @@ export function writeWorkspace(workdir, nodes) {
 }
 
 export function nodeRecord(id, node) {
-  return { id: Number(id), x: node.x ?? 0, y: node.y ?? 0, inputs: (node.inputs || []).map(Number), type: node.type, method: node.method ?? null, prompt: node.prompt || "", quality: node.quality || "standard", script: node.script ?? null, artifact: node.artifact ?? null, status: node.status ?? null, error: node.error ?? null };
+  return { id: Number(id), x: node.x ?? 0, y: node.y ?? 0, inputs: (node.inputs || []).map(Number), type: node.type, method: node.method ?? null, prompt: node.prompt || "", quality: node.quality || "standard", script: node.script ?? null, artifact: node.artifact ?? null, status: node.status ?? null, error: node.error ?? null, sources: Array.isArray(node.sources) ? node.sources : null };
 }
 
 export function workspacePath(workdir, id, filename) {
