@@ -4,7 +4,11 @@
 // rewritten, a second cut is made, the two are compared, and the *first* cut is picked
 // up again and continued on purpose.
 //
-//   HYPERMAKER_CHROME=/path/to/chrome node test/film-story.mjs
+//   HYPERMAKER_CHROME=/path/to/chrome node test/film-story.mjs                    # stand-in
+//   HYPERMAKER_CHROME=... CODEX_BIN=/path/to/codex node test/film-story.mjs --agent real
+//
+// The agent is chosen explicitly and recorded in `receipt.json` (`agent`, `codexBin`), so a
+// receipt cannot be mistaken for a real run, or the other way round.
 //
 // Everything is rendered for real: Remotion for the pictures and the film, the project's
 // own voice for the narration, ffmpeg for the checks. Only the "creative decisions" are
@@ -38,9 +42,57 @@ const root = process.cwd();
 const ff = join(root, "node_modules/@remotion/compositor-linux-x64-gnu/ffmpeg");
 const ffprobe = join(root, "node_modules/@remotion/compositor-linux-x64-gnu/ffprobe");
 const base = mkdtempSync(join(tmpdir(), "hyper-film-story-"));
-const bin = join(base, "codex");
-writeFileSync(bin, `#!/bin/sh\nexec node ${JSON.stringify(join(root, "test", "film-story-agent.mjs"))} "$@"\n`);
-chmodSync(bin, 0o755);
+
+// Which agent this run is.
+//
+// The first version always built its own stand-in binary and passed it as CODEX_BIN, so a
+// command documented as "run this against a real model" ran the fixture and exited 0 without
+// touching the real CLI. A supervisor pointed CODEX_BIN at a probe that records calls and
+// exits immediately: three films were produced and the probe was never called, and nothing in
+// the receipt could tell the difference. So the choice is now explicit and the receipt says
+// which one it was:
+//
+//   node test/film-story.mjs                     stand-in agent (no model, no account)
+//   node test/film-story.mjs --agent stand-in    the same, said out loud
+//   node test/film-story.mjs --agent real        the CLI in CODEX_BIN, which must be set
+//
+// `--agent real` refuses to start without CODEX_BIN, and the stand-in refuses a CODEX_BIN that
+// looks like it was meant to be something else, because "it ran and passed" has to mean the
+// agent that was asked for.
+// `--agent` with no value, or with another flag after it, is a usage mistake. It used to fall
+// through to the default branch and run the stand-in, which is the one outcome a person writing
+// `--agent` was not asking for: they were trying to say *which* agent, and a run that quietly
+// picks one for them puts the wrong name on the receipt. Absent and present-but-empty are
+// therefore different, and the second is refused before anything starts.
+const flagAt = process.argv.indexOf("--agent");
+const hasAgentFlag = flagAt >= 0;
+const askedAgent = hasAgentFlag ? (process.argv[flagAt + 1] ?? null) : null;
+if (hasAgentFlag && (askedAgent == null || askedAgent.startsWith("--"))) {
+  throw new Error(`--agent needs a value: stand-in or real (got ${askedAgent == null ? "nothing after it" : JSON.stringify(askedAgent)}). Nothing was started, so no receipt was written.`);
+}
+if (askedAgent && askedAgent !== "stand-in" && askedAgent !== "real") {
+  throw new Error(`--agent must be stand-in or real, got ${JSON.stringify(askedAgent)}`);
+}
+const wantReal = askedAgent === "real";
+const givenBin = process.env.CODEX_BIN;
+const realBin = wantReal ? givenBin : null;
+if (wantReal && !givenBin) {
+  throw new Error("--agent real needs CODEX_BIN to name the CLI to run; nothing was started, and no stand-in was substituted");
+}
+if (wantReal && /film-story-agent|fake-/.test(givenBin)) {
+  throw new Error(`--agent real was given CODEX_BIN=${givenBin}, which is this repository's stand-in; the receipt would claim a real run and no model would be involved`);
+}
+if (!wantReal && givenBin && !/film-story-agent|fake-/.test(givenBin)) {
+  // Not a refusal, but it must not pass silently: a person who exported CODEX_BIN expecting a
+  // real run would otherwise get stand-in films and a green story.
+  console.warn(`note: CODEX_BIN=${givenBin} is set but ignored, because this run uses the stand-in agent. Pass --agent real to use it.`);
+}
+const agent = wantReal ? "real" : "stand-in";
+const bin = wantReal ? givenBin : join(base, "codex");
+if (!wantReal) {
+  writeFileSync(bin, `#!/bin/sh\nexec node ${JSON.stringify(join(root, "test", "film-story-agent.mjs"))} "$@"\n`);
+  chmodSync(bin, 0o755);
+}
 const chrome = process.env.HYPERMAKER_CHROME || process.env.CHROME_BIN;
 if (!chrome) throw new Error("set HYPERMAKER_CHROME (or CHROME_BIN) to a Chromium build; Remotion and the canvas both need one");
 const port = await freePort();
@@ -54,7 +106,7 @@ const browser = await chromium.launch({ headless: true, executablePath: chrome }
 const shots = process.env.HYPERMAKER_SHOTS || join(root, ".tmp", "film-story");
 mkdirSync(shots, { recursive: true });
 const ws = () => fetch(`http://127.0.0.1:${port}/api/workspace`).then(r => r.json());
-const out = { steps: [], films: [] };
+const out = { agent, codexBin: wantReal ? givenBin : null, steps: [], films: [] };
 const note = (name, value) => { out.steps.push({ name, value }); console.log(name, JSON.stringify(value)); };
 // Waits for a run to finish *and* to have produced something. Returning as soon as the
 // status is not `running` treated a card that never started as a finished one: a press
@@ -552,6 +604,21 @@ try {
   assert.equal(new Set(exports.map(e => e.suggested)).size, 3, `the exported cuts shared a filename: ${JSON.stringify(exports)}`);
   for (const e of exports) assert.ok(e.suggested.endsWith(".mp4"), `${e.restoredThrough} downloads as ${e.suggested}, losing its extension`);
   console.log("assertions: all passed");
+  // Which agent actually ran, counted from the cards rather than declared by the caller: every
+  // card that produced an artifact left a `codex.jsonl`, and each of those is one invocation.
+  // A receipt claiming `agent: real` with an empty transcript, or `agent: stand-in` with a
+  // transcript that mentions a real CLI banner, is the confusion this exists to prevent.
+  out.invocations = Object.keys((await ws()).nodes).map(id => {
+    const file = join(workdir, String(id), "codex.jsonl");
+    return existsSync(file) ? { id: Number(id), bytes: statSync(file).size, lines: readFileSync(file, "utf8").split("\n").filter(Boolean).length } : null;
+  }).filter(Boolean);
+  if (agent === "real") {
+    if (!out.invocations.length) throw new Error("--agent real produced no agent transcript at all, so no model ran");
+  } else {
+    // The stand-in writes the same transcript shape, so the check is that the run is marked
+    // honestly rather than that the files are absent.
+    assert.equal(out.agent, "stand-in", "a stand-in run must say so in its receipt");
+  }
   out.workdir = workdir; out.shots = shots; out.serverLog = log.join("").slice(-4000);
   if (errors.length) throw new Error(`the canvas raised: ${errors.join(" | ")}`);
 } finally {

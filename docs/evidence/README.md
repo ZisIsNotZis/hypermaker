@@ -7,8 +7,14 @@ file was called `real-run-backend-unreachable`, which asserted a cause the measu
 do not support.
 
 The real Codex CLI's own transcript from the one attempt to have a model choose a narration
-pace, taken 2026-11-27 on `codex-cli 0.172.0`. The binary is installed locally under
+pace, taken **2026-11-28** on `codex-cli 0.172.0`. The binary is installed locally under
 `~/.codex/packages/` and credentials are present, so this was not a missing-CLI problem.
+
+Keep the two dates apart, because they are different runs and only one of them succeeded.
+The earlier real-model success - three lines of text generated on the canvas - is from
+**2026-11-27**, the receipt the README reports for `codex-cli 0.172.0`. The pace attempt
+described here is the **next** day and stopped where this file says it did. A single sentence
+covering both would credit the pace work with a success it never had.
 
 Every turn failed the same way:
 
@@ -54,11 +60,30 @@ enough to show where it stopped, and repeating it spends a submission to learn n
 
 ### To close it
 
-Run the same flow through a real, authorized model entry and record which link it used:
+The story script now says which agent it runs, because the first version of this section
+gave a command that did not do what it said: the script built its own stand-in and passed it
+as `CODEX_BIN`, so a real binary named on the command line was ignored, three films were
+produced, and the run exited 0. A supervisor found it by pointing `CODEX_BIN` at a probe that
+records calls and exits immediately: the probe was never called.
 
 ```
-HYPERMAKER_CHROME=/path/to/chrome CODEX_BIN=/path/to/codex node test/film-story.mjs
+# the mechanics, no model, no account
+node test/film-story.mjs                      # or: --agent stand-in
+
+# a real model, through the CLI you name
+HYPERMAKER_CHROME=/path/to/chrome \
+CODEX_BIN=/path/to/codex node test/film-story.mjs --agent real
 ```
+
+`--agent real` refuses to start without `CODEX_BIN`, refuses a `CODEX_BIN` that points at this
+repository's stand-in, and records both the agent and the per-card agent transcripts in
+`receipt.json`, so a receipt cannot be read as the other kind of run. A bare `--agent` with no
+value is a usage error rather than the default branch: it used to be indistinguishable from
+no flag at all and quietly ran the stand-in, which is the one thing somebody writing `--agent`
+was not asking for. An exported `CODEX_BIN`
+with no `--agent` flag is reported as ignored rather than silently unused. Whichever entry is
+used, record **which route** the model went through: the table above shows that these routes
+answer very differently, and "a model ran" is not the same claim as "discovery succeeded".
 
 The evidence to keep: the narration card's `codex.jsonl` (did the model pass `--wpm`?), the
 take's `timeline.json` (`pace.askedWpm` against `pace.wpm`), and a person's answer on the
