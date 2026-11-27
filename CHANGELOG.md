@@ -1,5 +1,47 @@
 # Changelog
 
+## Unreleased — an honest take whose record was rounded still verifies, and a wrong start is not a wrong script, 2026-11-27
+
+A supervisor found a fourth case at the same entry point, and unlike the first three it was not
+about *which* file was read: it was about what the check did with an honest one. A take of four
+sentences, rendered by the old rules voice, with a copy of its own timeline whose starts and
+durations were kept to **two decimal places** - `4.38` for `4.3835147`, which is exactly what
+the card displays - was refused as "not the sound these words make", and the phrases were blamed
+for a number that had merely been rounded.
+
+- **The cause was structural, so the fix is too.** Phrases are joined with no gap: each start is
+  exactly the sum of the renders before it, and the only thing in doubt is how many places the
+  record was written to. `writtenSlack` derives the permitted half-place from the number's own
+  written form - two decimals is 0.005 s, which is 110 samples at 22.05 kHz, while a value
+  written to the sample is exact - capped at 0.05 s, because a whole-second record is a
+  different claim rather than an imprecise one. Before this the search was ±1 sample.
+- **The search is coarse then fine**, because the frame test at 1103 offsets was measured to take
+  minutes: whole-phrase correlation finds the position, then the same frame test decides whether
+  those words are there. An exact record is treated exactly as before - no coarse pass, ±1.
+- **Nothing is loosened.** A phrase can only slide inside a rounding, and an edited one still
+  disagrees frame for frame wherever it lands. The supervisor's own five-case control
+  (`/var/tmp/hm-rounded-fix-review.WI9fmS`) passes: exact and rounded verify at 1.000, and a
+  changed first word, a changed near-equal-length ending, and a start moved 40 ms are refused.
+- **A refusal no longer blames the wrong phrase.** Explaining a take with the first reading table
+  tried made an honest phrase look wrong when a *previous* phrase had been read differently - the
+  supervisor's one-word edit reported phrases 1 and 3 when only phrase 1 differed. The
+  explanation now comes from whichever table accounts for the most audio. It only chooses the
+  wording; nothing is accepted on it.
+- **A right-words-wrong-time record says so.** The supervisor's 40 ms case has correct words and
+  a wrong start, and the old message accused the script. The file is now searched for the phrase,
+  and an exact match elsewhere is reported as "the right words, but not where the timeline puts
+  them … the start time written for this phrase is wrong" - a person told "the words are wrong"
+  would rewrite a sentence that is already correct.
+- **An accepted take says when it was realigned** ("2 of 4 phrase(s) were found up to 96 samples
+  from where the record puts them: this timeline rounded its start times"), so a rounded record
+  is never presented as an exact one.
+- **Negative control:** restoring the ±1 window fails only the two new rounding tests, with the
+  honest take refused; the other fifteen bind tests still pass.
+- **Tests: 108/108** with a usable Chromium (was 104/104). Four new, and each covers a way the
+  two things can be confused: a rounded record that must verify, the precision rule itself, a
+  realignment that is accepted inside a rounding and refused outside it, and the two messages
+  that must never be swapped.
+
 ## Unreleased — a refused fallback says which take it picked, 2026-11-27
 
 A supervisor ran the third case against a real card and found the same command wrong in a

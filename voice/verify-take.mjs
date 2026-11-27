@@ -38,6 +38,13 @@
 //   * the words and the sound match, made by the table this build uses - the ordinary case;
 //   * the words and the sound match, made by an *older* reading table - honest, still passes,
 //     and says which table made it so the two cases are never confused;
+//   * the words and the sound match, but the timeline wrote its start times to fewer decimal
+//     places than the audio resolves - honest, still passes, and reports the samples it had to
+//     move so nobody is told a rounded record was an exact one;
+//   * the words are right but the start time is wrong - the audio holds the phrase somewhere
+//     else at an exact match. This fails, and the reason says the *record* is what disagrees,
+//     because a person told "the words are wrong" would rewrite a sentence that is already
+//     right;
 //   * the sound is not those words at all - one take's audio under another take's script. This
 //     fails, and the reason names the moment that disagrees.
 //
@@ -156,6 +163,11 @@ if (report.ok) {
   const recorded = report.voice?.recorded || {};
   const matched = report.voice?.matched || {};
   console.log(`  worst-frame agreement with the words: ${Number(report.correlation).toFixed(3)} (1.000 is the same recording)`);
+  // When the audio had to be realigned, say so. A record written to two decimal places is not
+  // a precise record of where each phrase begins, and the take is accepted on the sound, not
+  // on the number - a reader should not be left believing the file was exact.
+  const moved = (report.phrases || []).filter(p => p.slip);
+  if (moved.length) console.log(`  ${moved.length} of ${phrases.length} phrase(s) were found up to ${Math.max(...moved.map(p => Math.abs(p.slip)))} samples from where the record puts them: this timeline rounded its start times, and the audio is these words at the recorded settings regardless.`);
   // What the *file* says, not what `bindTake` assumed for it: an old timeline has no such
   // field, and it must not be reported as having claimed the wrong table.
   const claimed = timeline?.voice?.readings ?? null;

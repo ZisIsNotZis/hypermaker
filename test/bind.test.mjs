@@ -13,7 +13,7 @@ import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { renderParagraph, toWav } from "../voice/synth.mjs";
-import { appearsInOrder, bindTake, correlation, wordsOf } from "../voice/bind.mjs";
+import { appearsInOrder, bindTake, correlation, wordsOf, writtenSlack } from "../voice/bind.mjs";
 import { pronounce } from "../voice/lexicon.mjs";
 import { verifyNarration } from "../server/narration.mjs";
 
@@ -439,4 +439,142 @@ test("a stored take can be re-verified from the command line, which is how an ol
   const missing = cli(bare);
   assert.equal(missing.code, 1, "a missing timeline is a usage error, not a bad recording");
   assert.match(missing.out, /no timeline at/, "and it names the file it looked for");
+});
+
+// A record written to the precision a person actually sees is not a lie about the audio.
+//
+// The supervisor's repro, reproduced before the fix (`.tmp/repro-rounding.mjs`): a take of four
+// sentences rendered by the *old rules* voice, and a copy of its own timeline with every start
+// and duration kept to two decimal places - `4.38` for `4.3835147`, which is what the card
+// displays and what `render.mjs` printed on stdout. `bindTake` searched one sample either side
+// of the recorded start, so a rounding of up to 110 samples at 22.05 kHz landed outside the
+// window and the take was refused as "not the sound these words make", blaming phrases for a
+// number that had merely been rounded.
+//
+// The fix is structural rather than a wider tolerance: phrases are joined with no gap, so a
+// start is exactly the sum of the renders before it, and the only thing in doubt is how many
+// places the record was written to. `writtenSlack` derives the permitted half-place from the
+// number itself, and the alignment is searched inside it - coarse whole-phrase correlation to
+// find the position, then the same frame test to decide whether those words are there. Nothing
+// is loosened: an edited phrase still disagrees frame for frame wherever it lands.
+test("an honest take whose record is written to two decimal places verifies, and a changed word still does not", () => {
+  const lines = [
+    "Science can change the way a machine works.",
+    "The sea at night is never still.",
+    "Walk slowly down toward the house.",
+    "The garden is quiet in the rain."
+  ];
+  // The old rules voice, because that is the audio the supervisor used: a record from before
+  // `readings` existed, which is the harder case - the table has to be recovered as well.
+  const t = take("rounding-rules", lines.join("\n"), { readings: "rules-1" });
+  const two = n => Number(n.toFixed(2));
+
+  // The premise, measured: the rounding really does move a start far beyond one sample, so
+  // this test is not quietly checking a case that no longer exists.
+  assert.ok(Math.abs(t.timeline.phrases[2].start - two(t.timeline.phrases[2].start)) * 22050 > 50, "two decimal places move an interior start by tens of samples");
+
+  const rounded = { ...t.timeline, phrases: t.timeline.phrases.map(p => ({ ...p, start: two(p.start), duration: two(p.duration) })) };
+  const ok = bindTake({ file: t.wav, timeline: rounded });
+  assert.equal(ok.ok, true, `an honest take was refused for a rounded record: ${ok.problems.join("; ")}`);
+  // Accepted on the same recording, not on a near miss: every phrase agrees frame for frame.
+  assert.equal(ok.correlation, 1, `a rounded record of the same take must still reproduce exactly, got ${ok.correlation}`);
+  // And the slip is reported, because a nonzero slip is the evidence that the record was
+  // rounded rather than exact - a later reader should not be told the record was precise.
+  const slips = ok.phrases.map(p => p.slip);
+  assert.ok(slips.some(s => s !== 0), `the alignment reported the samples it had to move, got ${JSON.stringify(slips)}`);
+  assert.ok(slips.every(s => Math.abs(s) <= 110), `no phrase moved further than half of the last written place, got ${JSON.stringify(slips)}`);
+  // The table is still recovered, so the record's lack of a `readings` field is not hidden by
+  // the rounding fix.
+  assert.equal(ok.voice.matched.readings, "rules-1", "the old rules take is still attributed to the table that made it");
+
+  // The control, which is the whole point: the same rounded record with one word changed must
+  // still be refused - and must blame the phrase that is wrong *and only that one*. Judging the
+  // take with this build's reading table first used to make a following honest phrase look
+  // wrong too, which tells a person to fix a sentence that is fine.
+  const edited = { ...rounded, phrases: rounded.phrases.map((p, i) => (i === 0 ? { ...p, text: "Science can change the way a machine learns." } : p)) };
+  const refused = bindTake({ file: t.wav, timeline: edited });
+  assert.equal(refused.ok, false, "a changed word passed once a rounded record was allowed");
+  assert.equal(refused.problems.length, 1, `only the phrase that differs should be reported, got: ${refused.problems.join("; ")}`);
+  assert.match(refused.problems[0], /phrase 1 \("Science can change the way a machine learns\."\)/, "and it is the phrase whose words were changed");
+});
+
+// The precision rule itself, pinned rather than described. These numbers are what decides how
+// far a phrase may move, so a change to them is a change to what the check accepts.
+test("how far a written-down position may be from the truth is derived from how it was written", () => {
+  // Two places: half of 0.01. Three: half of 0.001. A value written to the sample is exact.
+  assert.equal(writtenSlack("4.38"), 0.005);
+  assert.equal(writtenSlack(4.383), 0.0005);
+  // Nine places is 5e-10 s, which is not zero but is far less than one sample at 22.05 kHz,
+  // so it costs nothing: the search floor is the single sample a start rounded to the sample
+  // could be off by.
+  assert.ok(writtenSlack(4.383514739) * 22050 < 0.001, "a value written to many places is exact for every practical purpose");
+  assert.equal(writtenSlack(4.3835), 0.00005);
+  // A phrase that starts at the beginning is not a rounded measurement, so it is exact. Without
+  // this, every first phrase would be searched over a thousand candidates for nothing.
+  assert.equal(writtenSlack(0), 0);
+  // And the cap: a whole-second record is a different claim about where a phrase is, not an
+  // imprecise one, and searching half a second for a match would fit the answer to the question.
+  assert.equal(writtenSlack(4), 0.05);
+  assert.equal(writtenSlack(4.3), 0.05);
+  // A value that arrived as a number, not a string, is read the same way JSON would read it.
+  assert.equal(writtenSlack(Number("4.38")), 0.005);
+});
+
+// The wider window must not become a way to accept a phrase that is in the wrong place. Two
+// cases matter, and they pull in opposite directions: a realignment *inside a rounding* is
+// allowed, and a start that is wrong by more than the record could be rounded by is not.
+test("a widened alignment accepts a rounding and rejects a start that is simply wrong", () => {
+  const lines = ["The sea at night is never still.", "It carries every colour of the sky.", "The light is moving over the water."];
+  const t = take("slack", lines.join("\n"));
+  const two = n => Number(n.toFixed(2));
+  const exact = t.timeline.phrases.map(p => ({ ...p, start: two(p.start), duration: two(p.duration) }));
+
+  // Inside the rounding: accepted, and it is the sound that says so.
+  assert.equal(bindTake({ file: t.wav, timeline: { ...t.timeline, phrases: exact } }).ok, true, "rounding within the window was refused");
+
+  // Beyond it: refused. 0.10 s is twenty times what two decimal places can be wrong by, so
+  // this is not a rounding and the phrase must not be allowed to slide onto its neighbour.
+  for (const shift of [-0.1, 0.1]) {
+    const moved = exact.map((p, i) => (i === 1 ? { ...p, start: two(p.start + shift) } : p));
+    const r = bindTake({ file: t.wav, timeline: { ...t.timeline, phrases: moved } });
+    assert.equal(r.ok, false, `phrase 2 was ${shift > 0 ? "late" : "early"} by 0.10s and still passed`);
+  }
+});
+
+// The supervisor's last point, and the reason it matters more than it looks: a refusal that
+// names the wrong thing sends a person to fix the wrong thing. Two failures look identical to a
+// check that only knows "this phrase did not match" - the script is wrong, or the record says the
+// phrase is somewhere it is not - and they need opposite repairs. A creator told "the words are
+// wrong" will rewrite a sentence that is already correct and then wonder why the take still
+// fails; a creator told "the start time is wrong" knows the audio is fine and the file describing
+// it is not. The three phrases below are the same audio with the same words and differ only in
+// the record, so whatever the message says has to come from the evidence.
+test("a refusal says whether the words or the record is what disagrees", () => {
+  const lines = ["Science can change the way a machine works.", "The sea at night is never still.", "Walk slowly down toward the house."];
+  const t = take("attribution", lines.join("\n"), { readings: "rules-1" });
+  const two = n => Number(n.toFixed(2));
+  const recorded = t.timeline.phrases.map(p => ({ ...p, start: two(p.start), duration: two(p.duration) }));
+
+  // 1. Right words, wrong start. Refused, and the message says the *record* is what is wrong.
+  // 40 ms is well beyond the 110 samples two decimals could be off by, so this is a mistake in
+  // the written start rather than a rounding of it.
+  const moved = recorded.map((p, i) => (i === 1 ? { ...p, start: two(p.start + 0.04) } : p));
+  const late = bindTake({ file: t.wav, timeline: { ...t.timeline, phrases: moved } });
+  assert.equal(late.ok, false, "a phrase recorded 40 ms from where it is was accepted");
+  assert.equal(late.problems.length, 1, `only the moved phrase should be reported, got: ${late.problems.join("; ")}`);
+  assert.match(late.problems[0], /phrase 2 .*the right words, but not where the timeline puts them/, `the refusal must say the words are right and the position is not, got: ${late.problems[0]}`);
+  assert.match(late.problems[0], /the start time written for this phrase is wrong/, "and name the record, not the script, as the thing to fix");
+  assert.doesNotMatch(late.problems[0], /were not the words spoken there/, "it must not accuse a script that is correct");
+
+  // 2. The same record with a word really changed. Same shape of failure to a byte comparison,
+  // and the opposite message - the phrase is not found anywhere in the file, which is what makes
+  // the two cases distinguishable rather than guessed.
+  const edited = recorded.map((p, i) => (i === 1 ? { ...p, text: "The sea at noon is never still." } : p));
+  const wrong = bindTake({ file: t.wav, timeline: { ...t.timeline, phrases: edited } });
+  assert.equal(wrong.ok, false, "a changed word was accepted");
+  // Either wording is fair here - a changed word can also make the phrase a different length,
+  // which is caught before any sound is compared - but whichever it is, it must name the script
+  // as the thing that disagrees. The one thing it may never say is that the words are right.
+  assert.match(wrong.problems.join(" "), /not the sound this voice makes from those words|do not fill that stretch|not what is in the file there/, "a changed script is described as a changed script, by whichever check caught it");
+  assert.doesNotMatch(wrong.problems.join(" "), /but not where the timeline puts them/, "and is not excused as a timing mistake");
 });

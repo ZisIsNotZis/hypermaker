@@ -52,6 +52,35 @@ export const SAME_TAKE = 0.5;
 // never enough for a phrase to line up with its neighbour, which is a different sound.
 const SLIP = 1;
 
+// The same question at the precision the record was actually written to, which is the
+// defect a person hit with an honest take: a timeline whose starts are written to two
+// decimal places - 4.38 rather than 4.3835147 - is up to half of that last place away from
+// the truth, which at 22.05 kHz is 110 samples, not one. The old check searched a single
+// sample either side, so such a take was refused as "not the sound these words make" and the
+// phrase was blamed for a number that had merely been rounded.
+//
+// The half-place rule is derived from the number itself rather than assumed, and capped at a
+// value that is still a rounding: a record written to whole seconds is not an imprecise
+// record of a position, it is a different claim, and searching half a second for a match
+// would be fitting the answer to the question.
+const COARSEST_SLIP = 0.05;
+
+// How far a number written the way this number was written can be from the truth, in the
+// units of the number. `4.38` can be 0.005 away; `4.383514739` cannot be meaningfully wrong
+// at all; and `0` is exact, because a phrase that starts at the beginning is not a rounded
+// measurement of anything.
+export function writtenSlack(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n === 0) return 0;
+  const text = String(Math.abs(n));
+  // Exponent form says nothing about how many places were written, only how the value was
+  // printed, so it is treated as exact.
+  if (/e/i.test(text)) return 0;
+  const dot = text.indexOf(".");
+  const places = dot === -1 ? 0 : text.length - dot - 1;
+  if (!places) return COARSEST_SLIP;
+  return Math.min(COARSEST_SLIP, 0.5 * 10 ** -places);
+}
 // Frames are 25 ms with a 12.5 ms hop. A frame needs to be long enough to contain a pitch
 // period of the lowest voice this engine makes (~70 Hz, 14 ms) and short enough that a single
 // changed word cannot hide inside one. Half-overlapping hops mean no invented dip falls
@@ -132,6 +161,60 @@ export function appearsInOrder(spoken, source) {
   return { ok: missing.length === 0, missing };
 }
 
+// Where else in the file this phrase's own sound appears, when it is nowhere near the place the
+// timeline names. Coarse and decimated first, because scanning a whole file at every sample
+// would cost more than the check is worth; the answer is only used when the frame test confirms
+// an *exact* reproduction somewhere else, so a decimated peak can be dismissed but never
+// trusted on its own.
+function locateElsewhere({ mine, samples, rate }) {
+  // The decimation factor follows the file: a minute of audio at 16x is still a third of a
+  // million comparisons per phrase, and a refusal must not become the slowest thing the check
+  // does. The coarse pass is only a way to find candidates, and the full-resolution confirmation
+  // below is what decides, so a coarser first pass costs accuracy of *placement* only in the
+  // sense of trying a few more windows - never of the answer.
+  const DEC = Math.max(8, Math.ceil(samples.length / 20000));
+  const decimate = arr => {
+    const out = [];
+    for (let i = 0; i + DEC <= arr.length; i += DEC) {
+      let s = 0;
+      for (let k = 0; k < DEC; k++) s += arr[i + k];
+      out.push(s / DEC);
+    }
+    return out;
+  };
+  const want = decimate(mine), file = decimate(samples);
+  const W = want.length;
+  if (W < 8 || file.length <= W) return null;
+  const n = file.length, pre = new Float64Array(n + 1), pre2 = new Float64Array(n + 1);
+  for (let i = 0; i < n; i++) { pre[i + 1] = pre[i] + file[i]; pre2[i + 1] = pre2[i] + file[i] * file[i]; }
+  let sw = 0, sww = 0;
+  for (const v of want) { sw += v; sww += v * v; }
+  const peaks = [];
+  for (let o = 0; o + W <= n; o++) {
+    const sf = pre[o + W] - pre[o], sf2 = pre2[o + W] - pre2[o];
+    let sbf = 0;
+    for (let k = 0; k < W; k++) sbf += want[k] * file[o + k];
+    const den = Math.sqrt((sww - (sw * sw) / W) * (sf2 - (sf * sf) / W));
+    const sc = den > 0 ? (sbf - (sw * sf) / W) / den : 0;
+    if (peaks.length < 3 || sc > peaks[peaks.length - 1].score) {
+      peaks.push({ score: sc, at: o * DEC });
+      peaks.sort((a, b) => b.score - a.score);
+      if (peaks.length > 3) peaks.pop();
+    }
+  }
+  // Confirm at full resolution, and only report a place where the phrase reproduces exactly:
+  // that is what makes it the same recording moved, rather than something that merely resembles
+  // it. The window either side is one decimated step.
+  for (const p of peaks) {
+    for (let d = -DEC; d <= DEC; d += 1) {
+      const from = Math.max(0, p.at + d), slice = cut(samples, from, from + mine.length);
+      if (Math.abs(slice.length - mine.length) > 2) continue;
+      if (frameAgreement(mine, slice, rate).score >= RECOVERED_TAKE) return { seconds: from / rate };
+    }
+  }
+  return null;
+}
+
 // A phrase can fail in two very different ways, and an operator who is told the wrong one
 // cannot act on it. The words may really be different from the sound (the defect this check
 // exists for), or the take may be perfectly honest and the *record* may misstate the rate or
@@ -140,7 +223,7 @@ export function appearsInOrder(spoken, source) {
 // the same words across a narrow band of speed and pitch, and if one of those reproduces the
 // audio it says so instead of accusing the script. This only chooses the wording; `ok` was
 // already false, so a near-miss in the band never accepts anything.
-function describeMismatch({ index, phrase, mine, slices, rate, start, score, at, voice }) {
+function describeMismatch({ index, phrase, mine, slices, samples, rate, start, score, at, voice }) {
   const base = { rate: Number(voice?.rate) || 1, pitch: Number(voice?.pitch) || 112, readings: voice?.readings || CURRENT_READINGS };
   const tried = [];
   for (const dr of [0, -0.0005, 0.0005, -0.001, 0.001, -0.002, 0.002, -0.005, 0.005, -0.01, 0.01, -0.02, 0.02])
@@ -158,6 +241,16 @@ function describeMismatch({ index, phrase, mine, slices, rate, start, score, at,
     const was = `rate ${base.rate}, pitch ${base.pitch}`;
     const found = `rate ${near.options.rate.toFixed(6)}, pitch ${near.options.pitch}`;
     return `phrase ${index + 1} ("${phrase.text}") is the right words, but not at the settings the timeline records: the audio matches them at ${found}, while the record says ${was}. Nothing is wrong with the script - the file that describes this take rounded or misstated its rate or pitch, so it cannot reproduce its own audio`;
+  }
+  // The third case, found by a supervisor: the *words* can be exactly right while the start time
+  // written for them is wrong. The audio is a true recording of that sentence, and the record
+  // merely says it begins 40 ms away from where it does; the take is honest and the *timeline*
+  // is what cannot be trusted. Accusing the script there sends a person to rewrite a sentence
+  // that is already correct, so the file is searched for the phrase before the words are
+  // blamed. Nothing is accepted by this - it only chooses the sentence on the card.
+  const misplaced = samples ? locateElsewhere({ mine, samples, rate }) : null;
+  if (misplaced && Math.abs(misplaced.seconds - start) > 0.005) {
+    return `phrase ${index + 1} ("${phrase.text}") is the right words, but not where the timeline puts them: the audio holds them at ${misplaced.seconds.toFixed(2)}s, while the record says ${start.toFixed(2)}s. Nothing is wrong with the script or the recording - the start time written for this phrase is wrong, so the record does not describe the file it sits beside`;
   }
   // Every reading table this build has was already tried by `bindTake` before this wording is
   // reached, so the sentence can name that fact instead of implying the script is at fault.
@@ -198,21 +291,57 @@ function compareAt({ samples, rate, phrases, voice }) {
     // A phrase that is not the length its own words render to is not those words: there is
     // no overlap to compare, and sliding would only line it up with a neighbour's sound.
     const base = located ? Math.round(start * rate) : null;
-    const slices = base == null ? [] : [0, -SLIP, SLIP]
-      .map(d => Math.max(0, base + d))
-      .map(at => cut(samples, at, at + want))
-      .filter(slice => Math.abs(slice.length - want) <= Math.max(2, want * 0.02));
-    if (!slices.length) {
+    // Where the phrase can actually be, given how the timeline wrote the number down. One
+    // sample either side is the floor (a start rounded to the sample), and the record's own
+    // written precision widens it: a start of `4.38` permits 4.375-4.385, which is 110 samples
+    // at 22.05 kHz. The exact position is always a candidate, so a precise record is searched
+    // exactly as it was before and a wide search is never paid for one.
+    const slip = located ? Math.max(SLIP, Math.round(writtenSlack(start) * rate)) : 0;
+    // Scanning every one of those samples with the frame test is quadratic and was measured to
+    // take minutes on a whole-second record. The question is only *where* the phrase is, and a
+    // one-number correlation answers that cheaply; the frame test then decides whether the
+    // phrase at that place is these words. So: coarse, then fine. A step that divides nothing in
+    // particular is fine here because the fine pass re-examines a full step either side.
+    const STEP = 8;
+    let peak = 0, peakScore = -2;
+    for (let d = -slip; d <= slip; d += STEP) {
+      const from = Math.max(0, base + d), cand = cut(samples, from, from + want);
+      if (Math.abs(cand.length - want) > Math.max(2, want * 0.02)) continue;
+      const c = correlation(mine.samples, cand);
+      if (c > peakScore) { peakScore = c; peak = d; }
+    }
+    // The exact position is always examined, so a precise record is treated exactly as it was
+    // before this change: no coarse search, no widened window, the same single comparison.
+    const centre = slip <= SLIP ? 0 : peak;
+    const band = slip <= SLIP ? SLIP : STEP;
+    const offsets = located ? [0, ...Array.from({ length: band }, (_, k) => k + 1).flatMap(k => [-k, k]).map(d => d + centre)] : [];
+    const unique = [...new Set(offsets.filter(d => Math.abs(d) <= slip))];
+    // Each candidate keeps its own offset, so the one that wins can be reported: dropping a
+    // window that runs off the end of the file must not shift the others' labels.
+    const candidates = unique
+      .map(d => ({ d, at: Math.max(0, base + d) }))
+      .map(c => ({ ...c, slice: cut(samples, c.at, c.at + want) }))
+      .filter(c => Math.abs(c.slice.length - want) <= Math.max(2, want * 0.02));
+    const slices = candidates.map(c => c.slice);
+    if (!candidates.length) {
       const heard = base == null || base >= samples.length ? "no audio" : `${((samples.length - base) / rate).toFixed(2)}s of audio`;
-      problems.push({ kind: "duration", index: i, message: `phrase ${i + 1} ("${phrase.text}") renders to ${(want / rate).toFixed(2)}s of speech, but the timeline places ${heard} at ${located ? `${start.toFixed(2)}s` : "no usable start"}; this phrase's words are not what is in the file there` });
+      problems.push({ kind: "duration", index: i, message: `phrase ${i + 1} ("${phrase.text}") renders to ${(want / rate).toFixed(2)}s of speech, but the timeline places ${heard} at ${located ? `${start}s` : "no usable start"}; this phrase's words are not what is in the file there` });
       report.push({ index: i, text: phrase.text, correlation: 0, matches: false });
       continue;
     }
-    // Best of the exact position and its two one-sample neighbours, then the worst frame of
-    // that alignment: a phrase is its own only if every audible moment of it agrees.
-    const best = slices.map(slice => frameAgreement(mine.samples, slice, rate)).reduce((w, f) => (f.score > w.score ? f : w));
+    // The best alignment within what the record permits, then the worst frame of it: a phrase
+    // is its own only if every audible moment of it agrees. Moving the window is not a way to
+    // accept a different sentence - a phrase can only slide inside a rounding, and an edited
+    // one still disagrees frame for frame wherever it lands - but which offset won is
+    // reported, because a nonzero slip is itself the evidence that the record was rounded.
+    let best = null, bestAt = null;
+    for (const c of candidates) {
+      const f = frameAgreement(mine.samples, c.slice, rate);
+      if (!best || f.score > best.score) { best = f; bestAt = c.at; }
+    }
     const matches = best.score >= SAME_TAKE;
-    report.push({ index: i, text: phrase.text, correlation: best.score, matches, slices });
+    const slipSamples = base == null || bestAt == null ? 0 : bestAt - base;
+    report.push({ index: i, text: phrase.text, correlation: best.score, matches, slices, slip: slipSamples });
     if (!matches) problems.push({ kind: "sound", index: i, phrase, mine: mine.samples, slices, start, score: best.score, at: best.at });
   }
   return { report, problems };
@@ -311,10 +440,21 @@ export function bindTake({ file, timeline }) {
     // same shape of evidence and a caller never has to guess which branch produced it.
     voice: { recorded: settingsWith(tries[0]), matched: settingsWith(readings, rate) }
   });
-  let first = null;
+  // A refusal has to name the right phrases. Whichever table is tried first is the wrong one
+  // to explain a refusal with: a record from before `readings` existed is judged first with
+  // this build's table, and under that table an honest phrase can look wrong because the
+  // *previous* phrase was read differently. Measured on a supervisor's old-rules take with one
+  // word changed: judging with this build's table blamed phrases 1 and 3, when only phrase 1
+  // was wrong. So every attempt is kept, and the explanation comes from the one that accounts
+  // for the most audio - fewest phrases that fail, then the best agreement among them. That
+  // only chooses wording: nothing is accepted here, so a wrong script still fails.
+  let best = null;
+  const better = (a, b) => !b
+    || a.problems.length < b.problems.length
+    || (a.problems.length === b.problems.length && worstOf(a.report) > worstOf(b.report));
   for (const readings of tries) {
     const at = compareAt({ samples, rate, phrases, voice: voiceWith(readings) });
-    if (!first) first = at;
+    if (better(at, best)) best = { ...at, readings };
     // Exact: every phrase reproduces, frame for frame.
     if (!at.problems.length && worstOf(at.report) >= RECOVERED_TAKE) return accepted(at.report, readings);
     // Not exact. If the only complaint is the sound, the same words may still be in the file
@@ -328,9 +468,9 @@ export function bindTake({ file, timeline }) {
     const recovered = [];
     let allFine = targets.length > 0;
     for (const target of targets) {
-      const best = recoverRate({ phrase: target.phrase, slices: target.slices, rate, recorded: timeline?.voice?.rate, recordedPitch: timeline?.voice?.pitch, recordedReadings: readings });
-      if (best.score < RECOVERED_TAKE) { allFine = false; break; }
-      recovered.push(best.rate);
+      const found = recoverRate({ phrase: target.phrase, slices: target.slices, rate, recorded: timeline?.voice?.rate, recordedPitch: timeline?.voice?.pitch, recordedReadings: readings });
+      if (found.score < RECOVERED_TAKE) { allFine = false; break; }
+      recovered.push(found.rate);
     }
     if (!allFine) continue;
     // The take is the words it claims at a rate the record states imprecisely. Report both, so
@@ -344,14 +484,18 @@ export function bindTake({ file, timeline }) {
   // Fourth: it is not the words, at any settings this build can reproduce. Say which phrase,
   // and - when the audio is those words at a nearby rate - say that instead of accusing the
   // script, because the operator's next step is different in the two cases.
-  const problems = first.problems.map(p => p.kind === "sound" ? describeMismatch({ ...p, rate, voice: timeline?.voice }) : p.message);
+  // Explain with the table that fits the audio best, and tell `describeMismatch` which one that
+  // was: its "is this the same words at other settings" probe re-renders, and re-rendering with
+  // a table other than the one being explained would compare two different recordings.
+  const explaining = best?.readings ?? tries[0];
+  const problems = best.problems.map(p => p.kind === "sound" ? describeMismatch({ ...p, samples, rate, voice: { ...timeline?.voice, readings: explaining } }) : p.message);
   // A refusal must always say something. It could come back empty in one case: every phrase
   // matched well enough to report no *problem*, yet the take missed `RECOVERED_TAKE` in the loop
   // above - which would leave a card that says it was refused with no reason on it, the exact
   // failure this file exists to prevent. That is a real possibility now that the loop considers
   // several tables rather than one, so it is named instead of left to luck.
   if (!problems.length) {
-    return { ok: false, problems: [`this take does not reproduce from its own script at any reading table this build has (${READING_SETS.join(", ")}), and the closest attempt scored ${worstOf(first.report).toFixed(3)} where the same recording scores 1.000; the audio is not the sound these words make`], correlation: worstOf(first.report), phrases: first.report, seconds };
+    return { ok: false, problems: [`this take does not reproduce from its own script at any reading table this build has (${READING_SETS.join(", ")}), and the closest attempt scored ${worstOf(best.report).toFixed(3)} where the same recording scores 1.000; the audio is not the sound these words make`], correlation: worstOf(best.report), phrases: best.report, seconds };
   }
-  return { ok: false, problems, correlation: worstOf(first.report), phrases: first.report, seconds };
+  return { ok: false, problems, correlation: worstOf(best.report), phrases: best.report, seconds };
 }

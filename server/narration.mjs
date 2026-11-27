@@ -123,7 +123,12 @@ export function verifyNarration({ attemptDir, artifact, material = null, from = 
       // at. It is evidence of an imprecise record, not of a bad take: the words are the
       // card's words, and a reader should not later be told the record was exact when it was
       // not. `matched` is what the audio is; `recorded` is what the file claimed.
-      ...(bound?.voice ? { voice: bound.voice } : {})
+      ...(bound?.voice ? { voice: bound.voice } : {}),
+      // How far the audio had to be moved to meet the record, in samples. Zero for an exact
+      // record; nonzero means the timeline wrote its starts to fewer places than the sample
+      // rate resolves, which is honest and is not hidden - a reopened card must not claim a
+      // rounded record was an exact one.
+      realigned: Math.max(0, ...(bound?.phrases || []).map(p => Math.abs(p.slip ?? 0)))
     },
     // Which card was read, when there was one. Provenance the creator asked for: reopening
     // the workspace must say both what was said and where the words came from.

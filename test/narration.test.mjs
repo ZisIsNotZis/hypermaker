@@ -120,6 +120,11 @@ test("canvas text becomes a narration that measures as speech, and a film that c
   const narrationLine = await page.locator(`.card[data-id="${narrationId}"] .narration`).textContent();
   assert.match(narrationLine, /narration: 5\.\d+s, 14 words, \d+ syllable onsets/, `the card reports its measurement, got ${narrationLine}`);
   assert.match(narrationLine, /measured speech/, "and the verdict it earned");
+  // This take's record is exact, so it carries no rounding note. The other side - a rounded
+  // record showing the samples it was realigned by - is covered in `test/bind.test.mjs`, which
+  // can build that take directly; asserting it is absent here is what keeps the note from
+  // appearing on every card as noise.
+  assert.doesNotMatch(narrationLine, /start times rounded/, `an exact record must not claim its starts were rounded, got ${narrationLine}`);
   const narrationTitle = await page.locator(`.card[data-id="${narrationId}"] .narration`).getAttribute("title");
   assert.match(narrationTitle, /0\.00s {2}The sea at night is never still\./, `the tooltip says when the first phrase starts, got ${narrationTitle}`);
   assert.match(narrationTitle, /2\.\d+s {2}It carries every colour of the sky\./, "and when the second does");
