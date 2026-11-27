@@ -27,9 +27,10 @@ The card reports the *worst* window and how much of the take it covers (`worst w
 60 windows`), so a good middle can no longer speak for a bad end. Refusals name the time: `from
 3.20s the film plays nothing where its narration is speaking`. A wrong recording is reported as a
 different recording rather than as this take with a piece missing, so a person does not go looking
-for a cut that was never made. Measured on one real 12 s render: correctness and five changes to it,
-each refused and located - silence tail from 3.23 s, a 0.6 s hole mid-take, another take's voice, a
-truncated picture, an all-zero track (`test/film-alignment.test.mjs`). The whole-narration check
+for a cut that was never made. Measured on one real 12 s render, in both directions: a complete narration with pauses between its
+lines passes and reports its worst window, and five changes to that film are each refused and
+located - a silence tail from 3.23 s, a 0.6 s hole mid-take, another take's voice, a truncated
+picture, an all-zero track (`test/film-alignment.test.mjs`). The whole-narration check
 costs about 0.35 s, so a creator never waits on it.
 
 **An older take keeps its older measurement.** Strengthening the check also relabelled films made
