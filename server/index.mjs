@@ -3,11 +3,13 @@ import { createReadStream, existsSync, mkdirSync, readFileSync, copyFileSync, re
 import { basename, dirname, extname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readWorkspace, writeWorkspace, nodeRecord } from "./workspace.mjs";
-import { methodFor, methodsFor, registryInfo, typeForFile } from "./registry.mjs";
+import { defaultMethodFor, methodFor, methodsFor, registryInfo, typeForFile } from "./registry.mjs";
 import { assemblePrompt, materialText } from "./prompt.mjs";
 import { generate as runCodex } from "./codex.mjs";
 import { verifyNarration } from "./narration.mjs";
 import { readTake, renderAt, reproducesPrevious, writeScript, stopped, isStopped } from "./repace.mjs";
+import { verifyFilm } from "./film.mjs";
+import { runBuiltin } from "./builtin.mjs";
 import { beginRun, damageReason, endRun, guardCard, guardName, guardNotice, keepCard, pruneRuns, recoverRun, runsRoot } from "./runs.mjs";
 
 const root = resolve(new URL("..", import.meta.url).pathname), publicDir = join(root, "public"), defaultWorkdir = join(root, ".hypermaker");
@@ -396,7 +398,7 @@ const server = createServer(async (req, res) => { try {
     // type before the card has loaded - carried `llm` as its method. The record then named a
     // text method for an audio card, and Generate asked the prompt assembler for a method
     // that does not exist for that type.
-    const fallback = methodsFor(b.type || "text").find(m => m.available !== false)?.id ?? null;
+    const fallback = defaultMethodFor(b.type || "text");
     nodes[id] = nodeRecord(id, { ...b, inputs: [], method: b.method || fallback, quality: b.quality || "standard" }); save(); return json(res, 200, view());
   }
   if (url.pathname === "/api/import" && req.method === "POST") { const b = await body(req), id = nextId(), type = typeForFile(b.path); if (!type) throw new Error("Unsupported asset type"); const name = String(b.path).split(/[\\/]/).pop(); mkdirSync(join(workdir, String(id)), { recursive: true }); copyFileSync(resolve(b.path), join(workdir, String(id), name)); nodes[id] = nodeRecord(id, { x: b.x, y: b.y, type, inputs: [], artifact: name }); save(); return json(res, 200, view()); }
@@ -472,7 +474,10 @@ const server = createServer(async (req, res) => { try {
     // Said as what it is, not as a generic refusal: a tone card has no words, and a take made
     // by another speech method was not this voice, so "the same recording, slower" does not
     // exist for either of them.
-    if (n.type !== "audio" || n.method !== "narration") return json(res, 409, { ...view(), error: `Only a card whose method is narration can be re-read at another pace; node ${n.id} is ${n.type}/${n.method || "no method"}.` });
+    // Both narration methods read with this same voice and record the same timeline, so both can
+    // be re-read the same way: `readaloud` is the server-run first take, `narration` is the agent
+    // take, and after the bytes exist they are the same kind of file.
+    if (n.type !== "audio" || (n.method !== "narration" && n.method !== "readaloud")) return json(res, 409, { ...view(), error: `Only a card read out loud by this voice can be re-read at another pace; node ${n.id} is ${n.type}/${n.method || "no method"}.` });
     const wpm = Number(b.wpm);
     if (!Number.isFinite(wpm) || wpm <= 0) return json(res, 409, { ...view(), error: `A pace is a positive number of words per minute, got ${JSON.stringify(b.wpm)}.` });
     // Asking for the pace this take already has is not a new take, and acting on it spends a
@@ -648,6 +653,15 @@ const server = createServer(async (req, res) => { try {
       return json(res, 409, { ...view(), error: `${chosen.id} needs ${(chosen.requires || []).join(", ")} on this machine, which is not there, so nothing was started.${fallback ? ` Choose ${fallback.id} instead - it works with nothing installed.` : ""}` });
     }
     if (typeof b.prompt === "string") n.prompt = b.prompt;
+    // The pace the person set on the card before pressing. It is a fact about the press, like
+    // the prompt: a value typed into the box but never sent must not be applied to this take,
+    // and a value sent now must be. An empty box is the voice's own speed, said as null rather
+    // than as a missing field, so "no pace asked for" survives a reload as what it is.
+    if (b.wpm !== undefined) n.wpm = b.wpm === "" || b.wpm == null ? null : Number(b.wpm);
+    if (n.wpm != null && (!Number.isFinite(n.wpm) || n.wpm <= 0)) {
+      releaseClaim(claim);
+      return json(res, 409, { ...view(), error: `A pace is a positive number of words per minute, got ${JSON.stringify(b.wpm)}. Nothing was started.` });
+    }
     // Freeze what this run is given *now*. A film takes minutes; a person may
     const givenInputs = [...(n.inputs || [])];
     // Take the id from the key, not from the record: a node read back from
@@ -764,7 +778,17 @@ const server = createServer(async (req, res) => { try {
     // poster while the record named the old one.
     const promptNodes = { ...nodes };
     for (const source of runSources) if (source.frozen) promptNodes[source.id] = { ...nodes[source.id], frozen: source.frozen };
-    const agent = runCodex({ node: run, workspace: { workdir: ws, nodes: promptNodes, projectCwd: root }, model: b.model, effort: b.effort, useGhPrefix: b.useGhPrefix, attemptDir });
+    const agent = chosen?.builtin
+      // The method's own `builtin` name decides what makes the bytes, so the list of methods
+      // that need no agent is the registry's and not a second one written here (see
+      // `types/*/methods/*.mjs`, `builtin:`). Everything after this line is the same for both
+      // kinds of run: the claim, the guard, the checks before publish, the kept version.
+      ? runBuiltin({
+          kind: chosen.builtin, node: run, sources: runSources, prompt: run.prompt || "", attemptDir, projectRoot: root,
+          wpm: run.wpm ?? null,
+          assembledPrompt: assemblePrompt({ node: run, workspace: { workdir: ws, nodes: promptNodes }, context: {} })
+        })
+      : runCodex({ node: run, workspace: { workdir: ws, nodes: promptNodes, projectCwd: root }, model: b.model, effort: b.effort, useGhPrefix: b.useGhPrefix, attemptDir });
     claim.agent = agent;
     // Stop pressed while the card was still being prepared: there was no process
     // yet, so the claim remembers the press and the run is stopped the moment it
@@ -783,9 +807,17 @@ const server = createServer(async (req, res) => { try {
       // must not be able to make the take that is already spoken look like it read the new
       // text. The material is what the script must be a selection of, and `from` is the card
       // whose words those were, recorded so a reopened canvas can say where they came from.
-      const material = run.type === "audio" && run.method === "narration" ? materialText({ node: run, workspace: { workdir: ws, nodes: promptNodes } }) : null;
-      const narration = material ? verifyNarration({ attemptDir, artifact: result.artifact, material: material.text, from: material.from }) : null;
+      const material = run.type === "audio" && (run.method === "narration" || chosen?.builtin === "readaloud") ? materialText({ node: run, workspace: { workdir: ws, nodes: promptNodes } }) : null;
+      const narration = material ? verifyNarration({ attemptDir, artifact: result.artifact, material: material.text, from: result.from ?? material.from }) : null;
       if (narration && !narration.ok) throw new Error(`This take is not a narration: ${narration.problems.join("; ")}`);
+      // A film claims to carry a narration. The container is not the claim: the embedded track
+      // has to be loud and it has to be *this* take's narration, and the film has to last at
+      // least as long as the sentence it says. Same rule as a narration's: the check runs before
+      // anything is published, so a silent film is an error card and never an artifact.
+      const film = chosen?.builtin === "firstcut"
+        ? verifyFilm({ file: result.artifact, soundtrackFile: runSources.find(s => s.type === "audio")?.frozen ?? null, projectRoot: root })
+        : null;
+      if (film && !film.ok) throw new Error(`This film is not the one it claims to be: ${film.problems.join("; ")}`);
       // Before anything is published, the card is put back the way the run found it.
       // This is the check that matters to a person: the run was given their material to
       // read, and if it deleted or changed a file in the card's directory anyway, the
@@ -851,7 +883,21 @@ const server = createServer(async (req, res) => { try {
       // it moves with the artifact exactly like `sources` does, and it is cleared by any
       // later take that is not a narration.
       const priorScript = priorRecord.script ?? null;
-      await finishIn(ws, n.id, { ...result, artifact: published || result.artifact, script: publishedScript ?? priorScript, sources, narration: narration?.evidence ?? null, promptUsed: run.prompt || "", versions: previous, status: "idle", error: null });
+      // A first read records the pace in the words the card uses, so `asked for` says what the
+      // take was actually asked to do rather than repeating the prompt box verbatim. A film has
+      // no instruction of its own beyond "cut these together", so its prompt is left as it is.
+      // Where the words came from is the first half of the instruction, and the pace is the second.
+      // Saying `(no prompt)` on a card whose words came from a linked text card would be true about
+      // the box and false about the take: the person asked for that card's sentence, read at a pace.
+      const wordsFrom = result.from ? `the words from #${result.from.id}` : (run.prompt || "(no prompt)");
+      const asked = chosen?.builtin === "readaloud" ? `${wordsFrom} - read at ${run.wpm != null ? `${run.wpm} words a minute` : "the voice's ordinary pace"}` : (run.prompt || "");
+      // A film's record is two halves and both belong on the card: what the run chose (which
+      // narration, which poster, how many frames) and what the published file measured (its
+      // streams, its length, how well the embedded track matched). Keeping only the second threw
+      // away the frame count the published composition names, so a person reading the record could
+      // not tie the source to the film - which is the whole point of publishing the source.
+      const filmRecord = film ? { ...(result.film || {}), ...film.evidence } : null;
+      await finishIn(ws, n.id, { ...result, artifact: published || result.artifact, script: publishedScript ?? priorScript, sources, narration: narration?.evidence ?? null, film: filmRecord, promptUsed: asked, versions: previous, status: "idle", error: null });
       // After the save, not before: the sweep asks the record what is still reachable,
       // so running it first deleted the script and the per-take prompt this run had
       // just written - the files that say what produced the take now on the card.

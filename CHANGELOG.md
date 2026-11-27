@@ -1,5 +1,71 @@
 # Changelog
 
+## Unreleased — a blank canvas makes a playable film with no model and no account, 2026-11-28
+
+Every method in the registry handed its work to Codex, so the first step of every chain - a text
+card holding a sentence - needed a working model route. On this machine that route does not answer
+(`workspace routing discovery timed out`, `docs/evidence/`), and the measurement was blunt: a blank
+canvas, one card, one sentence, Generate, `Cannot run the Codex CLI ... not installed or on PATH`.
+There was no way to the film after that. A supervisor reproduced the same wall from the release
+build: choosing narration without Codex reported clearly, kept the text, allowed a retry - and
+produced no sound.
+
+**Three methods now run in the server, and a new card of each type starts on one.** `plain` writes
+the sentence you typed, `readaloud` speaks it with the voice in `voice/` at the pace set on the
+card, and `firstcut` cuts it into an h264 film over the linked poster with the text's first line as
+the title. No Codex, no model, no network. Measured on a real browser walk from a blank canvas: a
+120 wpm first take read at 120.7, a 1280x720 h264/AAC film 3.56 s long, its embedded track
+correlated 1.000 with the narration it was given, played in the canvas with `duration 3.56` - and
+the probe agent was never called. A supervisor's independent run: 720p, 5.65 s, correlation 0.999.
+
+The methods that need a model are still there and are no longer easy to mistake for the others:
+every card prints whether its method `runs here, no model` or `sends this card to a model`, the
+toolbar's model settings say *for agent cards*, and the press reads **Make** on a built-in card and
+**Generate** on an agent one. A supervisor walking the new defaults could not tell which step wrote
+his words down and which would spend a model; that is the defect this line fixes.
+
+**The first take has its pace box, and it is the pace that is used.** The box used to appear only
+after a take existed, so a first read's speed came from an instruction in the prompt - a request an
+agent had to interpret. It now sits on a `readaloud` card from the start at 150 wpm, the number
+typed goes with the press, and the card records the words' source with the pace: `the words from #2
+- read at 110 words a minute`. After the take the box describes the bytes and Read again re-reads
+them, so one control means an intention before the first press and a measurement after it.
+
+**A film still has to prove it is the film it claims.** The built-in path is not a shortcut past the
+checks: `verifyFilm` requires a real video stream, a duration at least as long as the narration, an
+embedded track that is not silence, and an embedded track that *is this narration* - extracted and
+correlated after the encoder's delay. Negative controls built from a real render, each changing one
+thing: a silent track, a film truncated to one second, a film carrying a different take's voice, and
+a film with no audio stream. Each is refused with its own sentence.
+
+**A film publishes the composition that made it.** The first version published a file of comments
+naming the soundtrack and the length, and a supervisor opened it expecting the render's source. The
+thing that decided how the film looks was in the run directory and was deleted with it - the same
+hole the narration timeline exists to prevent, in a place nobody had looked. The published
+`first-cut-source.jsx` now carries the header *and* the JSX; a supervisor re-rendered from it and
+the frozen WAV in a clean directory and got a byte-identical MP4.
+
+**Found while walking the real entry, not by reading the code:** `makeCancelSignal()` in Remotion
+4.0.513 returns `{cancelSignal, cancel}`, not the `[signal, cancel]` tuple the first version
+destructured - the narration had already published and the film died one frame in with a TypeError.
+A supervisor hit it first on an isolated copy of the same code. Stop now also reaches the Remotion
+renderer, not only the next check after it.
+
+Tests: `test/first-cut.test.mjs` (seven: the whole chain from an empty workspace with a probe
+agent that must never be called, the record being the source that rendered the film, three refusals
+that publish nothing, the four film-check negative controls, the canvas pace box before the first
+take, a server-read take re-read at another pace without re-cutting the film already made from it,
+and Stop during a render keeping the approved film, its sources and its measurements). Suite:
+185/185 with a real Chromium.
+
+Two paths were walked by a supervisor before they were tests, and both were checked by hand first:
+changing the box from 140 to 115 and pressing Read again measured 115.2 while the existing film kept
+playing the original narration and the next Generate said it would use the new one; and Stop during
+a re-cut settled as `cancelled` with the original MP4, the frozen sources and the measured record
+all intact and the card ready to try again. The Stop test was tightened after a probe showed the
+first version could pass by stopping *before* the renderer had started - it now presses Stop only
+once the run's own bundle exists, and asserts that it got that far.
+
 ## Unreleased — the same narration can be read again at another pace from the card, without a model, 2026-11-28
 
 The pace was a number you could set with `--wpm`, but only an agent could set it: a person who

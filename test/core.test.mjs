@@ -3,21 +3,27 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { typeForFile, methodsFor } from "../server/registry.mjs";
+import { defaultMethodFor, methodFor, typeForFile, methodsFor } from "../server/registry.mjs";
 import { assemblePrompt } from "../server/prompt.mjs";
 
 test("registry maps MIME extensions and exposes only filesystem methods", () => {
   assert.equal(typeForFile("picture.PNG"), "image");
-  assert.deepEqual(methodsFor("text").map(x => x.id), ["llm"]);
-  // Two methods work with nothing installed: `narration` speaks text with the voice that
-  // ships in `voice/`, and `synth` makes tones. The two other speech methods name binaries
-  // (~/tts.cpp, ~/bark.cpp) that a machine may not have, so an audio card needs paths that
-  // are not blocked on them.
-  assert.deepEqual(methodsFor("audio").map(x => x.id).sort(), ["bark.cpp", "narration", "synth", "tts.cpp"]);
-  // The default for a brand-new audio card is the first available method, and it has to be
-  // the one that reads a card out loud rather than the one that makes a tone: the reason a
-  // person reaches for an audio card next to a text card is narration.
-  assert.equal(methodsFor("audio")[0].id, "narration", `the audio default is narration, got ${methodsFor("audio").map(x => x.id).join(", ")}`);
+  // `plain` writes the person's own prompt; `llm` asks a model to write one. Both are filesystem
+  // methods, and the first is what a new text card starts on because the first step of a chain is
+  // usually a sentence somebody already has.
+  assert.deepEqual(methodsFor("text").map(x => x.id).sort(), ["llm", "plain"]);
+  // Three methods work with nothing installed: `readaloud` and `narration` both speak text with
+  // the voice that ships in `voice/` (`readaloud` runs here, `narration` hands the job to an
+  // agent), and `synth` makes tones. The two remaining speech methods name binaries
+  // (~/tts.cpp, ~/bark.cpp) that a machine may not have.
+  assert.deepEqual(methodsFor("audio").map(x => x.id).sort(), ["bark.cpp", "narration", "readaloud", "synth", "tts.cpp"]);
+  // The starting method for a brand-new audio card has to be one the server can run itself: it is
+  // the one that reads a card out loud (not the one that makes a tone) and it needs no account,
+  // so a first take is possible on a machine whose model route does not answer.
+  assert.equal(defaultMethodFor("audio"), "readaloud", `the audio default is readaloud, got ${defaultMethodFor("audio")}`);
+  assert.equal(defaultMethodFor("text"), "plain", "a text card starts on the method that needs no model");
+  assert.equal(defaultMethodFor("video"), "firstcut", "a video card starts on the method that needs no model");
+  assert.equal(methodFor("audio", "readaloud").builtin, "readaloud", "and the registry says the server runs it");
   const synth = methodsFor("audio").find(x => x.id === "synth");
   assert.ok(!/tts\.cpp|bark\.cpp/.test(synth.tools.join(" ")), "the offline method must not depend on either speech binary");
   assert.match(synth.guide, /not spoken words/, "the guide says what it cannot do");
@@ -56,7 +62,7 @@ test("a linked input with no artifact yet is stated as such, not passed off as n
 
 test("workspace serialization preserves integer graph records and provenance", async () => {
   const { parseWorkspace, serializeWorkspace } = await import("../server/workspace.mjs");
-  const value = { 2: { x: 1, y: 2, inputs: [1], type: "text", method: "llm", prompt: "x", quality: "demo", script: null, artifact: null, status: null, error: null } };
+  const value = { 2: { x: 1, y: 2, inputs: [1], type: "text", method: "llm", prompt: "x", wpm: null, quality: "demo", script: null, artifact: null, status: null, error: null } };
   assert.deepEqual(parseWorkspace(serializeWorkspace(value)), value);
   // `sources` is what a finished artifact was made from. It has to survive a round
   // trip or a restart silently forgets how a film was built.

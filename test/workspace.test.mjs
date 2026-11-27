@@ -3,11 +3,32 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { parseWorkspace, readWorkspace, serializeWorkspace, writeWorkspace, workspacePath } from "../server/workspace.mjs";
+import { nodeRecord, parseWorkspace, readWorkspace, serializeWorkspace, writeWorkspace, workspacePath } from "../server/workspace.mjs";
 
 test("workspace round trips exact node fields and integer input IDs", () => {
-  const nodes = { 2: { x: 3, y: 4, inputs: [1], type: "text", method: "llm", prompt: "say hi", promptUsed: "say hi", quality: "demo", script: null, artifact: "hello.txt", status: null, error: null } };
+  // `wpm` is written on every card, including the cards that never asked for a pace: a field that
+  // is sometimes absent and sometimes null reads as two different facts when it is one.
+  const nodes = { 2: { x: 3, y: 4, inputs: [1], type: "text", method: "llm", prompt: "say hi", promptUsed: "say hi", wpm: null, quality: "demo", script: null, artifact: "hello.txt", status: null, error: null } };
   assert.deepEqual(parseWorkspace(serializeWorkspace(nodes)), nodes);
+});
+
+// A pace set before the first read, and a film's own measurements, are facts about the artifact on
+// the card: a restart that lost them would turn "asked 110, reads at 110" into "reads at 110" - a
+// request silently downgraded to a result - and would leave a film unable to say what it measured.
+test("a chosen pace and a film's measurements survive a restart", () => {
+  const nodes = { 4: { x: 0, y: 0, inputs: [], type: "audio", method: "readaloud", prompt: "read this", wpm: 110, quality: "standard", script: null, artifact: "versions/v1-narration.wav", status: "idle", error: null },
+    5: { x: 0, y: 0, inputs: [4], type: "video", method: "firstcut", prompt: "", quality: "standard", script: "versions/v1-first-cut-source.jsx", artifact: "versions/v1-film.mp4", status: "idle", error: null, film: { seconds: 5.25, width: 1280, height: 720, videoCodec: "h264", audioCodec: "aac", correlation: 0.998 } } };
+  const back = parseWorkspace(serializeWorkspace(nodes));
+  assert.equal(back[4].wpm, 110, "the pace the person chose is still on the card after a restart");
+  assert.equal(back[5].film.correlation, 0.998, "and the film still says what its soundtrack measured");
+  assert.equal(back[5].film.videoCodec, "h264");
+  // A card that never asked for a pace and has no film is normalised by `nodeRecord`, which is
+  // what every reader of the file goes through: the optional fields are simply absent from the
+  // text, and come back as null rather than as undefined on one path and null on another.
+  const plain = nodeRecord(6, parseWorkspace(serializeWorkspace({ 6: { x: 0, y: 0, inputs: [], type: "audio", method: "readaloud", prompt: "", quality: "standard", script: null, artifact: null } }))[6]);
+  assert.equal(plain.wpm, null);
+  assert.equal(plain.film, null);
+  assert.equal(parseWorkspace(serializeWorkspace({ 6: { x: 0, y: 0, inputs: [], type: "audio", method: "readaloud", prompt: "", quality: "standard", script: null, artifact: null } }))[6].film, undefined, "an unset film is not written to the file at all");
 });
 
 // The prompt that produced a kept version has to survive a restart for the same

@@ -43,6 +43,19 @@ export function methodsFor(type) {
 export function methodFor(type, id) {
   return methodsFor(type).find(method => method.id === id) || null;
 }
+// The method a brand-new card of this type starts on.
+//
+// "First that works" was `available` order alone, and that was right while every method was an
+// agent: the only thing that could be missing was a binary. It is no longer the whole question.
+// A method that the server runs itself (`builtin`) needs no account, no route and no binary, so a
+// card a person adds should start on one of those when the type has one - the first film should
+// not depend on a model being reachable. The agent methods stay in the list, and a card switched
+// to them still runs them; this only decides which one a new card is pointed at.
+export function defaultMethodFor(type) {
+  const usable = methodsFor(type).filter(method => method.available !== false);
+  return usable.find(method => method.builtin)?.id ?? usable[0]?.id ?? null;
+}
 export function registryInfo() {
-  return { types: [...typeRegistry.values()], methods: Object.fromEntries([...typeRegistry.keys()].map(type => [type, methodsFor(type)])), qualities };
+  const defaults = Object.fromEntries([...typeRegistry.keys()].map(type => [type, defaultMethodFor(type)]));
+  return { types: [...typeRegistry.values()], methods: Object.fromEntries([...typeRegistry.keys()].map(type => [type, methodsFor(type)])), defaults, qualities };
 }

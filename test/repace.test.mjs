@@ -159,7 +159,10 @@ test("a card that cannot be re-read says why instead of producing something else
   // A tone card has no words to say, and was not made by this voice.
   const tone = latest(await post("/api/node", { x: 40, y: 400, type: "audio", method: "synth", prompt: "a low hum" }));
   const onTone = await post("/api/repace", { id: tone, wpm: 150 });
-  assert.match(onTone.error || "", /Only a card whose method is narration can be re-read/, `a tone card was not refused: ${JSON.stringify(onTone.error)}`);
+  // The refusal names both methods that *can* be re-read, because there are now two: an agent's
+  // take and the server's own first read are the same kind of bytes once they exist, and a person
+  // who read the README's "make a first film with no account" has the second kind.
+  assert.match(onTone.error || "", /Only a card read out loud by this voice can be re-read/, `a tone card was not refused: ${JSON.stringify(onTone.error)}`);
 
   // A pace is a number, and zero is not one.
   const { audio } = await narratedCard();

@@ -28,7 +28,7 @@ export function serializeWorkspace(nodes = {}) {
     // Without it the two are the same field, so editing the text before pressing
     // Generate silently rewrites the record of the film already on screen - and
     // going back to an earlier version leaves the box describing the newer one.
-    const fields = ["x", "y", "inputs", "type", "method", "prompt", "quality", "script", "artifact", "status", "error"];
+    const fields = ["x", "y", "inputs", "type", "method", "prompt", "wpm", "quality", "script", "artifact", "status", "error"];
     const lines = fields.map(field => `  ${field}: ${field === "inputs" ? `[${(node.inputs || []).join(", ")}]` : scalar(node[field])}`);
     // Written only when there is one: a node that has never finished a run has no
     // artifact, so it has no instruction behind one, and repeating `null` on every
@@ -44,6 +44,11 @@ export function serializeWorkspace(nodes = {}) {
     // bytes: a person who reopens the workspace tomorrow can still read that this take was
     // checked, and against how many words. A card without a narration has no such line.
     if (node.narration && typeof node.narration === "object") lines.push(`  narration: ${JSON.stringify(node.narration)}`);
+    // What a film measured about itself: its duration, its stream codecs, and how well its
+    // embedded track matched the narration it was given. Kept with the artifact for the same
+    // reason a narration's numbers are - a reopened canvas has to be able to show that the sound
+    // was checked rather than that a track exists.
+    if (node.film && typeof node.film === "object") lines.push(`  film: ${JSON.stringify(node.film)}`);
     if (Array.isArray(node.sources) && node.sources.length) {
       lines.push(`  sources: ${JSON.stringify(compactSources(node.sources))}`);
     }
@@ -92,7 +97,7 @@ export function writeWorkspace(workdir, nodes) {
   renameSync(temp, target);
 }
 export function nodeRecord(id, node) {
-  const record = { id: Number(id), x: node.x ?? 0, y: node.y ?? 0, inputs: (node.inputs || []).map(Number), type: node.type, method: node.method ?? null, prompt: node.prompt || "", promptUsed: typeof node.promptUsed === "string" ? node.promptUsed : null, quality: node.quality || "standard", script: node.script ?? null, artifact: node.artifact ?? null, status: node.status ?? null, error: node.error ?? null, notice: typeof node.notice === "string" && node.notice ? node.notice : null, sources: Array.isArray(node.sources) ? node.sources : null, narration: node.narration && typeof node.narration === "object" ? node.narration : null, versions: Array.isArray(node.versions) && node.versions.length ? node.versions : null };
+  const record = { id: Number(id), x: node.x ?? 0, y: node.y ?? 0, inputs: (node.inputs || []).map(Number), type: node.type, method: node.method ?? null, prompt: node.prompt || "", promptUsed: typeof node.promptUsed === "string" ? node.promptUsed : null, quality: node.quality || "standard", script: node.script ?? null, artifact: node.artifact ?? null, status: node.status ?? null, error: node.error ?? null, notice: typeof node.notice === "string" && node.notice ? node.notice : null, sources: Array.isArray(node.sources) ? node.sources : null, narration: node.narration && typeof node.narration === "object" ? node.narration : null, film: node.film && typeof node.film === "object" ? node.film : null, wpm: Number.isFinite(Number(node.wpm)) && Number(node.wpm) > 0 ? Number(node.wpm) : null, versions: Array.isArray(node.versions) && node.versions.length ? node.versions : null };
   return record;
 }
 export function workspacePath(workdir, id, filename) {

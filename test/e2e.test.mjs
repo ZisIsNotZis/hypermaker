@@ -51,6 +51,14 @@ async function blankPage(viewport = { width: 1100, height: 700 }) {
   await page.waitForFunction(() => document.querySelector("#cards"));
   return page;
 }
+// The canvas now starts a text card on `plain`, which writes the person's own words. These tests
+// are about the agent path - the prompt, the spawn, the artifact contract - so they say so instead
+// of relying on a default that changed under them, and the default itself is pinned in
+// `test/first-cut.test.mjs`.
+async function useAgent(page, id) {
+  await page.locator(`.card[data-id="${id}"] [data-field=method]`).selectOption("llm");
+  await page.waitForFunction(cardId => document.querySelector(`.card[data-id="${cardId}"] [data-field=method]`)?.value === "llm", id);
+}
 const frontMost = page => page.evaluate(() => [...document.querySelectorAll(".card")].find(c => c.classList.contains("raised"))?.dataset.id ?? [...document.querySelectorAll(".card")].at(-1)?.dataset.id ?? null);
 const edgeEnds = page => page.evaluate(() => [...document.querySelectorAll(".edge")].map(path => {
   const ctm = path.getScreenCTM(), at = length => { const p = path.getPointAtLength(length); return { x: p.x * ctm.a + ctm.e, y: p.y * ctm.d + ctm.f }; };
@@ -68,6 +76,7 @@ canvasTest("double-click creates a card, typing persists, and Generate produces 
   await card.locator("[data-prompt]").blur();
   const id = await card.getAttribute("data-id");
   assert.equal((await workspace()).nodes[id].prompt, "make a persona");
+  await useAgent(page, id);
   await card.locator("[data-generate]").click();
   const node = await waitForNode(id);
   assert.match(node.artifact, /xiaoming_persona\.txt$/, JSON.stringify(node));
@@ -265,6 +274,7 @@ canvasTest("a card covered by another can still be generated after being raised"
   const box = await cardBox(page, first);
   await page.mouse.click(box.x + 8, box.y + 12); await page.waitForTimeout(200);
   assert.equal(await frontMost(page), first);
+  await useAgent(page, first);
   await page.locator(`.card[data-id="${first}"] [data-generate]`).click({ timeout: 5000 });
   const node = await waitForNode(first);
   assert.match(node.artifact, /xiaoming_persona\.txt$/, JSON.stringify(node));
@@ -312,6 +322,7 @@ canvasTest("reopening the page restores cards, links and generated previews", as
   const boxA = await cardBox(page, a), boxB = await cardBox(page, b);
   await page.mouse.move(boxA.x + 100, boxA.y + 15); await page.mouse.down();
   await page.mouse.move(boxB.x + 100, boxB.y + 15, { steps: 6 }); await page.mouse.up(); await page.waitForTimeout(200);
+  await useAgent(page, a);
   await page.locator(`.card[data-id="${a}"] [data-generate]`).click();
   assert.match((await waitForNode(a)).artifact, /xiaoming_persona\.txt$/);
   const reopened = await browser.newPage();

@@ -8,6 +8,7 @@ import { browserPath, launchBrowser } from "./browser.mjs";
 import { freePort, startServer, stopAll, stopServer, waitReady } from "./server.mjs";
 import { wavStats } from "./wav.mjs";
 import { CURRENT_READINGS } from "../voice/lexicon.mjs";
+import { defaultMethodFor } from "../server/registry.mjs";
 
 // The slice a person actually asked for: a line of text on one card, a narration of it on
 // the next, and a film that carries that voice.
@@ -94,12 +95,19 @@ test("canvas text becomes a narration that measures as speech, and a film that c
   assert.equal(textNode.error, null, `the text card was written, got ${textNode.error}`);
   assert.equal(readFileSync(join(workdir, String(textId), textNode.artifact), "utf8").trim(), SCRIPT, "the text card holds the line");
 
-  // 2. An audio card on the *default* method, which is now narration. Asserting the default
-  //    is the point: a person who adds an audio card next to text should not have to know a
-  //    method name to hear it.
-  const created = await post("/api/node", { x: 420, y: 60, type: "audio", prompt: "read the text card aloud", quality: "demo" });
+  // 2. An audio card on the *default* method, which is the server-run read (`readaloud`).
+  //    Asserting the default is the point: a person who adds an audio card next to text should
+  //    not have to know a method name to hear it, and the default must be the one that needs no
+  //    account - `narration` hands the same words to an agent, and that path cannot run on a
+  //    machine whose model route does not answer. This test still takes the agent path
+  //    deliberately, because that is the path whose take it checks, so the method is named.
+  const created = await post("/api/node", { x: 420, y: 60, type: "audio", method: "narration", prompt: "read the text card aloud", quality: "demo" });
   const narrationId = Number(Object.keys(created.nodes).at(-1));
-  assert.equal(created.nodes[narrationId].method, "narration", "a new audio card starts on the offline voice");
+  assert.equal(created.nodes[narrationId].method, "narration", "this take is made by the agent on purpose");
+  // The default is asked of the registry rather than of a new card, because a card added here
+  // would sit on the canvas as a draft with an empty prompt and the film step below links to
+  // the two cards it knows about - an extra one is noise this test does not need.
+  assert.equal(defaultMethodFor("audio"), "readaloud", "a new audio card starts on the read that needs no model");
   await post("/api/link", { source: textId, target: narrationId });
   await page.reload({ waitUntil: "load" });
 
