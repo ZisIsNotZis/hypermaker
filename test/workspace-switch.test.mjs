@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { freePort, startServer, stopAll, stopServer, waitReady } from "./server.mjs";
+import { freePort, modesNotEnforced, startServer, stopAll, stopServer, waitReady } from "./server.mjs";
 import { readWorkspace, writeWorkspace } from "../server/workspace.mjs";
 
 // Two workspaces open in turn while a run is still going. Node ids are per workspace,
@@ -176,8 +176,12 @@ test("a failed open leaves the current workspace intact and the next open still 
 //
 // Like the retry test above, it runs on a server of its own: the shared workspace's card
 // ids are what the tests below navigate by.
-test("a workspace that cannot be written is refused and the open canvas is untouched", async () => {
-  if (process.getuid && process.getuid() === 0) return; // root ignores the mode
+test("a workspace that cannot be written is refused and the open canvas is untouched", async t => {
+  // Root ignores the mode; a filesystem that ignores chmod looks identical from here and
+  // used to fail this test on code that was right. See `modesNotEnforced` in server.mjs.
+  if (process.getuid && process.getuid() === 0) return t.skip("running as root, which ignores the mode");
+  const unchecked = modesNotEnforced();
+  if (unchecked) return t.skip(unchecked);
   const here = join(base, "readonly-here"), readonly = join(base, "readonly-target");
   mkdirSync(here, { recursive: true });
   mkdirSync(readonly, { recursive: true });

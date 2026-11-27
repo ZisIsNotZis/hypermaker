@@ -144,6 +144,16 @@ HYPERMAKER_CHROME=/path/to/chrome npm test
 
 `CHROME_BIN` 也可以作为后备。两个变量都不设时用 Playwright 自带的浏览器；自带浏览器缺失会报 `Executable doesn't exist`。浏览器测试都在全新的工作区里从零搭夹具，不需要联网，也不需要任何凭据。
 
+在 WSL 上，检出目录可以放在 Windows 盘（`/mnt/d/…`），但测试的临时目录不行：Chromium 无法在那里建自己的 profile，所以当 `TMPDIR` 指进检出目录时，每一条浏览器用例都会报 `Target page, context or browser has been closed`——实测 137 通过 / 39 失败 / 1 跳过——看起来像代码坏了。请把它指到 Linux 文件系统上：
+
+```bash
+TMPDIR=$(mktemp -d /var/tmp/hypermaker-XXXX) npm test     # 实测：177/177，没有任何跳过
+```
+
+这一行能直接照抄，靠两个细节：目录由命令自己建，因为 `TMPDIR` 指到一个不存在的路径时，还没进任何用例就会失败；模板写明确，因为光写 `mktemp -d` 会沿用已有的 `TMPDIR`——如果你的 `TMPDIR` 本来就指着 Windows 盘，新目录会建在那里，浏览器用例照样全挂。想多次复用同一个目录的话：先 `mkdir -p /var/tmp/hypermaker-tmp`，然后 `TMPDIR=/var/tmp/hypermaker-tmp npm test`。
+
+默认的 `/tmp` 只要空间够就没问题。另有一条用例需要文件系统真的执行权限位：*打不开的目录会被拒绝* 会用 `chmod` 把一个目录设成只读，再期望打开被拒。在 DrvFs 上 `chmod` 会被接受但不起作用，目录仍然可写，于是这条用例把自己报成跳过，并写明夹具目录和 `TMPDIR` 这个办法，而不是判成失败。被跳过的用例都会打印原因，且从不计为通过。
+
 `node test/journey.mjs` 不在 `npm test` 里：它只完整走一遍普通使用者路径——新建、输入、重叠、抬升、移动、连线、断线、生成、重新打开、删除——每步截一张图到 `.tmp/journey/`（可用 `HYPERMAKER_SHOTS` 改目录），并把每步实际发生了什么以 JSON 打印出来。人可以同时看图和事实，而不用读断言。
 
 ## 如何参与

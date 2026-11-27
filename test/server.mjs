@@ -12,6 +12,9 @@
 // group - on normal exit and on the way out of a failing process.
 import { createServer } from "node:http";
 import { spawn } from "node:child_process";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 
 const children = [];
 
@@ -57,3 +60,30 @@ export function stopAll() {
 // Whatever ends the test process - including an interrupted one - the servers go
 // with it, so the next run starts from a clean port space.
 for (const signal of ["exit", "SIGINT", "SIGTERM"]) process.on(signal, stopAll);
+
+// Can a test that chmods a directory actually expect the write to be refused?
+//
+// A test asked "is opening an unwritable folder refused?", and ran on a checkout under
+// /mnt/d (WSL's DrvFs), where chmod 0500 is accepted and then ignored: the write went
+// through, the server said 200, and the test failed as if the server were wrong. The
+// same commit passes on a filesystem that enforces modes. So the question is asked of
+// the filesystem instead of assumed, and a test that depends on the mode says why it
+// cannot run rather than blaming the code.
+let enforced;
+export function modesEnforced() {
+  if (enforced !== undefined) return enforced;
+  const dir = mkdtempSync(join(tmpdir(), "hypermaker-modes-"));
+  try {
+    chmodSync(dir, 0o500);
+    writeFileSync(join(dir, "probe"), "x");
+    enforced = false;
+  } catch {
+    enforced = true;
+  } finally {
+    try { chmodSync(dir, 0o700); } catch {}
+    rmSync(dir, { recursive: true, force: true });
+  }
+  return enforced;
+}
+export const modesNotEnforced = () => modesEnforced() ? false
+  : `the fixture directory (${tmpdir()}) is on a filesystem that accepts chmod and ignores it - seen on WSL DrvFs - so a read-only folder cannot be made; point TMPDIR at a Linux filesystem to run this case`;

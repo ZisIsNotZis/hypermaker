@@ -115,7 +115,9 @@ Two honest gaps a first-time user will meet:
   approved bytes), **3 re-read canvas** (`repace-ui`: the control and its comparison,
   a linked film that is not re-cut, no control on a card that cannot use it), and 7
   documentation checks. Without a browser the
-  canvas cases skip and say which browser they looked for.
+  canvas cases skip and say which browser they looked for; one case that makes a directory
+  read-only skips - naming the directory - on a filesystem that ignores `chmod` (WSL's
+  DrvFs), so a skip there is an environment limit and not a pass.
 - `test/docs.test.mjs` pins the facts in these documents that a reader is misled by
   when they rot: the stated test count, the claim that audio has no real-generation
   evidence, speech being presented as working, the project being described as closed,

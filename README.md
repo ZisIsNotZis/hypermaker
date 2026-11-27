@@ -295,6 +295,16 @@ HYPERMAKER_CHROME=/path/to/chrome npm test
 
 `CHROME_BIN` works as a fallback. Without either variable Playwright uses its bundled browser, and a missing bundle is reported as `Executable doesn't exist`. The browser tests build every fixture from scratch on a fresh workspace, so they need no network and no credentials.
 
+On WSL the checkout may live on a Windows drive (`/mnt/d/…`), but the suite's scratch space must not: Chromium cannot create its profile there, so if `TMPDIR` points into the checkout every browser case fails to launch with `Target page, context or browser has been closed` — measured as 137 pass / 39 fail / 1 skip — which reads like broken code. Point it at a Linux filesystem instead:
+
+```bash
+TMPDIR=$(mktemp -d /var/tmp/hypermaker-XXXX) npm test     # measured: 177/177, nothing skipped
+```
+
+Two details make that one line copyable. The directory is created by the command, because `TMPDIR` naming a path that does not exist fails before any test starts. And the template is given explicitly, because bare `mktemp -d` honours an existing `TMPDIR` — if yours already points at the Windows mount, the new directory would be created there and every browser case would still fail. To keep one directory across runs instead: `mkdir -p /var/tmp/hypermaker-tmp` once, then `TMPDIR=/var/tmp/hypermaker-tmp npm test`.
+
+The default `/tmp` is fine when it has room. One case also needs a filesystem that enforces permission bits (*a workspace that cannot be written is refused*): on DrvFs `chmod` is accepted and then ignored, so that case reports itself skipped, naming the fixture directory and `TMPDIR` as the remedy, instead of failing. A skipped case prints a reason and is never counted as a pass.
+
 `node test/journey.mjs` is not part of `npm test`: it walks the ordinary-user path once — create, type, overlap, raise, move, link, unlink, generate, reopen, delete — and screenshots each step into `.tmp/journey/` (or `HYPERMAKER_SHOTS`). It prints, as JSON, what it did at each step, so a person can look at the pictures and the facts instead of reading assertions.
 
 ## How to contribute

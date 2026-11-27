@@ -41,9 +41,17 @@ nobody has said whether a person understands them.
 Tests: `test/repace.test.mjs` (four: a re-read at another pace keeps the earlier take and measures
 at the pace asked for; the same words at the same pace makes no take; a tone card, an empty card and
 an impossible pace each say why; Stop during the comparison keeps the approved bytes) and
-`test/repace-ui.test.mjs` (two: the canvas walk - find the control, type through a card refresh, ask,
-see the re-read note, find the earlier take, play both panes - and no control on a card that cannot
-use it).
+`test/repace-ui.test.mjs` (three: the canvas walk - find the control, type through a card refresh,
+ask, see the re-read note, find the earlier take, play both panes - a linked film that is not re-cut
+by re-reading its narration and says which take it was made from, and no control on a card that
+cannot use it).
+
+Running the suite from this checkout also showed an environment limit worth naming rather than
+leaving as a mystery: with `TMPDIR` inside `/mnt/d` (WSL's DrvFs) Chromium cannot create its
+profile, so 39 browser cases failed to launch while the same commit passed 177/177 with the scratch
+directory on a Linux filesystem. DrvFs also ignores `chmod`, which made one case fail as though the
+server had stopped refusing a read-only folder; `test/server.mjs` now probes the fixture directory,
+so that case skips with the reason. Both are documented in the README and `docs/impl.md`.
 
 ## Unreleased — a narration's pace is a number you can set, and the card says what you got, 2026-11-28
 
