@@ -8,6 +8,18 @@ tests and by a handful of real Codex CLI runs.
 
 ## Status
 
+**A blank canvas now makes a playable film with no model and no account (2026-11-28).** Three
+methods are run by the server itself - `plain` writes the sentence, `readaloud` speaks it with the
+voice in `voice/` at the pace set on the card, `firstcut` cuts it into an h264 film - and a new card
+of each type starts on one of them. This closed the wall a release build hit: choosing narration
+without Codex reported clearly, kept the text and allowed a retry, and produced no sound at all,
+because every method in the registry handed the work to an agent and the model route on this
+machine does not answer. Measured from a blank canvas in a real browser: a 120 wpm first take read
+at 120.7, a 1280x720 h264/AAC film 3.56 s long whose embedded track correlated 1.000 with the
+narration it was given, played in the canvas with `duration 3.56`, and a probe agent that was never
+called. A supervisor's independent run of the same commit: 720p, 5.65 s, correlation 0.999, and a
+re-render from the published JSX and the frozen WAV producing a byte-identical MP4.
+
 Canvas and generation lifecycle re-verified 2026-11-27 on `fix/canvas-usable`.
 The last upstream commit planned work; this milestone closed the gap between the
 canvas being reachable and the canvas being usable, and then checked the one path
@@ -35,6 +47,9 @@ pass" means "generation works". Both are true, but for different reasons.
 | Path | Exercised by | Simulated part | Real part |
 | --- | --- | --- | --- |
 | Text artifact | `test/e2e.test.mjs`, one real run | the agent's words | CLI spawn, prompt assembly, node directory, artifact validation, canvas preview |
+| A first film, no model | `test/first-cut.test.mjs`, real browser walks | — | the server writes the words, runs `voice/render.mjs` at the pace set on the card, renders a real 1280x720 h264/AAC MP4 by Remotion, and checks it: a video stream, a duration at least as long as the narration, a peak that is not silence, and an embedded track correlated with *that* narration. Negative controls built from a real render change one thing each - silence, truncation, another take's voice, no audio stream - and are refused with their own sentence |
+| A film's published record | `test/first-cut.test.mjs` | — | the file published beside a film is the composition that rendered it, not a note about it; a supervisor re-rendered from it and the frozen WAV in a clean directory and got a byte-identical MP4. The first version published comments instead, which is the same defect the narration timeline exists to prevent |
+| A pace before the first take | `test/first-cut.test.mjs`, `test/repace-ui.test.mjs` | — | the box exists on a `readaloud` card before any take, the number typed goes with the press, and the card records both the source of the words and the pace asked for (`the words from #2 - read at 110 words a minute`); asked 110, the first take reads 110.9 |
 | Image (PNG) | `test/media.test.mjs` | the agent's creative choice | Remotion bundling and `renderStill`, a real PNG, the decoded `<img>` |
 | Video (MP4) | `test/media.test.mjs` | two-frame composition, codec choice | Remotion `renderMedia` with h264, a real `ftyp`/`avc1`/`moov` file, the decoded `<video>` |
 | Run lifecycle (Stop, failure, restart) | `test/lifecycle.test.mjs`, `test/stop-ui.test.mjs`, real-CLI checks | the agent's slowness and exit codes | process-group Stop, persisted outcome, the card's visible reason |
@@ -103,7 +118,7 @@ Two honest gaps a first-time user will meet:
 
 - Product source of truth: [`design.md`](design.md).
 - Implementation source of truth: [`impl.md`](impl.md).
-- `npm test`: **177 cases** across 40 files — 4 registry/prompt (`core`), 4 method
+- `npm test`: **185 cases** across 41 files — 4 registry/prompt (`core`), 4 method
   availability/refusal, 6 workspace round trips, 4 canvas-script checks (a fourth now
   pins that a helper used only inside a nested template interpolation is still seen),
   8 browser canvas cases (`e2e`), 2 media renders, 1 audio render, 1 film, 3 provenance,
@@ -114,7 +129,12 @@ Two honest gaps a first-time user will meet:
   earlier take kept, a no-op press making no take, the refusals, and Stop keeping the
   approved bytes), **3 re-read canvas** (`repace-ui`: the control and its comparison,
   a linked film that is not re-cut, no control on a card that cannot use it), and 7
-  documentation checks. Without a browser the
+  documentation checks, and **7 first-film** (`first-cut`: the whole chain from an empty
+  workspace with a probe agent that must never be called, the published record being the
+  source that rendered the film, three refusals that publish nothing, four film-check
+  negative controls built from a real render, the pace box before the first take, a
+  server-read take re-read without re-cutting the film made from it, and Stop during a
+  render keeping the approved film, its sources and its measurements). Without a browser the
   canvas cases skip and say which browser they looked for; one case that makes a directory
   read-only skips - naming the directory - on a filesystem that ignores `chmod` (WSL's
   DrvFs), so a skip there is an environment limit and not a pass.
@@ -138,9 +158,10 @@ Two honest gaps a first-time user will meet:
 
 ## Boundaries
 
-Local-first. One workspace at a time. It depends on an authenticated Codex CLI
-for real generation and makes no claim about hosted collaboration, multi-user
-access, or production reliability. `workspace.yml` is the only graph
+Local-first. One workspace at a time. It depends on an authenticated Codex CLI for the methods
+that hand a card to a model - and no longer for the first film, which the server makes itself
+(`plain` → `readaloud` → `firstcut`, no account, no network). It makes no claim about hosted
+collaboration, multi-user access, or production reliability. `workspace.yml` is the only graph
 persistence; z-order, undo and multi-select are canvas state, not stored.
 
 ## Deferred
