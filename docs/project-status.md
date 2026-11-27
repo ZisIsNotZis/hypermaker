@@ -145,10 +145,26 @@ real-render test — see [impl.md](impl.md).
 Audio *artifacts* and the offline voice are verified (table above); a **natural voice**
 is not, and neither are `hyperframe` or the quality presets. Those, and a judgement of whether a finished
 film is any good, are the natural next evidence to collect rather than new features
-to add. One limit is a real gap rather than missing evidence: the harness keeps a
-run out of the card's directory, but the agent is given that directory and
-`--sandbox danger-full-access`, so an agent that decides to tidy it can delete a
-file its owner put there. Probed on 2026-11-27 (`.tmp/probe-card-reach.mjs`).
+to add. The one limit that was a gap rather than missing evidence is closed: a run
+no longer works inside the card (`<workdir>/.runs/<card>/<start>` instead of
+`<card>/attempts/<start>`), `HYPERMAKER_CARD_DIR` is no longer handed to the agent,
+and every file the card held is copied and hashed before the agent starts and put
+back if the run deletes or rewrites it - success, Stop, failure, or the next startup
+after a crash, which writes `KEPT-AFTER-CRASH.txt` beside the card. The commonest
+save, reopening a file and writing into it, is caught because the guard holds copies
+and compares content rather than inodes; a hardlink guard would have missed it, and a
+supervisor named that before it shipped. `test/keep-card.test.mjs` drives delete,
+nested delete, in-place overwrite, Stop and a killed server through the HTTP entry
+point, and disabling the guard fails exactly those five. A supervisor then put a 65 MiB
+clip next to a card, and the run ended without ever saying the file was outside the
+copy tier - a gap in the telling, not in the file. Files up to 64 MiB are copied (a
+deletion and an in-place rewrite are both repaired); a larger one is hardlinked (a
+deletion is repaired; an in-place rewrite is not), and that sentence comes back with
+the press that starts the run and is stored as `notice` on the card, rebuilt when the page
+is reopened (a supervisor reloaded mid-render and the canvas had lost it while the server
+still held it). What remains
+bounded: an in-place rewrite of a file over 64 MiB, which is stated before the run,
+and the take on the card, which is protected by publishing rather than by the guard.
 
 ## Versioning
 

@@ -123,17 +123,21 @@ export function generate({ node, workspace, context = {}, model, effort, useGhPr
     // agent reads the instruction from there. It is also the one file a person can
     // read afterwards to see exactly what was asked, so it is copied to the card
     // before the attempt directory is dropped.
+    // HYPERMAKER_NODE_DIR is the one directory this run may write in, and it is the
+    // run's own (`<workdir>/.runs/<card>/<start>`), not the card's. The card's path
+    // used to be passed in HYPERMAKER_CARD_DIR as well, "for reading things a person
+    // put there"; the path is in the prompt as plain text, so an agent can still
+    // follow it, and the guard in `runs.mjs` puts back anything it changes - but the
+    // variable handed it every name in the directory on a platter, so it is gone.
     writeFileSync(join(workDir, "prompt.txt"), prompt, "utf8");
-    // HYPERMAKER_NODE_DIR is where a run writes, and that is now its own directory.
-    // HYPERMAKER_CARD_DIR is the card's, for reading things a person put there.
-    child = spawn(command, args, { cwd: workspace.projectCwd || process.cwd(), env: { ...process.env, HYPERMAKER_NODE_DIR: workDir, HYPERMAKER_CARD_DIR: nodeDir, HYPERMAKER_NODE_TYPE: node.type, HYPERMAKER_NODE_ID: String(node.id) }, stdio: ["ignore", "pipe", "pipe"], detached: true });
-    const commandLine = `${command} ${args.map(x => JSON.stringify(x)).join(" ")}`;
+    child = spawn(command, args, { cwd: workspace.projectCwd || process.cwd(), env: { ...process.env, HYPERMAKER_NODE_DIR: workDir, HYPERMAKER_NODE_TYPE: node.type, HYPERMAKER_NODE_ID: String(node.id) }, stdio: ["ignore", "pipe", "pipe"], detached: true });
     // What was actually invoked, kept with the card and not with the attempt: the
     // attempt directory is scratch and goes away, but "which model, which flags, on
     // what prompt" is the record a person needs when a result is not what they
     // expected. The prompt is the last argument, so it is the one thing kept out of
     // this file - prompt.txt holds it in full.
     writeFileSync(join(nodeDir, "codex-command.json"), JSON.stringify({ command, args: args.slice(0, -1), at: new Date().toISOString() }, null, 1), "utf8");
+    const commandLine = `${command} ${args.map(x => JSON.stringify(x)).join(" ")}`;
     const commandLog = `[${new Date().toISOString()}] command: ${commandLine}\n${prompt}\n`;
     appendFileSync(devLog, commandLog); process.stdout.write(commandLog);
     // The last thing the CLI said on stderr, kept in memory as well as on disk. A run that

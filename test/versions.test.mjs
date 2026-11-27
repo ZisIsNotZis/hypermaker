@@ -170,12 +170,23 @@ test("an agent that hands back the previous render fails instead of publishing i
   // the file the *previous* take left under versions/. That is the same deception as
   // naming its own earlier render, and the only way left to attempt it - each run now
   // works in an empty directory of its own, so a stale relative name cannot resolve.
+  //
+  // It finds the card the way a real agent would have to: by reading the path out of
+  // its own prompt (`Node: <card>`), because HYPERMAKER_CARD_DIR is gone. That is the
+  // point of the change - the path in a prompt is text, while the variable handed over
+  // every name in the directory - so the fixture reports which of the two it got, and
+  // the test asserts the variable is absent rather than only that the answer failed.
   writeFileSync(join(base, "reuse-agent.mjs"), `
-import { existsSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-const dir = process.env.HYPERMAKER_NODE_DIR, card = process.env.HYPERMAKER_CARD_DIR;
-const out = process.argv[process.argv.indexOf("--output-last-message") + 1];
-const previous = existsSync(join(card, "versions"))
+const dir = process.env.HYPERMAKER_NODE_DIR, out = process.argv[process.argv.indexOf("--output-last-message") + 1];
+const asked = readFileSync(join(dir, "prompt.txt"), "utf8");
+// The prompt ends the path with a full stop ("Node: <dir>. Write script …"), so the
+// trailing punctuation is stripped - a fixture that missed this would quietly fall
+// back to writing its own file and the test would prove nothing.
+const card = (/Node: (\\S+)/.exec(asked)?.[1] ?? "").replace(/[.,;:]+$/, "") || null;
+writeFileSync(join(dir, "env.json"), JSON.stringify({ cardVar: process.env.HYPERMAKER_CARD_DIR ?? null, cardFromPrompt: card }));
+const previous = card && existsSync(join(card, "versions"))
   ? readdirSync(join(card, "versions")).filter(f => /^v\\d+-note\\.txt$/.test(f)).sort()[0]
   : null;
 if (previous) {
@@ -213,6 +224,16 @@ if (previous) {
     await api("POST", "/api/generate", { id: card });
     const second = await wait(card);
 
+    // What the agent was handed, read from its own failed run - a failed run keeps its
+    // directory, a successful one drops it. The card's path is now only in the prompt;
+    // the variable that used to name the whole directory is gone.
+    const runRoot = join(reuseWorkdir, ".runs", String(card));
+    const runDirs = existsSync(runRoot) ? readdirSync(runRoot) : [];
+    assert.ok(runDirs.length, `the failed run kept its directory for inspection, got ${JSON.stringify({ second: second.status, error: second.error, runRoot, runDirs })}`);
+    const handed = JSON.parse(readFileSync(join(runRoot, runDirs.sort().at(-1), "env.json"), "utf8"));
+    assert.equal(handed.cardVar ?? null, null, "the card directory is not handed to the agent as a variable");
+    // The fixture reports what it read, so the test says the path was reachable as text.
+    assert.equal(handed.cardFromPrompt, join(reuseWorkdir, String(card)), "the card's path is in the prompt as text, which is how the deception is attempted");
     assert.equal(second.status, "error", "naming a file this run did not write is a failure, not a new version");
     assert.match(second.error, /outside the directory it was given|does not exist|without rewriting it/, `the card says what happened, got ${second.error}`);
     assert.equal(second.artifact, approved, "the approved artifact is still the one on the card");

@@ -1,6 +1,6 @@
 **English** | [简体中文](README.zh-CN.md)
 
-> **Status: an ordinary creative session works, and is now what the tests follow (0.1.0, 2026-11-27).** You can make a film from canvas material, change the material, keep the take you approved, compare two takes, go back to one, and survive a failure, a Stop or a restart without losing the one you liked. `npm test` passes **131/131** with a usable Chromium; [Verification limits](#verification-limits) separates what is real from what a fixture stands in for, says what the offline voice was **measured** to do and that a *natural* voice is still unproven, and that nothing here has been judged on *taste*. A listening sheet is kept as the listener leaves it: an answer on a line, a note that they heard nothing but machine noise, or both. Notes are kept as written and never scored - only the transcript decides what was heard, and the score says which fraction of which words it is.
+> **Status: an ordinary creative session works, and is now what the tests follow (0.1.0, 2026-11-27).** You can make a film from canvas material, change the material, keep the take you approved, compare two takes, go back to one, and survive a failure, a Stop or a restart without losing the one you liked. `npm test` passes **143/143** with a usable Chromium; [Verification limits](#verification-limits) separates what is real from what a fixture stands in for, says what the offline voice was **measured** to do and that a *natural* voice is still unproven, and that nothing here has been judged on *taste*. A listening sheet is kept as the listener leaves it: an answer on a line, a note that they heard nothing but machine noise, or both. Notes are kept as written and never scored - only the transcript decides what was heard, and the score says which fraction of which words it is.
 
 <div align="center">
   <img src="docs/logo.svg" alt="Hypermaker logo" width="112" />
@@ -114,18 +114,33 @@ This section mixes two kinds of evidence, and they are marked as they appear:
 **What this does not prove:** the voice is robotic, not natural, and its quality on a longer script has not been judged. It is also worth being precise about the word *intelligible*: everything above is a measurement of the signal, and a measurement can show that the formants move, the syllables are there and the file says what its script says - it cannot show that a person understood a sentence. There is no recogniser or speech model on this machine to check that independently, so the intelligibility claim rests on listening, and there is a tool for exactly that: **`node voice/listening-test.mjs --out listen-out`** renders the real voice and a real h264 film carrying it, writes a **blank** transcript sheet (one numbered line per sentence, no words) and keeps the script in `key.txt` so the listener cannot see the answer while writing (a re-run into a directory whose sheet already holds anything a listener wrote is refused, and that includes a note under Notes with every line blank, because "I could only hear a machine" is a finding and was once discarded as scratch; `--fresh` is the explicit way to discard a sheet - and the film is built in a scratch directory of its own outside your output directory and that scratch is deleted afterwards, so repeating the check costs nothing but the render and leaves nothing else behind - files you already keep under `build/` or `public/` there are never touched); `node voice/listening-test.mjs --score listen-out` then reports **word accuracy** and names the words that were misheard. It scores by sound rather than spelling (`color` for `colour` is a hit, because that is the same word heard), and a blank line counts as missed rather than being dropped - the commonest real answer is "I could not make that out", and it has to cost something. Only the transcript decides the score: a note under Notes, including one that quotes a line in the sheet's own `**Line 2.**` shape to comment on it, is kept verbatim in `score.json` and never counted as an answer - it once turned a half-heard sheet into 100%. A quick single sentence is still `node voice/render.mjs --text "…" --out out.wav`, then play it. What has changed is what a listener now has to overcome. Pronunciation is the dictionary's and the emphasis now falls on the syllable the dictionary marks, so what remains is the robotic timbre - not the words, and not a flat metre on every long word. That is a claim about the signal, measured above by re-rendering the file; it is **not** a claim that the stress is *audible to a person*, which is the listener's judgement the listening test exists to record. Numerals are read as a person reads them (`8:30` is eight thirty, `1990` is nineteen ninety, `1,200` is one thousand two hundred, `$5` is five dollars, `£0.50` is fifty pence, `$1250` is one thousand two hundred fifty dollars, `40%` is forty percent, `1,000,000,000,000` is one trillion, `-3.5` is minus three point five) - before this, an ordinary line with a time in it could not be narrated at all, and one with a year in it said "one nine nine zero".
 
 Two rounds of checking the reader's own output found the reading itself going wrong. Neither round was a listening session: each line was synthesized with the real reader, and the words the engine chose - and the bytes it published - were compared with what the line says. That is enough to catch a wrong amount without hearing anything, because a wrong reading is a different word list and the same words render byte for byte to the same audio; the reviewer wrote the lines and reported the mismatched readings. The first round: `$1250` said as *twelve fifty dollars* (a price read as a year), `£0.50` as *fifty cents* (one currency's subunit said for another's), a trillion as *one* (the scale table dropped the rest without a sound), and `-3.5` without its minus. The second round, on a script pasted from a page: the true minus sign `−` read as **positive**, `¥500` and `₹500` said as *five hundred* (the currency silently dropped), and `½` vanishing entirely. All four arithmetic defects and the pasted minus are now read correctly; every symbol the voice cannot name is refused **with the reason**, because a named symbol is something a writer can replace and a line that quietly plays a different sentence is not. These are new readings under a new frozen table, `cmudict-4`: the previous table's takes still reproduce byte for byte, wrong readings included, which `test/numbers-fidelity.test.mjs` checks by rendering an old take and re-verifying it through `voice/verify-take.mjs`. Shapes still refused by name: abbreviations (`km`, `ft`), slash-written dates, ranges (`1990-1995`), fractions, magnitudes past a trillion, and currencies or symbols the voice cannot say (`¥`, `₹`, `½`, `°`). The engine has no idea which `read` a script meant beyond the table above, and a secondary stress is not modelled - only the primary one. For a natural voice, `tts.cpp` and `bark.cpp` name binaries (`~/tts.cpp/build/bin/tts-cli`, `~/bark.cpp/build/examples/main/main`) that this machine does not have, so no natural-voice run has been taken.
-- **A creator's own file next to a card survives the harness, not the agent.** The cleanup rule
-  cannot reach it: a run writes only in `attempts/<start>/`, and nothing in a run's
-  bookkeeping reads or deletes anything in the card's own directory. That is the
-  guarantee the four `test/attempts.test.mjs` cases pin, and it is what a person needs
-  after a fifth retry. It is **not** a guarantee against the agent itself: the run is
-  launched with `HYPERMAKER_CARD_DIR` set to that directory and
-  `--sandbox danger-full-access`, so an agent that decides to tidy its surroundings can
-  delete a file you put there, and the run still ends `idle`. Probed on 2026-11-27 with a
-  stand-in agent that removes exactly one file and nothing else (`.tmp/probe-card-reach.mjs`):
-  the file answered `200` before the run and `404` after it. Closing this means not
-  handing the agent the card directory at all, or giving it a read-only view; neither is
-  done.
+- **A creator's own file next to a card is put back, and the run says it had to be.**
+  The limit this section used to state - "protected from the harness, not from the
+  agent" - is closed in both directions, and the old probe is still the shape of the
+  test. A run no longer works inside the card at all: it gets
+  `<workdir>/.runs/<card>/<start>`, and `HYPERMAKER_CARD_DIR` is no longer handed to it
+  (the card's path is still in the prompt as text, because a real agent needs to read
+  the linked material). Before the agent starts, every file the card holds is **copied**
+  into `<run>/.guard` and hashed. Afterwards - success, Stop, failure, or the next
+  startup when the server died - each file is hashed again and put back if it is gone or
+  different, and the card says which file had to be restored. `test/keep-card.test.mjs`
+  drives each of those through the HTTP entry point with a stand-in agent that deletes a
+  file, deletes one three levels down, opens an existing file and writes over it, or
+  hangs so the run can be stopped or killed mid-damage. The copies are the point: the
+  first version of this used hardlinks, and a supervisor named the hole before it
+  shipped - the commonest way a tool saves is to reopen the existing file and write into
+  it, and a hardlink shares that content, so the saved copy would have changed too and
+  the comparison would have called the file untouched. Disabling the guard makes exactly
+  the five damage tests fail and leaves the clean-run test green.
+
+  A file above 64 MiB - a short video clip is ordinary material - is kept by a link
+  instead of a copy: a deletion is still repaired, and a rewrite of its contents in
+  place is the one thing not covered. That used to be invisible; a supervisor put a
+  65 MiB clip next to a card and the run said nothing. The press now answers with the
+  sentence, it is stored on the card and rebuilt when the page is reopened - a supervisor
+  reloaded mid-render and found it gone from the canvas while the server still had it -
+  and it is silent when every file is small enough to copy. The card's take is protected by
+  publishing rather than by this - a run never writes to `versions/`.
 - **A film from canvas material** is the headline outcome, and it was taken with the real
   CLI: a real poster card and a real 4-second WAV card were linked to one video card, the
   agent rendered a 720x404 h264 MP4, and the embedded audio measured **4.05 s, peak 11506,
@@ -249,7 +264,7 @@ vendor/                pinned submodules: hyperframes, remotion skills
 docs/                  design.md, impl.md, project-status.md
 ```
 
-How the pieces talk: the browser sends JSON commands over HTTP, the server mutates the in-memory graph and rewrites `workspace.yml` atomically, and generation results come back as SSE events (`started`, `complete`, `error`) that make the canvas reload. Generation spawns the Codex CLI from the repository root — so `.agents` skills load — with the run's own directory in `HYPERMAKER_NODE_DIR` (and the card's in `HYPERMAKER_CARD_DIR`); the process writes `codex.jsonl` and a final JSON file, and the harness reads only that final file, validates the artifact, and records it in the workspace.
+How the pieces talk: the browser sends JSON commands over HTTP, the server mutates the in-memory graph and rewrites `workspace.yml` atomically, and generation results come back as SSE events (`started`, `complete`, `error`) that make the canvas reload. Generation spawns the Codex CLI from the repository root — so `.agents` skills load — with the run's own directory (outside the card, under `.runs/`) in `HYPERMAKER_NODE_DIR`; the process writes `codex.jsonl` and a final JSON file, and the harness reads only that final file, validates the artifact, and records it in the workspace.
 
 Project source of truth: [`docs/design.md`](docs/design.md) for product behavior, [`docs/impl.md`](docs/impl.md) for architecture. Agents read [`AGENTS.md`](AGENTS.md) first.
 
@@ -301,7 +316,7 @@ git diff --check
 - **A natural voice.** The offline `narration` method speaks and was measured (see above), but it is a formant synthesizer: robotic, English-only. `tts.cpp` and `bark.cpp` name binaries that are not on this machine, so a natural voice is a documented method with no run behind it.
 - **Output quality.** No take has been judged on wording, pacing or taste. The tests prove the artifact, the provenance and the recovery path; they say nothing about whether a film is good.
 - **The `realistic` preset and long renders.** `realistic` asks for more inspection and repair; neither it nor a multi-minute render has been exercised against a real agent.
-- **A creator's own file is protected from clean-up, not from the agent.** The harness never touches a file next to the card, but the agent is given `HYPERMAKER_CARD_DIR` and `--sandbox danger-full-access`, so an agent that decides to tidy that directory can delete it. Nothing stops that today; keeping it out of the agent's hands is the fix, and it is not done.
+- **A large file is protected against deletion, not against an in-place rewrite.** Files up to 64 MiB are copied before a run and put back if the run deletes or rewrites them; a larger file is hardlinked instead, so a deletion is repaired but a rewrite of its contents is not. This is stated at the press and kept on the card, so it is a boundary a person is told about rather than one they discover.
 
 **Deferred / not planned right now**
 

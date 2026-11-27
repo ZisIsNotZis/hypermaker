@@ -7,6 +7,7 @@ import { methodFor, methodsFor, registryInfo, typeForFile } from "./registry.mjs
 import { assemblePrompt, materialText } from "./prompt.mjs";
 import { generate as runCodex } from "./codex.mjs";
 import { verifyNarration } from "./narration.mjs";
+import { beginRun, damageReason, endRun, guardCard, guardName, guardNotice, keepCard, pruneRuns, recoverRun, runsRoot } from "./runs.mjs";
 
 const root = resolve(new URL("..", import.meta.url).pathname), publicDir = join(root, "public"), defaultWorkdir = join(root, ".hypermaker");
 let workdir = resolve(process.env.HYPERMAKER_WORKDIR || defaultWorkdir), nodes = readWorkspace(workdir), idCounter = Math.max(0, ...Object.keys(nodes).map(Number));
@@ -20,10 +21,10 @@ if (process.env.NODE_ENV === "test" || process.env.HYPERMAKER_RESET_WORKSPACE ==
 // are still on disk. A creator who closes the laptop mid-render and comes back
 // should find the card exactly as it was plus one honest error, not a directory
 // that grows with every interruption.
-function adopt(graph, dir = workdir) {
+async function adopt(graph, dir = workdir) {
   for (const [id, node] of Object.entries(graph)) {
-    if (node.status === "running") { recover(dir, id, node); graph[id] = { ...node, status: "error", error: "Run interrupted: the server stopped before the agent finished" }; }
-    else recover(dir, id, node);
+    if (node.status === "running") { await recover(dir, id, node); graph[id] = { ...node, status: "error", error: "Run interrupted: the server stopped before the agent finished" }; }
+    else await recover(dir, id, node);
   }
   return graph;
 }
@@ -158,51 +159,70 @@ function listing(dir) {
   try { for (const rel of readdirSync(dir, { recursive: true })) { try { if (statSync(join(dir, rel)).isFile()) files.add(rel); } catch {} } } catch {}
   return files;
 }
-// Every run writes into `attempts/<started>/` under its card. The card's own
-// directory then holds only what a person put there: the artifacts they kept, the
-// versions, and anything they copied in themselves. That separation is what makes
-// cleanup decidable - a directory the harness created can be removed whole, and a
-// file next to the card's artifacts is never touched, so a creator's own material
-// keeps the path they know and does not go missing after the fourth retry.
-const attemptsRoot = "attempts";
-// A run that is cut off by the process dying has no failure branch. This marker is
-// how the next startup knows a directory under attempts/ is dead rather than live.
-const runMarker = "run.json";
-function beginAttempt(workdir, id, attemptDir) {
-  const startedAt = Number(basename(attemptDir)) || Date.now();
-  writeFileSync(join(workdir, String(id), runMarker), JSON.stringify({ startedAt, dir: join(attemptsRoot, basename(attemptDir)), pid: process.pid }), "utf8");
-}
-// One run's directory, gone. Anything worth keeping was already copied out of it
-// by `publish` before this is called, so there is nothing here to preserve.
+// Where a run works, and what is done if it damages the card anyway, live in
+// `runs.mjs`: a run's own directory outside the card, a snapshot of the card taken
+// before the agent starts, and the rule that puts back anything the agent deletes or
+// changes. This file only decides *when* those happen - which is
+// the lifecycle below, and it is the same three moments as before: before the
+// agent starts, after it finishes (whatever way), and when a process that died
+// mid-run is opened again.
+//
+// What is in the card's directory is therefore only what a person put there and
+// the takes published into `versions/`: never a run's scratch, never its frozen
+// copies, and never a directory that a person did not make.
+//
+// A crash leaves the card marked running and its run directory behind. The marker
+// names that directory, so recovery finds the guard without guessing, puts the card
+// back, drops the run - and then everything the ordinary open does: a take that a
+// dead run published without saving is adopted into versions/ (it is bytes somebody
+// may want, and the same rule as any earlier artifact), unreferenced copies are
+// swept, and attempts directories that older builds left *inside* cards are moved
+// out to the run area rather than deleted, because a person may have kept a file in
+// one.
+// One run's directory, gone. Anything worth keeping was already copied out of it by
+// `publish` (or holds a failed run a person may still want to look at, which is why
+// the failure path does not call this).
 function dropAttempt(dir) {
   if (dir) rmSync(dir, { recursive: true, force: true });
 }
-// Abandoned attempts are kept for a while and then dropped, because a person who
-// mistyped a prompt may want to look at what the agent actually produced. The bound
-// is a count, not a timestamp: five most recent is enough to recover from and small
-// enough that fifty tries cannot fill a disk.
-const keepAttempts = 5;
-function pruneAttempts(workdir, id) {
-  const root = join(workdir, String(id), attemptsRoot);
-  if (!existsSync(root)) return;
-  const dirs = readdirSync(root).map(Number).filter(n => !Number.isNaN(n)).sort((a, b) => b - a);
-  for (const stale of dirs.slice(keepAttempts)) rmSync(join(root, String(stale)), { recursive: true, force: true });
+function legacyAttempts(workdir, id) {
+  const stale = join(workdir, String(id), "attempts");
+  if (!existsSync(stale)) return;
+  const moved = join(workdir, runsRoot, String(id));
+  mkdirSync(moved, { recursive: true });
+  for (const name of readdirSync(stale)) {
+    let target = join(moved, name);
+    for (let n = 1; existsSync(target); n++) target = join(moved, `${name}-kept-${n}`);
+    try { renameSync(join(stale, name), target); } catch {}
+  }
+  try { if (!readdirSync(stale).length) rmSync(stale, { recursive: true, force: true }); } catch {}
+  writeFileSync(join(moved, "MOVED-HERE.txt"), [
+    "Earlier versions of this harness ran an agent inside the card's own directory, under",
+    "attempts/. Anything you kept in one of those folders was moved here, unchanged and",
+    "with its own name, rather than deleted: this area is where interrupted and abandoned",
+    "runs live now, and it is outside the card.",
+    ""
+  ].join("\n"), "utf8");
 }
-// A crash leaves the card marked running and its attempt directory behind. The
-// marker names that directory, so recovery moves exactly it aside - no guessing -
-// and the card's own files are not involved at all.
-function recover(workdir, id, node) {
-  const dir = join(workdir, String(id)), marker = join(dir, runMarker);
-  if (existsSync(marker)) {
-    rmSync(marker, { force: true });
-    // The cut-off attempt stays under attempts/ like any other discarded one - a
-    // person can look at what it rendered - and the count bound keeps that finite.
-    pruneAttempts(workdir, id);
+async function recover(workdir, id, node) {
+  const { report } = await recoverRun(workdir, id);
+  if (report) {
+    legacyAttempts(workdir, id);
+    // A take published by the dead run is on disk with nothing pointing at it. It is
+    // still bytes somebody may want, so it becomes a version - and because the card
+    // kept to its published take throughout, `versions/` also holds the take on
+    // screen, which the sweep below must not take for a leftover.
+    const adopted = node?.artifact ? adoptLegacy(workdir, id, node.artifact) : null;
+    if (adopted && node) { node.artifact = adopted.file; if (adopted.retire) rmSync(join(workdir, String(id), adopted.retire), { force: true }); }
   }
   sweepVersions(workdir, id, node);
 }
+// Opening a workspace is where a run that the process did not outlive becomes visible.
+// It is awaited at module load (this file is a module, so top-level await is available)
+// because everything below - `view()`, the first request - must see the recovered card
+// and never a card still claiming to be running.
 const cut = Object.values(nodes).some(n => n.status === "running");
-nodes = adopt(nodes, workdir);
+nodes = await adopt(nodes, workdir);
 if (cut) writeWorkspace(workdir, nodes);
 function pruneEmpty(dir) {
   const dirs = [];
@@ -265,7 +285,7 @@ const server = createServer(async (req, res) => { try {
   if (url.pathname === "/api/events") { res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" }); clients.add(res); req.on("close", () => clients.delete(res)); return; }
   if (url.pathname === "/api/registry") return json(res, 200, registryInfo());
   if (url.pathname === "/api/workspace" && req.method === "GET") return json(res, 200, view());
-  if (url.pathname === "/api/workspace" && req.method === "POST") { const b = await body(req); workdir = resolve(b.workdir || defaultWorkdir); nodes = adopt(readWorkspace(workdir), workdir); writeWorkspace(workdir, nodes); idCounter = Math.max(0, ...Object.keys(nodes).map(Number)); return json(res, 200, view()); }
+  if (url.pathname === "/api/workspace" && req.method === "POST") { const b = await body(req); workdir = resolve(b.workdir || defaultWorkdir); nodes = await adopt(readWorkspace(workdir), workdir); writeWorkspace(workdir, nodes); idCounter = Math.max(0, ...Object.keys(nodes).map(Number)); return json(res, 200, view()); }
   if (url.pathname === "/api/file") { const file = resolve(url.searchParams.get("path") || ""); const rel = relative(resolve(workdir), file); if (rel.startsWith("..") || rel.startsWith("/")) throw new Error("File outside workspace"); return sendFile(req, res, file); }
   if (url.pathname === "/api/node" && req.method === "POST") {
     const b = await body(req), id = nextId();
@@ -338,7 +358,7 @@ const server = createServer(async (req, res) => { try {
     return json(res, 200, view());
   }
   if (url.pathname === "/api/clone" && req.method === "POST") { const b = await body(req), source = getNode(b.id), id = nextId(); nodes[id] = nodeRecord(id, { ...source, x: source.x + 40, y: source.y + 40, inputs: [...source.inputs], artifact: null, script: null, promptUsed: null, status: null, error: null }); save(); return json(res, 200, view()); }
-  if (url.pathname === "/api/delete" && req.method === "POST") { const b = await body(req); delete nodes[b.id]; for (const n of Object.values(nodes)) n.inputs = n.inputs.filter(id => id !== Number(b.id)); if (existsSync(join(workdir, String(b.id)))) rmSync(join(workdir, String(b.id)), { recursive: true, force: true }); save(); return json(res, 200, view()); }
+  if (url.pathname === "/api/delete" && req.method === "POST") { const b = await body(req); delete nodes[b.id]; for (const n of Object.values(nodes)) n.inputs = n.inputs.filter(id => id !== Number(b.id)); if (existsSync(join(workdir, String(b.id)))) rmSync(join(workdir, String(b.id)), { recursive: true, force: true }); if (existsSync(join(workdir, runsRoot, String(b.id)))) rmSync(join(workdir, runsRoot, String(b.id)), { recursive: true, force: true }); save(); return json(res, 200, view()); }
   if (url.pathname === "/api/layout" && req.method === "POST") { Object.entries(nodes).forEach(([id, n], i) => { n.x = i % 4 * 340 + 40; n.y = Math.floor(i / 4) * 280 + 40; }); save(); return json(res, 200, view()); }
   if (url.pathname === "/api/generate" && req.method === "POST") {
     const b = await body(req), n = getNode(b.id);
@@ -397,22 +417,37 @@ const server = createServer(async (req, res) => { try {
       const names = drafts.map(s => `#${s.id}`).join(", ");
       return json(res, 409, { ...view(), error: `Generate ${names} first, or unlink ${drafts.length > 1 ? "them" : "it"}: ${drafts.length > 1 ? "those cards have" : "that card has"} no result yet, so this run has no material to use.` });
     }
-    // This run gets a directory of its own, under the card's. Everything the agent
-    // writes goes there, so throwing an attempt away is one recursive delete of a
-    // directory the harness created - not a guess about which files in a shared
-    // folder belong to the creator. That guess is what used to lose a person's own
-    // material, or move it somewhere the path they knew stopped working. The card's
-    // directory now holds only what a person put there.
-    const attemptDir = join(workdir, String(n.id), attemptsRoot, String(Date.now()));
-    mkdirSync(attemptDir, { recursive: true });
+    // This run gets a directory of its own - and it is *not* inside the card. It used to
+    // be, under `<card>/attempts/`, which put the agent's working directory inside the
+    // directory holding a creator's own files; a probe found that an agent which tidied
+    // its surroundings could delete one at the run's own path and still end idle. A run
+    // now works in `<workdir>/.runs/<card>/<start>`, so nothing it writes, renames or
+    // deletes is next to what a person keeps, and the cleanup is still one recursive
+    // delete of a directory the harness created.
+    const attemptDir = beginRun(workdir, n.id);
     attemptDirs.set(n.id, attemptDir);
-    // Before the agent starts, not after: a run can die at any moment after this
-    // line, and the record has to be on disk for a later startup to reclaim it.
-    beginAttempt(workdir, n.id, attemptDir);
     const runSources = freezeSources(workdir, n.id, givenSources)
       // A source with no file has none because the card upstream holds nothing yet;
       // `frozen` is a path to a copy, and there is no copy to point at.
       .map(({ id, type, artifact, file }) => ({ id, type, artifact, file, frozen: file ? join(workdir, String(n.id), file) : null }));
+    // The second layer: a snapshot of every file the card held, taken once this run's
+    // frozen material copies exist and before the agent starts. A path in a prompt is a
+    // request, and `--sandbox danger-full-access` means an agent that ignores it can
+    // still reach the card. If it does, the file is put back and the run says so instead
+    // of reporting a clean success. The snapshot is taken here rather than earlier so the
+    // material copies this run made are protected too, and it excludes the harness's own
+    // bookkeeping (`run.json`, the prompt and logs) by name.
+    const guard = await guardCard(join(workdir, String(n.id)), join(attemptDir, guardName));
+    // What this run could not protect, said now and not after the fact: a supervisor put
+    // a 65 MiB clip next to a card, the run ended normally, and neither the receipt nor
+    // the card mentioned that the file was outside the copy tier. The reply to the press
+    // carries it, and it is put on the card with the run's own start, so it survives the
+    // request that reported it.
+    const protection = guardNotice(guard);
+    // Kept on `n` as well, not only in `nodes`: the running record below is built from
+    // `n`, and spreading the copy taken before this line dropped the notice - which is
+    // exactly the silence the supervisor found, one layer down.
+    n.notice = protection;
     // The artifact on the card becomes the alternative once this run succeeds.
     // `n.promptUsed`, not `n.prompt`: the box may already hold words for the next
     // take, and the film being kept was asked for something else. A version that
@@ -442,7 +477,7 @@ const server = createServer(async (req, res) => { try {
     for (const source of runSources) if (source.frozen) promptNodes[source.id] = { ...nodes[source.id], frozen: source.frozen };
     const agent = runCodex({ node: run, workspace: { workdir, nodes: promptNodes, projectCwd: root }, model: b.model, effort: b.effort, useGhPrefix: b.useGhPrefix, attemptDir });
     running.set(n.id, agent);
-    agent.then(result => {
+    agent.then(async result => {
       // A narration card claims to have spoken a script. Check that claim against the bytes
       // before anything is published: the timeline must describe this WAV, and the WAV must
       // measure as speech. A card that fails becomes an error card with the reason on it,
@@ -457,33 +492,41 @@ const server = createServer(async (req, res) => { try {
       const material = run.type === "audio" && run.method === "narration" ? materialText({ node: run, workspace: { workdir, nodes: promptNodes } }) : null;
       const narration = material ? verifyNarration({ attemptDir, artifact: result.artifact, material: material.text, from: material.from }) : null;
       if (narration && !narration.ok) throw new Error(`This take is not a narration: ${narration.problems.join("; ")}`);
+      // Before anything is published, the card is put back the way the run found it.
+      // This is the check that matters to a person: the run was given their material to
+      // read, and if it deleted or changed a file in the card's directory anyway, the
+      // guard puts it back - and the result is *not* presented as a clean success.
+      // Publishing is skipped rather than delayed: a run that modified material it was
+      // told not to touch has not shown that its output describes that material, while
+      // the take already on the card is still exactly what the person approved.
+      const cardReport = await keepCard(join(workdir, String(n.id)), join(attemptDir, guardName));
+      const interference = damageReason(cardReport);
+      if (interference) throw new Error(interference);
       // The finished bytes are published under a name no later run can write to, and
       // that is what the card shows. Whatever the agent left behind at its own
-      // filename is scratch, and is free to be overwritten next time.
-      // `result.artifact` is relative to the card, so it resolves to the attempt
-      // directory this run was given; publish copies out of it into versions/.
+      // filename is scratch, and is free to be overwritten next time. `result.artifact`
+      // is relative to the card, so it resolves to the run directory this run was given;
+      // publish copies out of it into versions/.
       const published = publish(workdir, n.id, result.artifact, attemptDir);
       const previous = kept?.file ? [...(nodes[n.id].versions || []), kept] : (nodes[n.id].versions || []);
-      rmSync(join(workdir, String(n.id), runMarker), { force: true });
-      // The run is over and its result is published, so its working directory has
-      // done its job. What a person might want to inspect afterwards - the script
-      // the agent wrote - is the script the card records; everything else here is
-      // scratch that would otherwise accumulate once per successful take too.
-      // The script the card records has to outlive the attempt directory, or a
-      // finished take would point at a file that no longer exists. It is small and
-      // it is how a person reads what was actually run, so it is published next to
-      // the artifact it produced.
+      // The run is over and its result is published, so the marker that claims it is in
+      // flight has to go before the outcome is saved.
+      endRun(workdir, n.id);
+      // The script the card records has to outlive the run directory, or a finished take
+      // would point at a file that no longer exists. It is small and it is how a person
+      // reads what was actually run, so it is published next to the artifact it produced,
+      // under the same number: `v2-shot.png` and `v2-render.mjs` are obviously one result.
       const publishedScript = result.script ? publishScript(workdir, n.id, result.script, published, attemptDir) : null;
       // The take's own record, kept beside the bytes it describes. Without this a published
       // narration could not be re-verified after the fact: the timeline lived only in the
-      // attempt directory, which is dropped as soon as the run succeeds, so
+      // run directory, which is dropped as soon as the run succeeds, so
       // `voice/verify-take.mjs <node-dir>` - the command this project tells a person to use on
       // a card they already have - found no WAV at the top of the directory and no timeline
       // anywhere. Measured on a real workspace before the fix. Named by the take's ordinal, like
       // the script and the prompt: `v2-narration.wav` and `v2-narration.timeline.json`.
       if (published && existsSync(join(attemptDir, "timeline.json"))) {
-        const ordinal = /^v(\d+)-/.exec(basename(published))?.[1];
-        copyFileSync(join(attemptDir, "timeline.json"), join(workdir, String(n.id), "versions", `${ordinal ? `v${ordinal}-` : ""}${basename(published).replace(/^v\d+-/, "").replace(/\.wav$/i, "")}.timeline.json`));
+        const takeNo = /^v(\d+)-/.exec(basename(published))?.[1];
+        copyFileSync(join(attemptDir, "timeline.json"), join(workdir, String(n.id), "versions", `${takeNo ? `v${takeNo}-` : ""}${basename(published).replace(/^v\d+-/, "").replace(/\.wav$/i, "")}.timeline.json`));
       }
       // The exact instruction this result was produced from, kept next to the take.
       // `promptUsed` says it in the record; this is the assembled prompt, which is what
@@ -497,8 +540,6 @@ const server = createServer(async (req, res) => { try {
         copyFileSync(askedFile, join(workdir, String(n.id), "prompt.txt"));
         if (published) copyFileSync(askedFile, join(workdir, String(n.id), "versions", `v${/^v(\d+)-/.exec(basename(published))?.[1] ?? ""}-prompt.txt`));
       }
-      dropAttempt(attemptDir);
-      pruneAttempts(workdir, n.id);
       const sources = runSources.map(({ id, type, artifact, file }) => ({ id, type, artifact, file }));
       // `inputs` is deliberately left as it is now: a link the person added during
       // the run is their preparation for the next one, not something this run gets
@@ -520,23 +561,41 @@ const server = createServer(async (req, res) => { try {
       // so running it first deleted the script and the per-take prompt this run had
       // just written - the files that say what produced the take now on the card.
       sweepVersions(workdir, n.id, nodes[n.id]);
+      // A successful run takes its scratch with it: what a person might want later is
+      // the published take and the script beside it, both already under versions/.
+      dropAttempt(attemptDir);
+      pruneRuns(workdir, n.id);
+      // The guard did its job and its files are gone with the run directory.
+      attemptDirs.delete(n.id);
       emit({ kind: "complete", id: n.id });
-    }).catch(error => {
+    }).catch(async error => {
       const status = /stopped/i.test(error.message) ? "cancelled" : "error";
       // Nothing the failed run wrote was ever published, so the artifact, its
-      // provenance and the kept versions are still exactly what they were. The
-      // abandoned attempt stays under attempts/ so a person can look at what it
-      // produced; the count bound is what stops a hundred retries from filling a
-      // disk, and it is the only place anything is deleted.
-      // The marker is this run's claim that it is still in flight. Its failure
-      // branch has now run, so the claim is false and must go: leaving it would make
-      // the next startup treat a finished attempt as a crash.
-      rmSync(join(workdir, String(n.id), runMarker), { force: true });
-      pruneAttempts(workdir, n.id);
+      // provenance and the kept versions are still exactly what they were. But the
+      // run may still have deleted or changed a file in the card's directory - a
+      // stopped or failing agent can be tidying when it dies - so the guard is read
+      // back on this path too. A person who pressed Stop expects their own poster to
+      // be there afterwards exactly as much as after a success.
+      const report = await keepCard(join(workdir, String(n.id)), join(attemptDir, guardName));
+      const damaged = damageReason(report);
+      // The abandoned run stays under .runs/ so a person can look at what it produced;
+      // the count bound is what stops a hundred retries from filling a disk, and it is
+      // the only place anything is deleted.
+      endRun(workdir, n.id);
+      pruneRuns(workdir, n.id);
       running.delete(n.id);
-      nodes[n.id] = nodeRecord(n.id, { ...nodes[n.id], sources: n.sources || null, status, error: error.message }); save(); emit({ kind: status === "cancelled" ? "cancelled" : "error", id: n.id, error: error.message });
+      // A Stop stays a Stop even when the stopped run had been damaging the card: the
+      // outcome is what the person did, and calling it an error would suggest the run
+      // failed on its own. What the run touched is still on the card, in the same
+      // sentence, because that is the part they would otherwise never learn.
+      const reason = damaged ? `${error.message} ${damaged}` : error.message;
+      nodes[n.id] = nodeRecord(n.id, { ...nodes[n.id], sources: n.sources || null, status, error: reason }); save(); emit({ kind: status === "cancelled" ? "cancelled" : "error", id: n.id, error: reason });
     }).finally(() => { running.delete(n.id); attemptDirs.delete(n.id); });
-    return json(res, 202, view());
+    // The press itself answers with the notice, so a person learns before the agent has
+    // done any work that a large file is only protected against deletion. It is returned
+    // here, after the completion handlers are attached: returning early skipped them and
+    // left the run unable to ever settle.
+    return json(res, 202, protection ? { ...view(), notice: protection } : view());
   }
   if (url.pathname === "/api/cancel" && req.method === "POST") {
     const b = await body(req), id = Number(b.id), agent = running.get(id);

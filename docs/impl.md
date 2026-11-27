@@ -20,11 +20,50 @@ A method may declare `requires: [path]` — the local tool without which it cann
 
 ## Codex
 
-Spawn one process per node with repository-root cwd, node directory context, model/effort, optional `gh/` prefix, and closed stdin. Pass `--json` for trajectory and `--output-last-message` for final result. Tee stdout/stderr unchanged to node `codex.jsonl` and timestamped `dev.log` plus terminal. Ignore trajectory for application logic; parse only final output file. Require artifact, allow optional script, enforce node-local paths, ensure type and `AGENTS.md`, then save workspace and emit completion. Runs never block HTTP or other nodes.
+Spawn one process per node with repository-root cwd, a run directory of its own, model/effort, optional `gh/` prefix, and closed stdin. Pass `--json` for trajectory and `--output-last-message` for final result. Tee stdout/stderr unchanged to node `codex.jsonl` and timestamped `dev.log` plus terminal. Ignore trajectory for application logic; parse only final output file. Require artifact, allow optional script, enforce node-local paths, ensure type and `AGENTS.md`, then save workspace and emit completion. Runs never block HTTP or other nodes.
 
 Each run is spawned `detached`, so it leads its own process group: an agent spawns shells and renderers, and Stop must end all of them. `generate()` returns a promise carrying `cancel()`, which signals the group with SIGTERM and escalates to SIGKILL after 3 s; a test whose agent leaves a continuously-writing grandchild is what catches a child-only kill. The real CLI reports why a turn failed as JSON events, so a non-zero exit quotes its last `error`/`turn.failed` message; a missing binary (ENOENT) becomes an instruction naming `CODEX_BIN` instead of a bare errno.
 
-One run per node is enforced in the server, not the UI. `running` maps node id to the agent promise; a second Generate returns 409 rather than spawning a second process into the same node directory. A successful run replaces `artifact`/`script`; a failed or stopped run leaves the previous artifact in place and records `status` + `error`. SIGINT/SIGTERM cancel live agents so no renderer outlives the server.
+One run per node is enforced in the server, not the UI. `running` maps node id to the agent promise; a second Generate returns 409 rather than spawning a second process into the same node directory.
+
+## A run's directory, and keeping the card
+
+`server/runs.mjs` owns where a run works and what happens if it damages the card. A run
+works in `<workdir>/.runs/<card>/<start>` - outside the card's directory, which used to
+hold `<card>/attempts/<start>` - and `HYPERMAKER_CARD_DIR` is no longer set, because the
+variable handed the agent every name in the directory. The card's path is still in the
+prompt, since a real agent has to read the linked material by path; a path in a prompt
+is a request, so the boundary cannot be the layout alone.
+
+Before the agent starts, `guardCard` copies every file the card holds into
+`<run>/.guard` and writes `manifest.json` with each file's size and sha256. The copies
+are copies, not hardlinks: the first version hardlinked, and an in-place save -
+reopening the existing file and writing into it, which keeps the name and often the
+size - changes a hardlink's content too, so the check would have compared a file with
+itself and called it intact. After the run, `keepCard` hashes each card file again and
+puts back any that are gone or different, reporting them by name; it is called on the
+success path (before publishing), and on the failure path, so a Stop and a crash repair
+the card the same way. A `spent` marker makes the guard single-use, so a server that dies
+between the check and the save cannot re-run it against copies that have moved.
+
+The card keeps its own take because publishing is separate: nothing the agent writes
+touches `versions/`. A successful run that had to repair the card is reported as an
+error, since it made its output from material it modified; a stopped run stays
+`cancelled` with the repair noted in the same sentence. `recoverRun` is the same check at
+the next startup for a server that died mid-run, and it writes `KEPT-AFTER-CRASH.txt`
+beside the card because nobody was watching. A file up to 64 MiB is copied, so a deletion
+and an in-place rewrite are both repaired; a larger file - a 65 MiB clip is ordinary
+material, and a supervisor found that the first version said nothing about one - is
+hardlinked, which repairs a deletion but cannot see a rewrite in place. `guardNotice`
+produces that sentence before the agent starts, the `/api/generate` reply carries it, and
+it is stored as `notice` on the card (and in `workspace.yml`), so closing the page does
+not lose it. The canvas renders that stored notice in `shell()` and keeps it current in
+`sync()`, because a supervisor reloaded mid-render and the notice vanished from the card
+while the server still held it; `test/canvas-protection.test.mjs` presses Generate with a
+65 MiB clip, reloads, and asserts the same sentence and a working Stop (it skips where no
+Chromium is installed). It is `null` when every file is small enough to copy. A file the filesystem
+refused outright is reported as unprotected with the reason, and a guard whose manifest
+cannot be read reports that it could not protect the card rather than reporting it clean. A successful run replaces `artifact`/`script`; a failed or stopped run leaves the previous artifact in place and records `status` + `error`. SIGINT/SIGTERM cancel live agents so no renderer outlives the server.
 
 ## HTTP and UI
 
@@ -299,7 +338,7 @@ breaking the behaviour:
 
 ## Verification
 
-TDD seams: workspace round trip/atomic write/path safety; registry; prompt order/direct input metadata; node/import/link persistence; async result validation/concurrency/failure; UI creation, scrolling, drag-link, unlink, persistence, controls, preview/download. Run `npm test`, `npm run test:e2e`, `node --check`, and `git diff --check`. `npm test` is 38 cases with a browser: registry/prompt/workspace checks, three canvas-script checks, eight canvas browser cases, two media renders, one audio render, one film built from canvas material, three provenance cases, two WAV measurement cases, seven lifecycle cases, and two Stop/failure UI cases. Browser tests launch Chromium through `test/browser.mjs`, honoring `HYPERMAKER_CHROME` or `CHROME_BIN` when Playwright's own browser is not installed. Every browser test asserts that the page raised no error, and the assertions are collected rather than thrown from the event listener, because a throw there surfaces after the test has ended.
+TDD seams: workspace round trip/atomic write/path safety; registry; prompt order/direct input metadata; node/import/link persistence; async result validation/concurrency/failure; UI creation, scrolling, drag-link, unlink, persistence, controls, preview/download. Run `npm test`, `npm run test:e2e`, `node --check`, and `git diff --check`. `npm test` is 137 declared cases with a browser (`test/keep-card.test.mjs` adds six for the run directory and the card guard, five of which fail when the guard is disabled); registry/prompt/workspace checks, three canvas-script checks, eight canvas browser cases, two media renders, one audio render, one film built from canvas material, three provenance cases, two WAV measurement cases, seven lifecycle cases, and two Stop/failure UI cases. Browser tests launch Chromium through `test/browser.mjs`, honoring `HYPERMAKER_CHROME` or `CHROME_BIN` when Playwright's own browser is not installed. Every browser test asserts that the page raised no error, and the assertions are collected rather than thrown from the event listener, because a throw there surfaces after the test has ended.
 
 If `/tmp` is small or full, point the fixtures somewhere roomy (`TMPDIR=/var/tmp/x npm test`). Remotion writes real video next to its workspace, and a full scratch disk fails the media cases with `ENOSPC` — which looks like a code failure but is not. A directory on a Windows drive is not a substitute: Chromium cannot create its profile there.
 

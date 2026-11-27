@@ -176,7 +176,11 @@ test("abandoned attempts are bounded, and a successful take leaves nothing behin
   const afterSuccess = readdirSync(join(workdir, "1"), { recursive: true });
   assert.ok(afterSuccess.some(f => /^versions\/v\d+-film\.png$/.test(f)), `the film is published, got ${afterSuccess}`);
   assert.ok(afterSuccess.some(f => /^versions\/v\d+-render-film\.mjs$/.test(f)), `the script outlives the attempt it was written in, got ${afterSuccess}`);
-  assert.ok(!afterSuccess.some(f => f.startsWith("attempts/")), `a successful attempt's scratch is gone, got ${afterSuccess}`);
+  // Nothing of the run is left *in the card*: not its scratch, not its frozen copies.
+  // The run worked in `.runs/` at the top of the workspace, and a successful one takes
+  // its directory with it.
+  assert.ok(!afterSuccess.some(f => f.startsWith("attempts/") || f.startsWith(".runs")), `a successful attempt's scratch is gone, got ${afterSuccess}`);
+  assert.deepEqual(existsSync(join(workdir, ".runs", "1")) ? readdirSync(join(workdir, ".runs", "1")) : [], [], "and its run directory is gone from the workspace too");
 
   // Many failed attempts: the history is kept for inspection but bounded by count.
   const counts = [];
@@ -184,7 +188,7 @@ test("abandoned attempts are bounded, and a successful take leaves nothing behin
     await patch(port, { id: 1, prompt: `fail attempt ${attempt}` });
     await post(port, "/api/generate", { id: 1 });
     await settle(port, 1);
-    counts.push(readdirSync(join(workdir, "1", "attempts")).length);
+    counts.push(readdirSync(join(workdir, ".runs", "1")).length);
   }
   assert.ok(Math.max(...counts) <= 5, `abandoned attempts are bounded, got ${counts}`);
   assert.equal(counts.at(-1), 5, `and the bound is reached rather than growing without limit, got ${counts}`);

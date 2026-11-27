@@ -1,5 +1,66 @@
 # Changelog
 
+## Unreleased — a card can be redone without losing what you put beside it, 2026-11-28
+
+The open gap was stated plainly in the README and in the status doc: the harness
+kept a run out of the card's directory, but the agent was launched with
+`HYPERMAKER_CARD_DIR` and `--sandbox danger-full-access`, so an agent that decided
+to tidy could delete a file its owner put there and the run still reported `idle`.
+A probe had measured exactly that (200 before the run, 404 after). This closes it in
+layers, because no single one of them is a boundary against a process with an open
+sandbox.
+
+**The run no longer works inside the card.** A run's directory is
+`<workdir>/.runs/<card>/<start>` instead of `<card>/attempts/<start>`, and
+`HYPERMAKER_CARD_DIR` is no longer passed. The card's path stays in the prompt as
+text, because a real agent has to read the linked material by path - and that is the
+point: text is a request, a variable naming the directory is an invitation.
+
+**The card is copied before the agent starts, and put back afterwards.** Every file
+the card holds is copied into `<run>/.guard` with a sha256 in a manifest. After the
+run - success, Stop, failure, or the next startup when the server died - each file is
+hashed again and restored if it is gone or different, and the card says which one.
+A successful run that had to repair the card is reported as an error rather than as a
+clean result, because it made its output from material it modified; a stopped run
+stays `cancelled` with the repair noted in the same sentence. A crash writes
+`KEPT-AFTER-CRASH.txt` beside the card, since nobody was watching when it happened.
+
+**The copies are copies, and that is the crux.** The first version hardlinked and was
+wrong: the commonest way a tool saves is to reopen the existing file and write into
+it, and a hardlink shares the content, so such a save changes the "saved" copy too
+and an inode comparison reports the file untouched. A supervisor named this before it
+shipped. The guard now holds independent bytes and compares content, and
+`test/keep-card.test.mjs` writes a same-length overwrite through `openSync("r+")` to
+prove it.
+
+**A supervisor then found the boundary was invisible.** A 65 MiB clip next to a card - an
+ordinary piece of video material - went through a normal run, and neither the press nor
+the card said it was outside the copy tier; the old code only mentioned such files after
+something had already gone wrong. The guard now has two tiers: a file up to 64 MiB is
+copied (so a deletion *and* an in-place rewrite are repaired), a larger one is hardlinked
+(so a deletion is still repaired, and an in-place rewrite of it is the one thing not
+covered). `guardNotice` returns that sentence before the agent starts, the press that
+starts the run carries it, and it is stored as `notice` on the card so closing the page
+does not lose it. The first wiring of that had the notice dropped when the running record
+was built from a copy taken before it - the same silence one layer down - found by the
+test that reads the card mid-run.
+
+Tests: eight in `test/keep-card.test.mjs`, all through the HTTP entry point with a
+stand-in agent that deletes a file, deletes one three levels down, overwrites in
+place, hangs so the run can be stopped, or hangs so the server can be killed; two more
+cover the size boundary (a 65 MiB clip is announced at the press and put back when
+deleted, an ordinary card gets no notice). With the guard disabled, exactly the five
+damage cases fail and the clean run stays green. The supervisor then reloaded the page
+mid-run, which is what a person does during a long render, and the notice was gone from
+the canvas while the server still had it: the card was built without it and `sync()`
+only ever cleared notices. `shell()` and `sync()` now render the stored notice, a second
+supervisor-visible detail is pinned too (Stop is still offered after the reload), and
+`test/canvas-protection.test.mjs` drives that in a real browser - skipped here, where no
+Chromium is installed, and reported as skipped rather than passed. Suite: **143/143**
+with a usable Chromium, 24 skipped here for the missing browser. What this still does not promise: a rewrite in place of a file over 64 MiB,
+which the person is told about before the run, and the take on the card, which is
+protected by publishing rather than by the guard.
+
 ## Unreleased — a listening sheet keeps what the listener wrote, and the score says what it is a score of, 2026-11-28
 
 Everything here came from a supervisor filling the sheet in, not from reading the code. The tool had
