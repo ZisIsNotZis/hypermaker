@@ -85,6 +85,33 @@ test("when the card's record cannot be read, the command says it guessed instead
   assert.match(result.out, /could not be read|not on disk/, "and says why it could not tell");
 });
 
+test("a detached archive's fallback checks the newest publish by its number, and names what it picked", () => {
+  // The supervisor's third case: two takes copied *with their timelines* into a directory with
+  // no workspace record - an archive, or a card whose record was lost. The fallback is allowed
+  // to choose, but it must choose the newest publish and say which file that was. It sorted the
+  // filenames as strings, so `v9-` sorted after `v10-` and the command verified v9 and called it
+  // the newest. Ten takes make the bug visible; two of them carry the same words, so the only
+  // thing telling the takes apart is the ordinal.
+  const workdir = mkdtempSync(join(base, "detached-"));
+  const node = join(workdir, "9");
+  mkdirSync(join(node, "versions"), { recursive: true });
+  for (let n = 1; n <= 10; n++) {
+    // Every take but the last says TAKE_A; v10 is the newest and says TAKE_B, so the report's
+    // own words show which file was read without relying on the path alone.
+    const r = renderParagraph([{ text: n === 10 ? TAKE_B : TAKE_A }]);
+    writeFileSync(join(node, "versions", `v${n}-narration.wav`), toWav(r.samples, r.rate));
+    writeFileSync(join(node, "versions", `v${n}-narration.timeline.json`), JSON.stringify({ phrases: r.segments.map(s => ({ text: s.text, start: s.start, duration: s.duration })), voice: r.voice }));
+  }
+  // No workspace.yml anywhere above it: this is the archive case, not a card.
+  const result = run(node);
+  assert.equal(result.status, 0, `an honest take in a detached archive must verify: ${result.out}`);
+  assert.match(result.out, /v10-narration\.wav/, `the newest publish is v10, not v9: ${result.out}`);
+  assert.doesNotMatch(result.out, /v9-narration\.wav/, "v9 is older and must not be presented as the newest");
+  assert.match(result.out, /The sea at night is never still/, "and it reports v10's words");
+  assert.match(result.out, /NOT the take the card is showing/, "it still says it had to choose");
+  assert.match(result.out, /newest published take \(v10-narration\.wav, of 10 takes/, "and names the file it picked and what it picked among, so a reader can check the choice");
+});
+
 test("a record that names no reading table is described by what the audio proves, and old audio is not called current", () => {
   // A timeline written before `voice.readings` existed. The table is *recovered* from the bytes,
   // so the report must state that rather than claim the record named it - and must not let a

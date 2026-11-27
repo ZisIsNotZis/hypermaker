@@ -1,6 +1,28 @@
 # Changelog
 
-## Unreleased — the emphasis lands where the dictionary puts it, 2026-11-27
+## Unreleased — a refused fallback says which take it picked, 2026-11-27
+
+A supervisor ran the third case against a real card and found the same command wrong in a
+third way. Two takes and their timelines were copied into a directory with no workspace record
+- an archive, or a card whose record was lost - and `node voice/verify-take.mjs <dir>` verified
+**v9** while **v10** was the newest publish, and announced v9 as "the newest published take".
+The cause was one call: the fallback sorted filenames as strings, where `v9-` comes after
+`v10-`. Answering confidently about the wrong recording is exactly the failure the two earlier
+fixes were for, so it is worth naming that a card reaching ten takes is enough to hit it.
+
+- **The publish ordinal is compared as a number.** `ordinalOf` reads the `N` in `vN-`, and a
+  file with no ordinal (an artifact from before publishing existed) sorts first rather than
+  last, so it can never be mistaken for the newest take. Ten takes are covered by a test; two
+  of them carry different words, so the report's own text shows which file was read.
+- **The guess is as specific as what it replaces.** The line now names the file and what it
+  chose among - "the newest published take (`v10-narration.wav`, of 10 takes on this card) was
+  checked instead" - because "the newest take" is a claim this command has now been wrong
+  about, and a reader must be able to check it at a glance. It still says it is not the take
+  the card is showing, and still points at naming a WAV to choose deliberately.
+- **Negative control:** restoring the string sort fails only the new test, with the supervisor's
+  own shape of output (v9 verified, called the newest of ten).
+- **Tests: 104/104** with a usable Chromium (was 103/103).
+
 
 With the words right, the voice was still putting the primary stress on the first syllable of
 every word, because `build-dict.mjs` threw the dictionary's stress marks away at build time.

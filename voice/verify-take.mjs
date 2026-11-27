@@ -26,8 +26,13 @@
 //   * a named WAV: that file with *its own* record beside it. The supervisor's second finding
 //     was that `versions/v1-narration.wav` reported "no timeline" while `v1-narration.timeline.json`
 //     sat next to it - the lookup assumed the attempt directory's name.
-//   * only when the workspace record cannot be read does it fall back to the newest file, and it
-//     says so rather than implying it knew which take was on the card.
+//   * only when the workspace record cannot be read does it fall back to the newest *publish*,
+//     and it says so rather than implying it knew which take was on the card. A supervisor
+//     copied two takes with their timelines into a directory with no record and found this
+//     branch checking the wrong one: the files were sorted as strings, where `v9-` comes after
+//     `v10-`, so it verified v9 on a card whose newest take was v10 and called v9 the newest.
+//     The publish number is an ordinal, so it is compared as a number, and the line names the
+//     take it picked and how many there were - a guess a reader can check at a glance.
 //
 // What it can tell apart, which is the whole point:
 //   * the words and the sound match, made by the table this build uses - the ordinary case;
@@ -88,6 +93,12 @@ function timelineBeside(wav) {
   return `${stem}.timeline.json`;
 }
 
+// The publish ordinal in `v12-narration.wav`, as a number. Sorting these names as strings is
+// wrong the moment a card reaches ten takes, and a file with no `vN-` prefix (an artifact from
+// before publishing existed) has no ordinal at all, so it sorts first rather than last.
+const ordinalOf = file => { const n = /^v(\d+)-/.exec(file)?.[1]; return n == null ? -1 : Number(n); };
+const byOrdinal = (a, b) => ordinalOf(a) - ordinalOf(b) || a.localeCompare(b);
+
 function locate() {
   if (!positional.length) usage();
   const first = positional[0];
@@ -106,10 +117,10 @@ function locate() {
     // No usable record. Fall back to the newest published take and *say* that is what happened,
     // because a person asking about "the card" is owed the truth about which take was checked.
     const versions = join(first, "versions");
-    const wavs = existsSync(versions) ? readdirSync(versions).filter(f => /\.wav$/i.test(f)).sort() : [];
+    const wavs = existsSync(versions) ? readdirSync(versions).filter(f => /\.wav$/i.test(f)).sort(byOrdinal) : [];
     if (wavs.length) {
       const wav = join(versions, wavs.at(-1));
-      return { wav, timeline: explicit || timelineBeside(wav), how: "newest", reason: shown ? `the card's record names ${shown}, which is not on disk` : "the workspace record could not be read for this card" };
+      return { wav, timeline: explicit || timelineBeside(wav), how: "newest", picked: wavs.at(-1), total: wavs.length, reason: shown ? `the card's record names ${shown}, which is not on disk` : "the workspace record could not be read for this card" };
     }
     return attempt;
   }
@@ -117,7 +128,7 @@ function locate() {
   return { wav: first, timeline: explicit || timelineBeside(first), how: "file" };
 }
 
-const { wav, timeline: timelinePath, how, shown, reason } = locate();
+const { wav, timeline: timelinePath, how, shown, reason, picked, total } = locate();
 if (!existsSync(wav)) usage(`no WAV at ${wav}`);
 if (!existsSync(timelinePath)) usage(`no timeline at ${timelinePath} - a take without one records nothing about what it says, so there is nothing to check it against`);
 
@@ -134,7 +145,10 @@ console.log(`${report.ok ? "verifies" : "DOES NOT VERIFY"}: ${wav}`);
 // first question a reader has is "which one did you check?", and answering it is what made this
 // command trustworthy again after it verified the wrong one.
 if (how === "card") console.log(`  this is the take the card is showing (${shown}); the record beside it is ${basename(timelinePath)}.`);
-if (how === "newest") console.log(`  NOT the take the card is showing: ${reason}, so the newest published take was checked instead. Pass a WAV to choose a particular take.`);
+// A fallback has to be as specific as what it replaces. "The newest take" was a claim an earlier
+// build got wrong (v9 for v10), so this names the file it picked and how many takes there were:
+// a reader can see in one line that it chose, which one, and what it chose among.
+if (how === "newest") console.log(`  NOT the take the card is showing: ${reason}, so the newest published take (${picked}, of ${total} take${total === 1 ? "" : "s"} on this card) was checked instead. Pass a WAV to choose a particular take.`);
 console.log(`  ${phrases.length} phrase(s), ${report.seconds}s of audio`);
 for (const p of phrases) console.log(`    ${Number(p.start).toFixed(2)}s  ${String(p.text).trim()}`);
 
