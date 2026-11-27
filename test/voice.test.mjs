@@ -509,7 +509,7 @@ test("a listening run leaves the deliverables and refuses to overwrite an answer
   writeFileSync(sheetPath, readFileSync(sheetPath, "utf8").replace("**Line 1.** ", "**Line 1.** the sea at night is never still"));
   const again = run();
   assert.equal(again.code, 3, `a re-run into an answered directory is refused, got ${again.code}: ${again.out}`);
-  assert.match(again.out, /already has answers/, "and says why rather than just failing");
+  assert.match(again.out, /already holds what a listener wrote \(an answer on line 1\)/, "and says why, and which line, rather than just failing");
   assert.match(readFileSync(sheetPath, "utf8"), /the sea at night/, "the answers survive the refused run");
   // `--fresh` is the explicit way to say the old sheet may go, so nobody is trapped.
   const fresh = run("--fresh");
@@ -524,4 +524,111 @@ test("a listening run leaves the deliverables and refuses to overwrite an answer
   assert.deepEqual(readdirSync(join(dir, "build")), ["my-notes.txt"], "the run adds nothing to build/ either");
   assert.deepEqual(readdirSync(join(dir, "public")), ["my-clip.wav"], "nor to public/");
   for (const want of ["listen.wav", "transcript.md", "key.txt"]) assert.ok(listing.includes(want), `a listener still gets ${want}`);
+  for (const want of ["listen.wav", "transcript.md", "key.txt"]) assert.ok(listing.includes(want), `a listener still gets ${want}`);
+});
+
+test("a sheet answered only under Notes is a result, and survives the run that used to erase it", () => {
+  // A supervisor listened, could make out no words at all, left every line blank and wrote the
+  // finding under Notes - "I could hear a machine and not one word of it". The guard added for
+  // line answers read only the line bodies, so that sheet looked untouched, the re-run reported
+  // success and replaced the file. "Only machine noise" is exactly what this tool exists to
+  // find out, so losing it is losing the result, not losing scratch.
+  //
+  // Both halves are checked: the sheet is kept, and the score does not tell a listener who
+  // heard nothing to go back and "finish the sheet" - there is nothing to finish.
+  const dir = mkdtempSync(join(base, "listen-notes-"));
+  const sheetPath = join(dir, "transcript.md");
+  const run = (...args) => {
+    try { return { code: 0, out: execFileSync(process.execPath, [join(root, "voice/listening-test.mjs"), "--out", dir, "--no-film", ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }) }; }
+    catch (error) { return { code: error.status, out: String(error.stdout || "") + String(error.stderr || "") }; }
+  };
+  assert.equal(run().code, 0, "a first run writes the sheet");
+  const note = "I could hear a machine and not one word of it.";
+  const blank = readFileSync(sheetPath, "utf8");
+  // Written where a listener writes it, and nowhere else: no line body changed.
+  writeFileSync(sheetPath, blank.replace(/^## Notes[ \t\r]*$/m, `## Notes\n\n${note}`));
+  assert.doesNotMatch(readFileSync(sheetPath, "utf8").replace(note, ""), /\*\*Line \d+\.\*\* \S/, "nothing was written on a transcript line");
+
+  const again = run();
+  assert.equal(again.code, 3, `a note-only sheet is refused, got ${again.code}: ${again.out}`);
+  assert.match(again.out, /a note under Notes/, "and says which half of the sheet it found");
+  assert.match(readFileSync(sheetPath, "utf8"), /I could hear a machine/, "the note is still there afterwards");
+
+  // Scoring a note-only sheet keeps the words and does not ask for a transcript nobody has.
+  const scored = execFileSync(process.execPath, [join(root, "voice/listening-test.mjs"), "--score", dir], { encoding: "utf8" });
+  assert.match(scored, /word accuracy: 0\.0%/, "every line blank scores nothing");
+  assert.match(scored, /every line was left blank, so the note under Notes is the whole result: 0 of \d+ words heard/, "and the report says the note is the finding, not that the sheet is unfinished");
+  assert.doesNotMatch(scored, /finish the sheet before reading this|nothing has been written on the sheet yet/, "a listener who heard nothing is not sent back to invent words, nor told they wrote nothing");
+  assert.match(scored, /I could hear a machine and not one word of it\./, "the listener's own words are printed");
+  const report = JSON.parse(readFileSync(join(dir, "score.json"), "utf8"));
+  assert.equal(report.notes, note, "and kept verbatim in the machine-readable report, so the result is not just a printed line");
+  assert.deepEqual(report.unfilled, [1, 2, 3, 4, 5, 6, 7, 8], "while the blank lines are still reported as blank");
+
+  // A blank template with no note is the other half of the same sentence: it must not be
+  // described as a result either. "Every line was left blank, so the note is the whole result"
+  // was printed on an untouched template that had no note at all.
+  assert.equal(run("--fresh").code, 0, "a template can be restarted");
+  const untouched = execFileSync(process.execPath, [join(root, "voice/listening-test.mjs"), "--score", dir], { encoding: "utf8" });
+  assert.match(untouched, /nothing has been written on the sheet yet/, "an untouched sheet says so");
+  assert.doesNotMatch(untouched, /the note under Notes is the whole result/, "and never calls a note the result when there is no note");
+
+  // `--fresh` still has to work, or a listener testing a new take is trapped by their old note.
+  assert.doesNotMatch(readFileSync(sheetPath, "utf8"), /I could hear a machine/, "and then the old note is gone");
+});
+
+test("what a listener writes under Notes is kept, but only the transcript decides the score", () => {
+  // A half-heard sheet, two ways it went wrong once the note was preserved:
+  //
+  //   * the receipt said "every line was left blank" whenever a note existed, so a listener who
+  //     answered line 1 and heard nothing of line 2 was contradicted by the 50% printed above it;
+  //   * a listener who quoted the line they were commenting on - written in the sheet's own
+  //     `**Line 2.** ...` shape, which is the natural way to refer to it - had that comment scored
+  //     as an answer to line 2. A 50% sheet rose to 100%. Notes are commentary; a comment can
+  //     never be a transcript, or the test measures how the listener annotates rather than what
+  //     they heard.
+  //
+  // The sheet is written here in both line endings, because the section split is a regex on the
+  // heading and CRLF silently broke the first version of it.
+  const dir = mkdtempSync(join(base, "listen-mixed-"));
+  const sheetPath = join(dir, "transcript.md");
+  const listen = [
+    "The sea at night is never still.",
+    "It carries every colour of the sky."
+  ];
+  const scriptPath = join(dir, "script.txt");
+  writeFileSync(scriptPath, listen.join("\n") + "\n");
+  const run = (...args) => {
+    try { return { code: 0, out: execFileSync(process.execPath, [join(root, "voice/listening-test.mjs"), "--out", dir, "--no-film", "--script", scriptPath, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }) }; }
+    catch (error) { return { code: error.status, out: String(error.stdout || "") + String(error.stderr || "") }; }
+  };
+  assert.equal(run().code, 0, "a first run writes the sheet");
+
+  for (const eol of ["\n", "\r\n"]) {
+    const sheet = [
+      "# Listening sheet", "", "## Transcript", "",
+      `**Line 1.** ${listen[0]}`, "**Line 2.** ", "",
+      "## Notes", "",
+      // The listener refers to the line they are commenting on, in the sheet's own shape.
+      `**Line 2.** was just noise, I could not make out a word.`
+    ].join(eol) + eol;
+    writeFileSync(sheetPath, sheet);
+    const scored = execFileSync(process.execPath, [join(root, "voice/listening-test.mjs"), "--score", dir], { encoding: "utf8" });
+    const report = JSON.parse(readFileSync(join(dir, "score.json"), "utf8"));
+    const label = eol === "\n" ? "LF" : "CRLF";
+    assert.equal(report.accuracy, 0.5, `${label}: the answered line is all that counts, not the comment about the other`);
+    assert.deepEqual(report.unfilled, [2], `${label}: the line the listener could not hear is reported as blank`);
+    assert.equal(report.notes, "**Line 2.** was just noise, I could not make out a word.", `${label}: and their note is kept exactly as written`);
+    // The number and its denominator have to agree: 50% here is 7 of 14 words for the whole
+    // script, with the unheard line's words counted as missed - not 100% of what was attempted.
+    assert.match(scored, /word accuracy: 50\.0% \(7 of 14 words heard; words on a blank line count as missed\)/, `${label}: the score states its own numerator and denominator`);
+    assert.match(scored, /a score for the whole 14-word script \(7 heard\), not for the 7 words you wrote down/, `${label}: and says plainly that a blank line stays in the denominator`);
+    assert.doesNotMatch(scored, /every line was left blank/, `${label}: a half-heard sheet is not described as untouched`);
+    assert.match(scored, /the note under Notes is kept with the result, but it does not change the score/, `${label}: and the note's role is stated`);
+    assert.equal(report.hits, 7, `${label}: the report carries the numerator`);
+    assert.equal(report.total, 14, `${label}: and the denominator`);
+  }
+
+  // A comment in Notes is still something a listener wrote, so the sheet must not be replaced.
+  const again = run();
+  assert.equal(again.code, 3, `a sheet with a note is refused, got ${again.code}: ${again.out}`);
 });

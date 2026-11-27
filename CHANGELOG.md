@@ -1,5 +1,51 @@
 # Changelog
 
+## Unreleased — a listening sheet keeps what the listener wrote, and the score says what it is a score of, 2026-11-28
+
+Everything here came from a supervisor filling the sheet in, not from reading the code. The tool had
+already been made repeatable; what repeated use exposed is that it did not yet agree with its own
+input.
+
+**A note is a result.** The supervisor listened, could make out no words at all, left every line
+blank and wrote the finding under `## Notes`. The guard added in the previous slice read only the
+line bodies, so that sheet looked untouched: the re-run reported success and replaced the file.
+The sheet is now read in two sections, `## Transcript` and `## Notes`, and *either* half is enough
+to refuse a run (exit 3, naming `--fresh`), because "I could hear a machine and not one word of it"
+is exactly what this tool exists to find out.
+
+**Only the transcript is scored.** Next the supervisor quoted line 2 under Notes in the sheet's own
+`**Line 2.** ...` shape, to say what they had heard of it. That comment was read as an answer to
+line 2, and a sheet that had been 50% scored 100%. Comments are commentary: `readSheet` parses the
+transcript section only, and the note is kept verbatim in `score.json` and printed with the report,
+never counted.
+
+**The receipt now agrees with the denominator.** Two sentences were false. "Unfilled lines: … - a
+blank line scores as every word missed, so 50.0% covers only the lines you wrote down" - it does
+not: the blank line's words stay in the denominator and count as missed, which is why a half-heard
+sheet scores 50% of the whole script and not 100% of the attempt. And a blank template with no note
+at all was told "every line was left blank, so the note is the whole result". Three states are now
+stated differently and correctly - untouched template, half-filled, half-filled with a note - each
+with its numerator and denominator (`word accuracy: 50.0% (7 of 14 words heard; words on a blank
+line count as missed)`), and the report carries `hits` and `total` alongside `accuracy`.
+
+- **`test/voice.test.mjs`** gains two tests (131 total). One pins a note-only sheet: refused, kept
+  byte for byte, scored with the note as the whole result, `--fresh` still able to clear it. The
+  other pins the mixed sheet in **LF and CRLF** (the section split is a regex on a heading, and CRLF
+  silently broke the first version of it): accuracy 0.5, `unfilled: [2]`, the note kept exactly,
+  the receipt naming line 2 and the 14-word denominator, and a blank template never described as a
+  note-only result. **Negative controls, each failing only its own assertion:** reading the whole
+  file as the sheet; restoring "covers only the words you wrote down"; printing the note sentence
+  whenever every line is blank; and the earlier two from the previous slice still hold.
+- **The sheet's own instructions** now say that hearing nothing is a result - write it under Notes
+  and leave the lines blank, and the sheet will be kept as left.
+
+Tests: **131/131** with a usable Chromium, twice, 0 skipped. What this still does not settle is
+unchanged and is the point of the tool: no completed listening test exists, so nothing here says a
+person understands the voice. The first partial data did appear during this review - one line
+written down, another reported as "just noise" - and it is recorded as exactly that in
+`docs/project-status.md`, not as a score. A recogniser would be independent evidence; there is none
+on this machine (`whisper`, `vosk`, `ffmpeg` absent), so the listening result stays a person's.
+
 ## Unreleased — the player takes over from a sentence button, and a listening run is repeatable, 2026-11-27
 
 Two ordinary things a person does with the take they just made, both found by doing them rather

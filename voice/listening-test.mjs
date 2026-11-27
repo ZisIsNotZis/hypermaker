@@ -110,7 +110,9 @@ function sheet(keyCount) {
     "tells us which sound was mistaken for which. Do not open `key.txt` until the sheet is done.",
     "",
     "How does it sound? Note it after the transcript: is it robotic, choppy, slurred, too fast?",
-    "That judgement is the one no measurement here can make."
+    "That judgement is the one no measurement here can make. If you could make out nothing at",
+    "all, write that under Notes and leave the lines blank - 'only machine noise' is a result,",
+    "and this sheet is kept exactly as you leave it."
   ].join("\n");
   return [
     "# Listening sheet", "", rules, "", "## Transcript", "",
@@ -118,6 +120,26 @@ function sheet(keyCount) {
     "", "## Notes", "", ""
   ].join("\n");
 }
+
+// The sheet has two sections and they mean different things: `## Transcript` is what the listener
+// heard, and `## Notes` is what they think about how it sounded. They have to be read apart.
+// A listener who could make out nothing wrote "I could hear a machine and not one word of it"
+// under Notes - a result, which a re-run used to overwrite because a guard reading only the line
+// bodies found the sheet empty. The other direction is worse: a listener who quotes line 2 under
+// Notes to comment on it, written in the sheet's own `**Line 2.** ...` shape, was read as having
+// answered line 2, and a half-heard sheet scored 50% rose to 100%. Commentary is commentary;
+// only the transcript decides what was heard.
+function sections(text) {
+  const notesAt = /^## Notes[ \t]*\r?$/m.exec(text);
+  const body = notesAt ? text.slice(0, notesAt.index) : text;
+  const head = /^## Transcript[ \t]*\r?$/m.exec(body);
+  return {
+    transcript: head ? body.slice(head.index + head[0].length) : body,
+    notes: notesAt ? text.slice(notesAt.index + notesAt[0].length).trim() : ""
+  };
+}
+
+const readNotes = text => sections(text).notes;
 
 // Read a filled-in sheet back into one string per line. The markdown shape is fixed by
 // `sheet()` above, so this is a parser for one format rather than a hope about markdown.
@@ -127,7 +149,7 @@ function sheet(keyCount) {
 // next line's text was read as this one's answer and every empty line shifted the rest by one.
 // That is a bug that silently invents a transcript, so empty bodies are matched explicitly.
 function readSheet(text) {
-  const found = [...text.matchAll(/^\*\*Line (\d+)\.\*\*[ \t]*(.*)$/gm)]
+  const found = [...sections(text).transcript.matchAll(/^\*\*Line (\d+)\.\*\*[ \t]*(.*)$/gm)]
     .map(m => ({ n: Number(m[1]), said: m[2].trim() }))
     .sort((a, b) => a.n - b.n);
   // Indexed by the line number written on the sheet, not by order of appearance, so a listener
@@ -211,10 +233,27 @@ function measureTrack(out, check) {
 function score(outDir) {
   const keyPath = join(outDir, "key.txt"), sheetPath = join(outDir, "transcript.md");
   for (const p of [keyPath, sheetPath]) if (!existsSync(p)) { console.error(`missing ${p}`); process.exit(1); }
-  const result = scoreSheet(readFileSync(keyPath, "utf8").split("\n").filter(Boolean), readSheet(readFileSync(sheetPath, "utf8")));
+  const sheetText = readFileSync(sheetPath, "utf8");
+  const result = scoreSheet(readFileSync(keyPath, "utf8").split("\n").filter(Boolean), readSheet(sheetText));
+  const notes = readNotes(sheetText);
+  // Every sentence here has to agree with the number beside it and with the denominator it is
+  // actually divided by. Three versions got that wrong in three ways, each found by reading the
+  // receipt next to the score: "50% covers only the lines you wrote down" (it does not - the
+  // blank line's words are in the denominator and count as missed, which is why a half-heard
+  // sheet scores 50% of the whole script, not 100% of what was attempted); "every line was left
+  // blank, so the note is the whole result" on a blank template that had no note; and "finish
+  // the sheet" to a listener who had already reported hearing nothing.
+  const total = result.lines.reduce((n, l) => n + words(l.text).length, 0);
+  const missed = result.lines.reduce((n, l) => n + l.missed.length, 0);
+  const hits = total - missed;
   const percent = `${(result.accuracy * 100).toFixed(1)}%`;
-  console.log(`word accuracy: ${percent} of ${result.lines.reduce((n, l) => n + words(l.text).length, 0)} words`);
-  if (result.unfilled.length) console.log(`unfilled lines: ${result.unfilled.join(", ")} - a blank line scores as every word missed, so finish the sheet before reading this`);
+  console.log(`word accuracy: ${percent} (${hits} of ${total} words heard; words on a blank line count as missed)`);
+  const blank = result.unfilled.join(", ");
+  const allBlank = result.unfilled.length === result.lines.length;
+  if (allBlank && notes) console.log(`unfilled lines: ${blank} - every line was left blank, so the note under Notes is the whole result: 0 of ${total} words heard`);
+  else if (allBlank) console.log(`unfilled lines: ${blank} - nothing has been written on the sheet yet, so ${percent} is only the template's own emptiness (0 of ${total} words heard)`);
+  else if (result.unfilled.length) console.log(`unfilled lines: ${blank} - those lines' words are counted as missed, so ${percent} is a score for the whole ${total}-word script (${hits} heard), not for the ${total - result.lines.filter(l => !l.filled).reduce((n, l) => n + words(l.text).length, 0)} words you wrote down`);
+  if (notes && !allBlank) console.log("the note under Notes is kept with the result, but it does not change the score");
   for (const l of result.lines) {
     console.log(`\nline ${l.line}  ${(l.accuracy * 100).toFixed(0)}%`);
     console.log(`  said: ${l.text}`);
@@ -222,13 +261,16 @@ function score(outDir) {
     if (l.missed.length) console.log(`  missed: ${l.missed.join(", ")}`);
   }
   const report = {
-    at: new Date().toISOString(), accuracy: result.accuracy, unfilled: result.unfilled,
-    lines: result.lines.map(l => ({ line: l.line, accuracy: Number(l.accuracy.toFixed(2)), missed: l.missed, heard: l.heard }))
+    at: new Date().toISOString(), accuracy: result.accuracy, hits, total, unfilled: result.unfilled,
+    lines: result.lines.map(l => ({ line: l.line, accuracy: Number(l.accuracy.toFixed(2)), missed: l.missed, heard: l.heard })),
+    // The listener's own words, verbatim. When the sheet is blank this is the entire finding,
+    // and a report holding only 0% would record that something failed without saying what the
+    // person reported - the same loss as overwriting the note, one step later.
+    notes
   };
   writeFileSync(join(outDir, "score.json"), JSON.stringify(report, null, 2));
+  if (notes) console.log(`\nnotes: ${notes.split("\n").map(l => l.trim()).filter(Boolean).join(" / ")}`);
   console.log(`\nwrote ${join(outDir, "score.json")}`);
-  // A person's judgement of how it sounds is not something this file can hold; the sheet's
-  // Notes section is where it goes, and copying it into the report is a manual step on purpose.
 }
 
 if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith("listening-test.mjs")) {
@@ -240,11 +282,20 @@ if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith
   // remade by re-running anything - so an answered sheet is treated as a deliverable and not as
   // scratch. `--fresh` is the explicit way to say the old one may go.
   const sheetPath = join(out, "transcript.md");
-  if (existsSync(sheetPath) && readSheet(readFileSync(sheetPath, "utf8")).some(Boolean) && !flag("fresh")) {
-    console.error(`${sheetPath} already has answers in it, so this run would throw away the only listening evidence there is;
-` +
-      `score it (node voice/listening-test.mjs --score ${out}), or pass --fresh with a filled sheet you mean to discard`);
-    process.exit(3);
+  if (existsSync(sheetPath) && !flag("fresh")) {
+    // Both halves of the sheet count. A transcript and a note are different findings and equally
+    // impossible to remake by re-running anything; the earlier guard read only the line bodies,
+    // so a listener who wrote "I heard a machine and no words" under Notes looked unanswered and
+    // the next run replaced the file - the result was lost as if it had never been written.
+    const text = readFileSync(sheetPath, "utf8");
+    const answered = readSheet(text).map((said, i) => (said ? i + 1 : 0)).filter(Boolean);
+    const wrote = readNotes(text);
+    if (answered.length || wrote) {
+      const what = [answered.length ? `an answer on line ${answered.join(", ")}` : null, wrote ? "a note under Notes" : null].filter(Boolean).join(" and ");
+      console.error(`${sheetPath} already holds what a listener wrote (${what}), so this run would throw away the only listening evidence there is;\n` +
+        `score it (node voice/listening-test.mjs --score ${out}), or pass --fresh with a sheet you mean to discard`);
+      process.exit(3);
+    }
   }
   mkdirSync(out, { recursive: true });
   const script = arg("script") ? readFileSync(arg("script"), "utf8") : DEFAULT_SCRIPT;
