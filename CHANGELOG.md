@@ -40,11 +40,13 @@ line count as missed)`), and the report carries `hits` and `total` alongside `ac
   and leave the lines blank, and the sheet will be kept as left.
 
 Tests: **131/131** with a usable Chromium, twice, 0 skipped. What this still does not settle is
-unchanged and is the point of the tool: no completed listening test exists, so nothing here says a
-person understands the voice. The first partial data did appear during this review - one line
-written down, another reported as "just noise" - and it is recorded as exactly that in
-`docs/project-status.md`, not as a score. A recogniser would be independent evidence; there is none
-on this machine (`whisper`, `vosk`, `ffmpeg` absent), so the listening result stays a person's.
+unchanged and is the point of the tool: the listening result is **empty**. Sheet-handling defects
+were found by someone reading the tool while filling a sheet in, and that is what these fixes
+address; none of it is a reading of whether the voice can be understood. A paired-signal check
+built with the same synthesizer would only show that two renders differ, so none is being offered
+as a stand-in. The answer needs a person who did not write the script; a takeaway sample (real
+WAV, real h264 film, blank sheet, `key.txt` kept apart) is what `node voice/listening-test.mjs
+--out <dir>` produces for that, and no recogniser exists here (`whisper`, `vosk`, `ffmpeg` absent).
 
 ## Unreleased — the player takes over from a sentence button, and a listening run is repeatable, 2026-11-27
 
