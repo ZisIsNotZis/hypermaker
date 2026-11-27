@@ -1,5 +1,65 @@
 # Changelog
 
+## Unreleased — a short film can be made, compared, and continued, and only one take sounds at a time, 2026-11-28
+
+The slice this round was given: walk a real short-film creation flow - see what material
+changed, compare against an older cut, continue from that older cut on purpose, and end up
+with two cuts that genuinely play. That flow is now one rerunnable command,
+`test/film-story.mjs`, and walking it found a defect the existing tests could not.
+
+**Comparing two narrated cuts played both of them at once.** The panel draws two players
+side by side, and until now nothing stopped them both sounding: pressing play on the older
+take while the newer one was running left two voices over each other. The panel could
+compare pictures and not sound, on a product whose films carry narration - which is the
+one comparison a person opens it to make. The canvas now stops any other `audio`/`video`
+when one starts, as a document-level capture listener, so it also covers a card preview
+left playing behind the overlay. Pausing the other element fires its own `pause`, and that
+is what clears a narration's phrase chip, so the card and the player stay in agreement.
+`test/compare-playback.test.mjs` is the gate; on the code before the listener it fails with
+`both takes played at once (right at 0.74s)`.
+
+**The flow itself, and what it checks.** One stand-in agent (`test/film-story-agent.mjs`)
+dispatches on the card's type and renders for real: Remotion stills and h264 film, and the
+repository's own voice via `voice/render.mjs` with the guide's `--check` step. The story
+walks the browser entry: words, then a narration linked from them, then a poster, then a
+film linked from both; the words and the poster are rewritten and a second cut is made; the
+compare panel shows the two with each take's own material version; the first cut is
+restored, its narration and poster are restored upstream, and a third cut is made from that
+same take with a different instruction. Three checks make "playable" mean something:
+ffprobe for the container and duration, non-silent samples from the extracted track, and
+the extracted track correlated against the take's **own frozen narration copy** - so a film
+playing the previous take's voice is caught. On the three cuts here: 0.999 aligned, 0.017
+against a different take.
+
+**The audio check had to survive an encoder, and say so.** The first version compared at
+zero lag and measured **-0.05** on an honest film: every AAC stream starts a few hundred
+samples after its source, so two identical signals read as unrelated. It now searches a
+bounded offset (±150 ms, far wider than an encoder delay and far narrower than a different
+take), reports the lag in milliseconds beside the aligned score, and keeps the unaligned
+number so nobody has to trust a bar that silently moves. Measured lag here is -941 samples,
+-4.3 ms. Both cuts were also played in the browser, in both panes at once, and each clock
+was asserted to advance; the card's own preview was played after a reload and asserted to
+show the take the card names.
+
+- **Three cuts of one film downloaded as three `film.mp4`.** Reported by an operator who
+exported each kept take after the first cut of this slice: the bytes were each right, and
+the suggested filenames were identical, so outside the canvas the takes were told apart
+only by the order they were saved in. The card's title is deliberately the same across
+takes - the version is shown beside it on screen - and the download name was built from
+that title alone. A download now carries the take's own version before the extension
+(`film-v2.mp4`); an imported constant, which has no version, keeps the name it already
+had. The story exports all three takes and asserts the three names differ and each names
+its own version.
+
+Tests: `test/compare-playback.test.mjs` (one player sounds at a time, and closing the panel
+leaves nothing playing) and `test/download-name.test.mjs` (two takes download under two
+names that say which take they are, an imported file keeps its own, and a name with no
+extension is not mangled) join the suite. Negative controls, run in an isolated export of
+`f4b59a2`: `compare-playback` fails with `both takes played at once (right at 0.74s)`, and
+both download cases fail, the first at `the card's take downloads as result.txt`. The story
+is deliberately not part of `npm test`: it renders three films and takes a couple of
+minutes. Suite: **158/158** with a usable Chromium.
+
 ## Unreleased — a revision can be read back, and one canvas cannot fall into another, 2026-11-28
 
 The story this slice was given: make something from a line of text and a picture, change

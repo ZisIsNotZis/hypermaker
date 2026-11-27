@@ -14,7 +14,15 @@ const shown=x=>String(x||'').replace(/^versions\/v\d+-/,'');
 // Top level on purpose: two helpers use it, and declaring it inside one of them made
 // the other throw, which took the whole canvas down.
 const oneLine=x=>String(x||'').replace(/\s+/g,' ').trim();
-const badge=x=>{const p=/^versions\/v\d+-/.exec(String(x||''));return p?p[0].split('/').pop().slice(1).replace(/-$/,''):undefined};const methods=t=>registry.then(r=>r.methods[t]||[]);const safe=fn=>fn().catch(e=>console.error(e));
+const badge=x=>{const p=/^versions\/v\d+-/.exec(String(x||''));return p?p[0].split('/').pop().slice(1).replace(/-$/,''):undefined};
+// The name a downloaded copy is saved under. `shown()` is the name a person reads on
+// the card, and it is deliberately the same for every take of one card - which is fine
+// on screen, where the card also says `v2`, and wrong in a downloads folder: three cuts
+// of one film all arrived as `film.mp4`, told apart only by the order they were saved
+// in. A published take now carries its own version (`film-v2.mp4`), so the file still
+// says which take it is after it leaves the canvas. A constant node has no version and
+// keeps the name the file already had.
+const saveAs=x=>{const name=shown(x)||'artifact',v=badge(x);if(!v)return name;const dot=name.lastIndexOf('.');return dot>0?`${name.slice(0,dot)}-v${v}${name.slice(dot)}`:`${name}-v${v}`};const methods=t=>registry.then(r=>r.methods[t]||[]);const safe=fn=>fn().catch(e=>console.error(e));
 async function api(path,data){const method=path==='/api/node'?(data.id==null?'POST':'PATCH'):'POST';const r=await fetch(path,{method,headers:{'content-type':'application/json'},body:JSON.stringify(data)}),x=await r.json();if(x.error)throw Error(x.error);apply(x);return x}async function load(){apply(await(await fetch('/api/workspace')).json())}function apply(x){Object.assign(state,x);render()}
 // The card the person touched last is drawn in front; this survives server refreshes
 // so a covered card can be picked up from its exposed edge and then used normally.
@@ -298,7 +306,7 @@ function bind(e,n){
   // Stop is the one control that has to work while the card is running, so it is
   // a separate button rather than the disabled Generate turning into something else.
   e.querySelector('[data-cancel]').onclick=()=>{const x=e.querySelector('[data-cancel]');x.disabled=true;safe(()=>fetch('/api/cancel',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id:n.id})}).then(r=>r.json()).then(load))};
-  e.querySelector('[data-download]').onclick=()=>{raise(n.id);const a=document.createElement('a');a.href=url(nodeAt(n.id));a.download=shown(nodeAt(n.id).artifact);a.click()};
+  e.querySelector('[data-download]').onclick=()=>{raise(n.id);const a=document.createElement('a');a.href=url(nodeAt(n.id));a.download=saveAs(nodeAt(n.id).artifact);a.click()};
   // Restore is delegated: the version buttons are re-rendered whenever the card
   // syncs, so binding each one would leave listeners on detached nodes.
   // Delegated for the same reason the version buttons are: the phrase chips are re-rendered
@@ -374,5 +382,15 @@ $('#viewport').ondblclick=e=>{if(e.target.closest('.card'))return;const p=worldP
 let panning=null;const stage=document.body;stage.addEventListener('pointerdown',e=>{if(e.button!==0||e.target.closest('.card,header'))return;const p=toView(e);panning={x:p.x,y:p.y,ox,oy}});window.addEventListener('pointermove',e=>{if(!panning)return;const p=toView(e);ox=panning.ox+p.x-panning.x;oy=panning.oy+p.y-panning.y;setView()});window.addEventListener('pointerup',()=>panning=null);
 $('#viewport').onwheel=e=>{if(e.target.closest('textarea,pre'))return;e.preventDefault();const p=toView(e),w=worldPoint(p),next=Math.max(.35,Math.min(2,scale*(e.deltaY<0?1.1:.9)));ox=p.x-w.x*next;oy=p.y-w.y*next;scale=next;setView()};
 $('#reset').onclick=()=>api('/api/layout',{});const add=document.getElementById('add-card');if(add)add.onclick=()=>{const p=worldPoint({x:$('#viewport').clientWidth/2,y:$('#viewport').clientHeight/4});api('/api/node',{x:p.x,y:p.y,type:'text',method:'llm',quality:'standard'})};
+// One sound at a time, everywhere. Comparing two cuts is the reason the compare panel
+// exists, and until this line existed it played *both*: the two panes of two narrated
+// takes started together and a person comparing them heard two voices over each other -
+// the picture could be compared and the sound could not, on a product whose films carry
+// narration. The rule is stated once for the whole document rather than inside the panel,
+// because the same thing happens to a card preview left playing behind a panel, and
+// because a `play` that starts while something else is already sounding is never what a
+// person meant here. `pause()` on the other element fires its own `pause`, which is what
+// clears a phrase chip - so the card and the player keep agreeing.
+document.addEventListener('play',e=>{const t=e.target;if(!(t instanceof HTMLMediaElement))return;for(const m of document.querySelectorAll('audio,video'))if(m!==t&&!m.paused)m.pause()},true);
 new EventSource('/api/events').onmessage=()=>safe(load);load();
 </script>
