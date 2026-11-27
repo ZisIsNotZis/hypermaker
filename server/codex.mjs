@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { basename, extname, join, relative, resolve } from "node:path";
 import { spawn } from "node:child_process";
 import { methodRegistry, typeForFile, typeRegistry } from "./registry.mjs";
@@ -6,6 +6,32 @@ import { assemblePrompt } from "./prompt.mjs";
 
 const inside = (file, dir) => { const r = relative(resolve(dir), resolve(file)); return r === "" || (!r.startsWith("..") && !r.startsWith("/")); };
 const safe = (dir, name) => { if (!name || typeof name !== "string") throw new Error("Agent artifact missing"); const file = resolve(dir, name); if (!inside(file, dir)) throw new Error("Agent output outside node directory"); return file; };
+// "The file exists" is not "this run made it". The artifact named by the final JSON
+// has to have been written during this run; an older file at the same path means
+// the agent handed back previous output, and publishing that would show a film made
+// from material it never used.
+//
+// The first attempt compared modification time against the run's start time with a
+// one-second tolerance for timestamp granularity. That tolerance was a window in
+// which the rule simply did not apply: two runs closer together than the slack let
+// the first run's untouched file pass as the second run's output - exactly the
+// failure this check exists to stop. A clock cannot answer "was this file written
+// during this run" without inventing such a window, so it is not asked. Each file
+// in the node directory is fingerprinted before the run, and the returned artifact
+// must no longer match its fingerprint (or must not have existed at all). Whether a
+// file was written then becomes a property of the file itself, at any speed.
+const identity = file => { const s = statSync(file, { bigint: true }); return `${s.dev}:${s.ino}:${s.size}:${s.mtimeNs}:${s.ctimeNs}`; };
+// Relative paths, because that is how the final JSON names the artifact; a file in a
+// subdirectory counts the same way as one next to the prompt. Unreadable entries are
+// skipped rather than fatal: a broken link in the agent's own directory must not
+// stop the run from starting.
+const snapshot = dir => {
+  const prints = new Map();
+  for (const rel of readdirSync(dir, { recursive: true })) {
+    try { if (!statSync(join(dir, rel)).isFile()) continue; prints.set(rel, identity(join(dir, rel))); } catch {}
+  }
+  return prints;
+};
 const modelName = (model, gh) => `${gh ? "gh/" : ""}${String(model || "gpt-5.6-luna").replace(/^gh\//, "")}`;
 // The real CLI exits non-zero and prints why on its event stream. "Codex exited
 // with code 1" tells a person nothing they can act on, so the last message the
@@ -41,12 +67,10 @@ export function generate({ node, workspace, context = {}, model, effort, useGhPr
   const nodeDir = join(workspace.workdir, String(node.id)); mkdirSync(nodeDir, { recursive: true });
   const prompt = assemblePrompt({ node, workspace, context });
   const log = join(nodeDir, "codex.jsonl"), final = join(nodeDir, "codex-final.json"), devLog = join(workspace.projectCwd || process.cwd(), "dev.log");
-  // When this run started. An agent may reasonably rewrite a file it already had,
-  // but it cannot produce a file whose content predates the run that claims it. Used
-  // below to refuse a "new result" that is really the previous run's output left at
-  // the same path - a real agent did exactly that, and two different posters were
-  // published as two different films with byte-identical video.
-  const startedAt = Date.now();
+  // Fingerprinted before the harness writes prompt.txt and the log, so this describes
+  // the directory as the previous run left it. Comparing against it afterwards is how
+  // the check below tells "this run wrote it" from "it was already here".
+  const before = snapshot(nodeDir);
   const configured = process.env.CODEX_BIN || "codex";
     const command = configured.endsWith(".mjs") ? process.execPath : configured;
     const commandArgs = configured.endsWith(".mjs") ? [configured, "--output-last-message", final] : [];
@@ -88,15 +112,13 @@ export function generate({ node, workspace, context = {}, model, effort, useGhPr
         const result = finalJson(final); const artifact = safe(nodeDir, result.artifact), script = result.script ? safe(nodeDir, result.script) : null;
         if (!existsSync(artifact)) throw new Error("Agent artifact does not exist");
         const type = typeForFile(artifact); if (type !== node.type) throw new Error(`Artifact type mismatch: expected ${node.type}`);
-        // "The file exists" is not "this run made it". The artifact named by the final
-        // JSON has to have been written during this run; an older file at the same
-        // path means the agent returned previous output instead of producing new
-        // output, and publishing that would show a film made from material it never
-        // used. Failures are what a person can act on; a quiet duplicate is not.
-        const writtenAt = Math.round(statSync(artifact).mtimeMs);
-        if (writtenAt < startedAt - 1000) {
-          const age = Math.round((startedAt - writtenAt) / 1000);
-          throw new Error(`The agent returned ${relative(nodeDir, artifact)} without rewriting it: that file is ${age}s older than this run, so it holds the previous result rather than a new one. Try again, or ask the agent to render again into that path.`);
+        // Publishing is publishing a result. A file that still matches its pre-run
+        // fingerprint means nobody wrote it during this run; a real agent did exactly
+        // that and two different posters became two films with byte-identical video.
+        // Failures are what a person can act on; a quiet duplicate is not.
+        const rel = relative(nodeDir, artifact);
+        if (before.has(rel) && before.get(rel) === identity(artifact)) {
+          throw new Error(`The agent returned ${rel} without rewriting it: the file is exactly as it was before this run started, so it holds the previous result rather than a new one. Try again, or ask the agent to render again into that path.`);
         }
         if (!existsSync(join(nodeDir, "AGENTS.md"))) writeFileSync(join(nodeDir, "AGENTS.md"), "", "utf8");
         done({ script: script ? relative(nodeDir, script) : null, artifact: relative(nodeDir, artifact) });

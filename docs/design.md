@@ -14,7 +14,15 @@ Draft nodes have no directory until Generate. Imported external files are copied
 
 A card keeps its finished versions. Changing the material upstream and pressing Generate again must not cost the artifact already approved, so a run does two things in a fixed order: it freezes a copy of each direct input into `<workdir>/<id>/versions/` and hands the agent those copies, and on success it publishes its output under a fresh name in `versions/` and points the card at that. Nothing the agent writes is visible until the run succeeds, so a failure has nothing to roll back, and the artifact on the card and the materials recorded for it always describe the same bytes.
 
-A run may only publish a file it wrote itself. An agent that names a path left by an earlier run - which a real one did, producing two "versions" of the same video for two different posters - is a failed run with a reason the person can act on, not a new version. The harness compares the artifact's modification time against the moment the run started and refuses anything older. `workspace.yml` stores the kept versions with their source copies, so they survive a restart. Going back to an earlier version is a pointer move, is itself reversible, and is refused while the card is generating.
+A run may only publish a file it wrote itself. An agent that names a path left by an earlier run - which a real one did, producing two "versions" of the same video for two different posters - is a failed run with a reason the person can act on, not a new version. The judgement is "was this file written during this run", and it is made without a clock: every file in the node directory is fingerprinted (device, inode, size, nanosecond mtime and ctime) before the run, and the named artifact must no longer match. Comparing modification time against the run's start *with a tolerance* was the first attempt and was wrong twice over: the tolerance had to be large enough for filesystem timestamp granularity, which meant two runs closer together than the slack let the earlier file through as the new result - change a prompt and press Generate again within a second and it happened every time. A fingerprint has no such window. It also leaves the opposite case alone: a deterministic renderer that produces identical bytes twice did write the file, so it is a second version, not a stale one.
+
+What the fingerprint cannot see: an agent that rewrites a file *and* restores it to the
+same bytes with the same size within the same timestamp tick of a coarse filesystem -
+FAT, some SMB mounts, a few container overlays. The check would call that unwritten and
+refuse a legitimate result. The failure is the safe direction (a retryable error, never a
+duplicate version), and on the filesystems this runs on the nanosecond clock makes it
+practically unreachable; it is written down because "never" would be a claim the check
+does not earn. `workspace.yml` stores the kept versions with their source copies, so they survive a restart. Going back to an earlier version is a pointer move, is itself reversible, and is refused while the card is generating.
 
 ## Canvas
 

@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased — a stale file is refused at any speed, 2026-11-27
+
+- **A run that hands back an untouched file is refused, even one second after
+the previous run.** The check was "the artifact's modification time is not more
+than a second older than this run started". That second was meant as slack for
+timestamp granularity, but it was also a window in which the rule did not apply:
+two runs closer together than the slack let the earlier file be published as a
+new version, so changing a prompt and pressing Generate again right away produced
+a duplicate version. The existing test waited 1.5s between runs, which put it on
+the far side of the window and hid the case a person actually hits.
+- The judgement is now "was this file written during this run", answered without
+a clock: each file in the node directory is fingerprinted (device, inode, size,
+nanosecond mtime/ctime) before the run, and the named artifact must no longer
+match its fingerprint. Not being written is then a property of the file at any
+speed.
+- The opposite mistake is pinned too: a deterministic renderer that writes
+identical bytes twice *did* write them, and must still produce a second version.
+Content equality is deliberately not the test.
+- Verified: 45/45 with a real Chromium. Both directions are negative-controlled -
+disabling the rule makes the stale-file test red, and restoring the old clock
+rule makes the back-to-back test red. The reproduction that started this (two
+runs with no pause, one unchanged file, two "versions") fails after the fix and
+published two versions before it.
+
 ## 0.1.0 — generation lifecycle and a real Codex run, 2026-11-27
 
 A person can now stop a run, read why a run failed, and trust both after a

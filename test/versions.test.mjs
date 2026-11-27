@@ -173,17 +173,17 @@ test("an agent that hands back the previous render fails instead of publishing i
     assert.equal(first.error, null, `the first run produced output, got ${first.error}`);
     const approved = first.artifact;
 
-    // The second attempt names the same file without rewriting it. A real gap matters:
-    // a genuinely stale render is minutes old, and the harness deliberately allows a
-    // second of clock slack for filesystem timestamps, so running the two back to back
-    // would pass the file off as fresh.
-    await new Promise(r => setTimeout(r, 1500));
+    // The second attempt names the same file without rewriting it. Deliberately back
+    // to back, with no pause: an earlier version of this check allowed a second of
+    // clock slack for timestamps, so two runs closer together than that let the old
+    // file through and published it as a new version. Waiting 1.5s first hid exactly
+    // the case a person hits - change the prompt and press Generate again.
     await api("PATCH", "/api/node", { id: card, prompt: "second" });
     await api("POST", "/api/generate", { id: card });
     const second = await wait(card);
 
     assert.equal(second.status, "error", "handing back an old file is a failure, not a new version");
-    assert.match(second.error, /older than this run/, `the card says what happened, got ${second.error}`);
+    assert.match(second.error, /without rewriting it/, `the card says what happened, got ${second.error}`);
     assert.equal(second.artifact, approved, "the approved artifact is still the one on the card");
     assert.deepEqual(second.versions || [], [], "and no duplicate version was published");
     const approvedBytes = readFileSync(join(reuseWorkdir, String(card), approved), "utf8").trim();
@@ -221,4 +221,49 @@ test("kept versions survive a restart, and a card that is generating refuses to 
   const finished = await settle(filmId);
   assert.equal(finished.status, "idle");
   assert.ok(finished.versions.length >= reopened.versions.length + 1, "the finished run kept the film it replaced");
+});
+
+// The other side of the same rule. A deterministic renderer - same poster, same
+// text, fixed frame count - really can produce identical bytes twice. That is a
+// second result, not a stale file, and refusing it would make the canvas look
+// broken to anyone whose output reproduces exactly. So the rule is "was this file
+// written", not "did its bytes change"; this test fails if the check ever drifts
+// back to comparing content.
+test("a run that really renders again is accepted even when the bytes are identical", async () => {
+  const echoAgent = join(base, "echo-agent.mjs");
+  const echoBin = join(base, "echo-codex");
+  writeFileSync(echoAgent, `
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
+const dir = process.env.HYPERMAKER_NODE_DIR;
+const out = process.argv[process.argv.indexOf("--output-last-message") + 1];
+writeFileSync(join(dir, "still.png"), "a deterministic frame");
+if (out) writeFileSync(out, JSON.stringify({ prompt: "p", script: null, artifact: "still.png", type: "image", method: "remotion", error: null }));
+`);
+  writeFileSync(echoBin, `#!/bin/sh\nexec node ${JSON.stringify(echoAgent)} "$@"\n`);
+  chmodSync(echoBin, 0o755);
+  const echoPort = await freePort(), echoWorkdir = join(base, "echo-ws");
+  const echo = startServer({ cwd: root, port: echoPort, env: { CODEX_BIN: echoBin, HYPERMAKER_WORKDIR: echoWorkdir, HYPERMAKER_RESET_WORKSPACE: "1" } });
+  echo.stderr.on("data", c => process.stderr.write(c));
+  await waitReady(echoPort);
+  const api = (method, path, payload) => fetch(`http://127.0.0.1:${echoPort}${path}`, { method, headers: { "content-type": "application/json" }, body: JSON.stringify(payload) }).then(r => r.json());
+  const ws = () => fetch(`http://127.0.0.1:${echoPort}/api/workspace`).then(r => r.json());
+  const wait = async id => { for (let i = 0; i < 200; i++) { const n = (await ws()).nodes[id]; if (n.status !== "running") return n; await new Promise(r => setTimeout(r, 100)); } };
+
+  try {
+    const card = Number(Object.keys((await api("POST", "/api/node", { x: 0, y: 0, type: "image", method: "remotion", prompt: "first" })).nodes).at(-1));
+    await api("POST", "/api/generate", { id: card });
+    const first = await wait(card);
+    assert.equal(first.error, null, `the first run rendered, got ${first.error}`);
+
+    // No pause, and the same bytes by construction.
+    await api("POST", "/api/generate", { id: card });
+    const second = await wait(card);
+    assert.equal(second.status, "idle", `a real second render is a result, got ${second.error}`);
+    assert.equal(second.versions.length, 1, "and the render it replaced is kept");
+    assert.notEqual(second.artifact, second.versions[0].file, "the two renders have separate files");
+    assert.equal(readFileSync(join(echoWorkdir, String(card), second.artifact), "utf8"), readFileSync(join(echoWorkdir, String(card), second.versions[0].file), "utf8"), "with identical bytes, which is why content cannot decide this");
+  } finally {
+    stopServer(echo);
+  }
 });
