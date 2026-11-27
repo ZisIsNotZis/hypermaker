@@ -129,6 +129,87 @@ test("canvas text becomes a narration that measures as speech, and a film that c
   assert.match(narrationTitle, /0\.00s {2}The sea at night is never still\./, `the tooltip says when the first phrase starts, got ${narrationTitle}`);
   assert.match(narrationTitle, /2\.\d+s {2}It carries every colour of the sky\./, "and when the second does");
 
+  // 4b. Hearing one sentence instead of the whole take. A creator checking a take has
+  //     usually changed one line, and the sentence they want is often not the first one -
+  //     so the card has to be able to start the player at a measured phrase. The times come
+  //     from the server's measurement of the published bytes, so this also checks that the
+  //     card and the record agree about where each sentence is.
+  //
+  //     A click is not enough to prove it: a button that looked right and did nothing would
+  //     pass. The assertion is on the player's own clock after the click, and on the fact
+  //     that it stops at the end of that phrase rather than continuing into the next.
+  const chips = page.locator(`.card[data-id="${narrationId}"] [data-phrase]`);
+  assert.equal(await chips.count(), 2, "one button per phrase of the take");
+  assert.equal(await chips.nth(1).textContent(), "2", "the buttons are numbered in the order spoken");
+  const record = spoken.narration.phrases;
+  assert.equal(record.length, 2, "the take's record has both phrases");
+  await page.waitForFunction(() => {
+    const a = document.querySelector(".preview audio");
+    return a && a.readyState >= 1;
+  }, null, { timeout: 20000 });
+  // The *first* phrase is the one that proves the stop: it ends in the middle of the file, so
+  // a player that merely seeked and went on playing would run past it into sentence two. The
+  // second button is checked for the seek, since starting a later sentence is the case the
+  // tooltip times could not help with.
+  await chips.nth(0).click();
+  await page.waitForFunction(() => {
+    const a = document.querySelector(".preview audio");
+    return a && !a.paused;
+  }, null, { timeout: 10000 });
+  const startedAt = await page.evaluate(() => document.querySelector(".preview audio").currentTime);
+  assert.ok(startedAt <= record[0].start + 0.3, `the first sentence starts at its recorded ${record[0].start}s, player was at ${startedAt.toFixed(2)}s`);
+  // The mark is derived from the player, so it can arrive a frame after `paused` flips; what
+  // matters is that it arrives, and that it is the sentence the clock is actually in.
+  await page.waitForFunction(() => document.querySelectorAll("[data-phrase][data-playing]").length === 1, null, { timeout: 5000 });
+  assert.notEqual(await chips.nth(0).getAttribute("data-playing"), null, "the button shows which sentence is playing");
+  const end = record[0].start + record[0].duration;
+  // A frame is ~16 ms, so the pause should land within a frame or two of the recorded end.
+  // The old `timeupdate` watch let it run a quarter second into the next sentence, which is
+  // what first made this fail - the window here is deliberately tighter than that.
+  await page.waitForFunction(
+    seconds => { const a = document.querySelector(".preview audio"); return a && a.paused && a.currentTime <= seconds + 0.15; },
+    end, { timeout: 20000 });
+  const stopped = await page.evaluate(() => ({ at: document.querySelector(".preview audio").currentTime, duration: document.querySelector(".preview audio").duration }));
+  assert.ok(stopped.at >= end - 0.2 && stopped.at <= end + 0.15, `it stops at the end of the first sentence (${end.toFixed(2)}s), stopped at ${stopped.at.toFixed(2)}s`);
+  assert.ok(stopped.at < stopped.duration - 0.5, `and that is before the end of the file (${stopped.duration.toFixed(2)}s), so it really stopped rather than finished`);
+  assert.equal(await chips.nth(0).getAttribute("data-playing"), null, "and the playing mark is gone when it stops");
+  // The second button starts the second sentence where its record says - the case a person
+  // actually has, a line that is not the first one.
+  await chips.nth(1).click();
+  await page.waitForFunction(() => {
+    const a = document.querySelector(".preview audio");
+    return a && !a.paused;
+  }, null, { timeout: 10000 });
+  const secondStart = await page.evaluate(() => document.querySelector(".preview audio").currentTime);
+  assert.ok(secondStart >= record[1].start - 0.3, `the second sentence starts where its record says (${record[1].start}s), player was at ${secondStart.toFixed(2)}s`);
+  // Pausing the way a person does - with the player's own control - must clear the mark too. A
+  // supervisor reproduced the opposite: play sentence 2, pause in the player, and the chip
+  // stayed lit while the clock sat still, so the card claimed a sentence was playing when
+  // nothing was. The cause was that the mark was remembered from the last press instead of read
+  // back out of the player; this is the assertion that keeps it derived.
+  await page.evaluate(() => document.querySelector(".preview audio").pause());
+  await page.waitForFunction(() => document.querySelectorAll("[data-phrase][data-playing]").length === 0, null, { timeout: 5000 });
+  const paused = await page.evaluate(() => ({ at: document.querySelector(".preview audio").currentTime, paused: document.querySelector(".preview audio").paused }));
+  assert.equal(paused.paused, true, "the player really is paused");
+  assert.equal(await chips.nth(1).getAttribute("data-playing"), null, "a paused player lights no sentence: the mark means 'playing now', not 'where you left off'");
+  // ...and it must stay that way, which is what the supervisor saw as "progress does not move":
+  // a second look a moment later must not drift back into a playing state on its own.
+  await page.waitForTimeout(500);
+  const later = await page.evaluate(() => ({ at: document.querySelector(".preview audio").currentTime, playing: document.querySelectorAll("[data-phrase][data-playing]").length }));
+  assert.equal(later.at, paused.at, "a paused player does not move");
+  assert.equal(later.playing, 0, "and nothing on the card claims it is playing");
+  // Playing again from the player's own button lights the sentence the clock is in - the same
+  // reading, in the other direction, so the card follows a person who never touches a chip.
+  await page.evaluate(() => document.querySelector(".preview audio").play());
+  await page.waitForFunction(() => document.querySelectorAll("[data-phrase][data-playing]").length === 1, null, { timeout: 5000 });
+  assert.equal(await chips.nth(1).getAttribute("data-playing"), "", "playing the player again lights the sentence it is in");
+  await page.evaluate(() => document.querySelector(".preview audio").pause());
+  // A listen must not cost a generation: the artifact and its record are untouched by it.
+  const afterListen = (await workspace()).nodes[narrationId];
+  assert.equal(afterListen.artifact, spoken.artifact, "listening to a phrase did not change the take");
+  assert.deepEqual(afterListen.narration.phrases, record, "nor its recorded timings");
+  assert.ok(errors.length === 0, `no page errors while listening: ${errors.join(" | ")}`);
+
   // 5. A film card takes the narration as material and really contains that sound.
   const filmId = Number(Object.keys((await post("/api/node", { x: 780, y: 120, type: "video", method: "remotion", prompt: "one film over the narration", quality: "demo" })).nodes).at(-1));
   await post("/api/link", { source: narrationId, target: filmId });
@@ -197,6 +278,57 @@ test("canvas text becomes a narration that measures as speech, and a film that c
   assert.match(verified, /^verifies: /, `the published card re-verifies from disk, got ${verified}`);
   assert.match(verified, /worst-frame agreement with the words: 1\.000/, "and does so exactly, not approximately");
   assert.match(verified, new RegExp(`reading table: ${CURRENT_READINGS}`), "and names the voice that made it");
+
+  assert.deepEqual(errors, [], `no page errors, got ${errors.join(" | ")}`);
+
+  // 9. The creator's actual loop, on the same card: change one line, generate again, and keep
+  //    both takes. Then hear *that line* in either take without regenerating anything. This is
+  //    the path the assignment is about - listen cheaply, change a sentence, keep what worked -
+  //    and the phrase buttons are only useful if they follow the take the card is showing.
+  const changed = SCRIPT.replace("never still", "never silent");
+  await page.locator(`.card[data-id="${textId}"] [data-prompt]`).fill(changed);
+  await page.locator(`.card[data-id="${textId}"] [data-prompt]`).blur();
+  await page.waitForTimeout(600);
+  // `settle` returns as soon as a node *has* an artifact, which the old take already does -
+  // so a second run has to be waited for by asking for a different one. Otherwise the check
+  // reads the first take a moment after pressing Generate and calls it the second.
+  const settled = async (id, notThis) => { for (let i = 0; i < 1200; i++) { const n = (await workspace()).nodes[id]; if ((n?.artifact && n.artifact !== notThis) || n?.error) return n; await new Promise(r => setTimeout(r, 250)); } };
+  await page.locator(`.card[data-id="${textId}"] [data-generate]`).click();
+  const textAgain = await settled(textId, textNode.artifact);
+  assert.equal(textAgain.error, null, `the edited text card was written, got ${textAgain.error}`);
+  await page.locator(`.card[data-id="${narrationId}"] [data-generate]`).click();
+  const second = await settled(narrationId, spoken.artifact);
+  assert.equal(second.error, null, `the second take was published, got ${second.error}`);
+  assert.notEqual(second.artifact, spoken.artifact, "the second take is a different file, so the first is still there");
+  assert.match(second.narration.phrases[0].text, /never silent/, `the new take says the new line, got ${second.narration.phrases[0].text}`);
+  // Both takes are kept, and the card offers a way back to the first one.
+  const kept = (await workspace()).nodes[narrationId].versions || [];
+  assert.ok(kept.length >= 1, `the replaced take was kept, got ${JSON.stringify(kept.map(v => v.artifact))}`);
+  const firstVersion = kept.find(v => v.narration && /v1-/.test(v.artifact || v.file || ""));
+  assert.ok(firstVersion, `the kept version carries the measurement of its own take, got ${JSON.stringify(kept.map(v => [v.artifact, !!v.narration]))}`);
+  assert.match(firstVersion.narration.phrases[0].text, /never still/, "and the kept version's record is of the words *it* says, not of the newer take");
+  // Hear the first take's opening sentence again, from the card, after going back to it.
+  await page.locator(`.card[data-id="${narrationId}"] [data-version="${firstVersion.id}"]`).click();
+  await page.waitForFunction(
+    id => { const a = document.querySelector(`.card[data-id="${id}"] .preview audio`); return a && /v1-/.test(a.getAttribute("src") || ""); },
+    narrationId, { timeout: 15000 });
+  await page.waitForFunction(() => { const a = document.querySelector(".preview audio"); return a && a.readyState >= 1; });
+  const restoredChips = page.locator(`.card[data-id="${narrationId}"] [data-phrase]`);
+  assert.equal(await restoredChips.count(), 2, "the take on the card still offers its sentences");
+  const restoredTitle = await restoredChips.nth(0).getAttribute("title");
+  assert.match(restoredTitle, /never still/, `the button describes the restored take's own words, got ${restoredTitle}`);
+  await restoredChips.nth(0).click();
+  await page.waitForFunction(() => { const a = document.querySelector(".preview audio"); return a && !a.paused; }, null, { timeout: 10000 });
+  const restoredAt = await page.evaluate(() => document.querySelector(".preview audio").currentTime);
+  assert.ok(restoredAt <= 0.3, `the restored take plays from its own start, player was at ${restoredAt.toFixed(2)}s`);
+  await page.evaluate(() => document.querySelector(".preview audio").pause());
+  // And the last thing a person checks: the restored card still verifies, and says which take it
+  // is. A kept version that plays but cannot be re-verified would be a recording with no record.
+  const restoredNode = (await workspace()).nodes[narrationId];
+  assert.match(restoredNode.artifact || "", /v1-/, `the card is showing the first take, got ${restoredNode.artifact}`);
+  const reverified = execFileSync(process.execPath, [join(root, "voice/verify-take.mjs"), join(workdir, String(narrationId))], { encoding: "utf8" });
+  assert.match(reverified, /^verifies: /, `the restored take re-verifies from disk, got ${reverified}`);
+  assert.match(reverified, /this is the take the card is showing/, `and names itself as the one on the card, got ${reverified}`);
 
   assert.deepEqual(errors, [], `no page errors, got ${errors.join(" | ")}`);
   await page.close();

@@ -76,6 +76,43 @@ reading the reader's output, which is enough to catch a wrong amount - the sente
 before it is ever played. Whether the corrected sentence is *understandable by ear* is a
 different question, and is why `node voice/listening-test.mjs` exists.
 
+## Unreleased — a sentence can be heard on its own, and the card agrees with the player, 2026-11-27
+
+A creator checking a take is almost never listening to it end to end: they changed one line,
+and they want to know whether *that* line came out right. The narration card already carried
+the phrases and their start times - the server measures them from the published bytes - but
+they were only in a tooltip, so hearing sentence three meant scrubbing through the two before
+it by ear.
+
+- **Each measured phrase is a button, and it does not cost a generation.** It moves the card's
+own player to that sentence's start and pauses at its measured end. Nothing is re-rendered (a
+phrase's times are facts about the published file, so re-rendering would be a different take)
+and no run is started (a listen must not cost a generation). The stop is watched frame by
+frame rather than on `timeupdate`, which fires only a few times a second and let the player run
+a quarter of a second into the next sentence before pausing.
+- **Editing one line and keeping both takes still works, and the buttons follow.** The test
+  changes a line upstream, generates a second take, keeps the replaced one, goes back to it,
+  and checks the buttons describe *that* take's own words - because the timings travel with the
+  version they were measured on - and that `voice/verify-take.mjs` still verifies the take the
+  card is showing.
+- **The lit sentence is read out of the player, not remembered from the press.** A supervisor
+  found the difference: play sentence 2, pause with the player's own control, and the earlier
+  build left the chip lit with the clock frozen - the card claiming a sentence was playing when
+  nothing was. The mark is now derived from `currentTime` and `paused` every frame and on the
+  player's own events, so pausing, playing or scrubbing anywhere clears or moves it. The
+  negative control is that assertion: ignoring `paused` fails it exactly.
+- **No new interface beyond the buttons.** No panel, no page, no dialog: the buttons sit with
+  the sentence times the card already showed, because that is where a person looks when
+  deciding whether the take is right.
+
+Tests: 128/128, still 128 - the new checks live inside the real narration test rather than as
+assertions of their own, since they exercise one path with one real WAV in one real browser.
+
+What this does not settle: whether a person *understands* the voice. Hearing one sentence
+conveniently is not the same as hearing it correctly, and the listening sheet is still empty;
+`node voice/listening-test.mjs` remains the way to close that, and the card now makes the
+smaller question - "does this line say what I wrote?" - cheap to answer by ear.
+
 ## Unreleased — a number in a script is said, not spelled out, 2026-11-27
 
 Ordinary narration lines with numbers in them could not be made, or were made as different

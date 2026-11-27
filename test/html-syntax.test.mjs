@@ -86,7 +86,7 @@ function undeclared(canvasScript) {
 const strippedScript = strip(canvasScript).out;
 // Names bound anywhere in the script, plus the globals the browser and Node provide.
 const bound = new Set(["if", "for", "while", "switch", "catch", "return", "typeof", "await", "new", "delete", "void", "in", "of", "do", "else", "try", "throw", "case", "yield", "function", "async", "class", "const", "let", "var", "import", "export", "default", "extends", "super", "this", "null", "true", "false", "undefined",
-  "fetch", "setTimeout", "clearTimeout", "setInterval", "confirm", "alert", "encodeURIComponent", "requestAnimationFrame", "EventSource", "URL", "JSON", "Math", "Object", "Array", "String", "Number", "Boolean", "Promise", "Map", "Set", "Date", "Error", "RegExp", "Symbol", "Intl", "console", "document", "window", "globalThis", "parseInt", "parseFloat", "isNaN", "structuredClone", "queueMicrotask"]);
+  "fetch", "setTimeout", "clearTimeout", "setInterval", "confirm", "alert", "encodeURIComponent", "requestAnimationFrame", "cancelAnimationFrame", "EventSource", "URL", "JSON", "Math", "Object", "Array", "String", "Number", "Boolean", "Promise", "Map", "Set", "Date", "Error", "RegExp", "Symbol", "Intl", "console", "document", "window", "globalThis", "parseInt", "parseFloat", "isNaN", "structuredClone", "queueMicrotask"]);
 for (const m of strippedScript.matchAll(/function\s+([A-Za-z_$][\w$]*)\s*\(([^)]*)\)/g)) { bound.add(m[1]); for (const p of m[2].split(",")) if (/[A-Za-z_$]/.test(p)) bound.add(p.trim().replace(/^...$/, "")) }
 for (const m of strippedScript.matchAll(/catch\s*\(\s*([A-Za-z_$][\w$]*)/g)) bound.add(m[1]);
 for (const m of strippedScript.matchAll(/(?:const|let|var)\s+([A-Za-z_$][\w$]*)/g)) bound.add(m[1]);
