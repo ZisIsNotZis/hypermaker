@@ -132,16 +132,16 @@ quietly return.
   reason while the card is generating. A run may only publish a file it wrote itself: a
   real agent handed back the film it had already rendered, so two different posters became
   two "versions" with byte-identical video. That is now a failure with the reason on the
-  card ("without rewriting it"), with the approved version still playable and its material
-  still recorded; `test/versions.test.mjs` pins it.
+  card, with the approved version still playable and its material still recorded;
+  `test/versions.test.mjs` pins it.
   The first version of this check compared the artifact's modification time against the
   run's start with a second of slack for timestamp granularity, which quietly made the rule
   inapplicable to any two runs closer together than that: change a prompt and press
   Generate again within a second and the previous file was published as a new version.
-  Each file in the node directory is now fingerprinted (inode, size, nanosecond mtime/ctime)
-  before the run, and the returned artifact must no longer match. "Was this written" becomes
-  a property of the file at any speed, and a deterministic render that produces identical
-  bytes is still a real second result - both directions are pinned.
+  Each run now works in an empty directory of its own (`attempts/<start>/`), so a previous
+  run's file is not reachable by name at all: naming one is rejected as outside the run's
+  directory. A deterministic render that writes the same bytes again in its own directory
+  is still a real second result - both directions are pinned.
 - **Two takes can be compared.** A `compare` button on the kept row opens both versions at
   once, one pane each, captioned with which take it is and what it was asked for; either
   side can be pointed at another version; closing leaves the card exactly as it was.
@@ -198,8 +198,15 @@ samples, tracking the source WAV at ~0.9997 correlation.
 | `workspace.yml` | The whole graph: position, inputs, type, method, prompt, quality, script, artifact per integer node id |
 | `AGENTS.md` | Node-local memory for future generations in that node; empty when nothing is worth remembering |
 | `codex.jsonl` | Raw Codex stdout/stderr for the run, kept for inspection only |
+| `codex-command.json` | The exact CLI invocation for the last run: model, flags, timestamp (the prompt itself is in `prompt.txt`) |
+| `versions/` | Every take that is still reachable: `v2-film.mp4` plus `v2-prompt.txt` and `v2-…` script, the frozen material copies, and nothing else |
+| `attempts/` | Working directories of recent runs, one per start. A successful run's is dropped; a failed or stopped one is kept (five at most) so you can see what it produced |
 
 Imported files are copied into their new node directory, and they stay constant: no method, no Generate, no longer pointing at the original path. Draft nodes have no directory until the first Generate. The agent may choose an informative artifact filename; the harness rejects any path that escapes the node directory or whose extension does not match the node's type.
+
+**Each run works in `attempts/<start time>/`, not in the card's own folder.** That is a deliberate separation of two things that used to share a directory: what a person puts next to a card (their own reference file, a note, anything they copied in) and what an agent produces. Because they are apart, throwing an attempt away is one recursive delete of a directory the harness created, with no rule like "delete whatever appeared during the run" - which is a rule that cannot tell a creator's file from an agent's and eventually eats one. A file you put in a card's folder keeps its path through any number of failed or stopped attempts.
+
+A run may publish only a file it wrote in its own attempt directory. Naming a kept version, an earlier take, or anything else in the card is rejected with a reason on the card, so an agent cannot hand back an old result as a new one.
 
 ## Repository map
 
@@ -217,7 +224,7 @@ vendor/                pinned submodules: hyperframes, remotion skills
 docs/                  design.md, impl.md, project-status.md
 ```
 
-How the pieces talk: the browser sends JSON commands over HTTP, the server mutates the in-memory graph and rewrites `workspace.yml` atomically, and generation results come back as SSE events (`started`, `complete`, `error`) that make the canvas reload. Generation spawns the Codex CLI from the repository root — so `.agents` skills load — with the node directory in `HYPERMAKER_NODE_DIR`; the process writes `codex.jsonl` and a final JSON file, and the harness reads only that final file, validates the artifact, and records it in the workspace.
+How the pieces talk: the browser sends JSON commands over HTTP, the server mutates the in-memory graph and rewrites `workspace.yml` atomically, and generation results come back as SSE events (`started`, `complete`, `error`) that make the canvas reload. Generation spawns the Codex CLI from the repository root — so `.agents` skills load — with the run's own directory in `HYPERMAKER_NODE_DIR` (and the card's in `HYPERMAKER_CARD_DIR`); the process writes `codex.jsonl` and a final JSON file, and the harness reads only that final file, validates the artifact, and records it in the workspace.
 
 Project source of truth: [`docs/design.md`](docs/design.md) for product behavior, [`docs/impl.md`](docs/impl.md) for architecture. Agents read [`AGENTS.md`](AGENTS.md) first.
 

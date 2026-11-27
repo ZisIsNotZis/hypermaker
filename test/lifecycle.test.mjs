@@ -46,12 +46,20 @@ test("the adapter speaks the codex exec contract the real CLI accepts", async ()
   await post(p, "/api/generate", { id, model: "gpt-5.6-luna", effort: "low" });
   const node = await until(p, id, n => n.artifact || n.error);
   assert.match(node.artifact, /note\.txt$/, JSON.stringify(node));
-  const argv = JSON.parse(readFileSync(join(workdir, String(id), "argv.json"), "utf8"));
+  // The agent works in an attempt directory of its own, which is dropped after a
+  // successful run - so the record of what was invoked is kept with the card. It is
+  // the file a person reads when a result is not what they expected.
+  const recorded = JSON.parse(readFileSync(join(workdir, String(id), "codex-command.json"), "utf8"));
+  const argv = recorded.args;
   assert.deepEqual(argv.slice(0, 4), ["exec", "--json", "--output-last-message", join(workdir, String(id), "codex-final.json")],
     `a real codex CLI is invoked as \`codex exec --json ...\`, got ${JSON.stringify(argv.slice(0, 4))}`);
   assert.ok(argv.includes("--ephemeral") && argv.includes("--skip-git-repo-check"), "the flags the real CLI documents are passed");
   assert.equal(argv[argv.indexOf("--model") + 1], "gpt-5.6-luna");
-  assert.equal(argv.at(-1).includes("# USER PROMPT"), true, "the assembled prompt is the last argument");
+  // The prompt is the CLI's last argument in reality; it is excluded from the record
+  // on purpose (it is long and lives in prompt.txt), so the assembled instruction is
+  // checked where it is actually stored.
+  assert.ok(argv.length >= 10, `the recorded arguments are the real ones, got ${JSON.stringify(argv)}`);
+  assert.match(readFileSync(join(workdir, String(id), "prompt.txt"), "utf8"), /# USER PROMPT/, "the instruction the run was given is on disk next to the card");
 });
 
 test("a second Generate on a running card is refused instead of starting a second process", async () => {
@@ -64,9 +72,10 @@ test("a second Generate on a running card is refused instead of starting a secon
   // The agent records its argv the moment it starts; waiting for that file makes
   // "a second Generate while the first is running" a real overlap, not a race
   // where the first run might already have finished.
-  const started = join(workdir, String(id), "argv.json");
-  for (let i = 0; i < 60 && !existsSync(started); i++) await new Promise(r => setTimeout(r, 50));
-  assert.equal(existsSync(started), true, "the first run is really in progress");
+  const startedAt = () => (async () => { const n = (await workspace(p)).nodes[id]; return n.attempt ? join(n.attempt, "argv.json") : null; })();
+  let started = null;
+  for (let i = 0; i < 60; i++) { const candidate = await startedAt(); if (candidate && existsSync(candidate)) { started = candidate; break; } await new Promise(r => setTimeout(r, 50)); }
+  assert.ok(started, "the first run is really in progress");
   const second = await post(p, "/api/generate", { id });
   assert.equal(second.status, 409, "the second request is refused");
   assert.match(second.error, /already generating/i);
@@ -83,22 +92,36 @@ test("Stop ends the run, kills its whole process tree, and keeps the previous ar
   mkdirSync(join(workdir, String(id)), { recursive: true });
   writeFileSync(join(workdir, String(id), "note.txt"), "first run\n");
   await patch(p, { id, artifact: "note.txt" });
-  assert.equal((await workspace(p)).nodes[id].artifact, "note.txt", "the earlier artifact is on the card before the new run starts");
+  // Starting a run adopts a card from before publishing existed onto a name the
+  // agent cannot write over (`versions/v1-note.txt`), and moves the card there. So
+  // the earlier film is asked for by whatever the card now says, not by the old
+  // path: `note.txt` is the name the stand-in agent writes, and a stopped run must
+  // not be able to take the film the person was looking at.
+  const onCard = (await workspace(p)).nodes[id].artifact;
+  assert.match(onCard, /note\.txt$/, "the earlier artifact is on the card before the new run starts");
   await post(p, "/api/generate", { id });
   assert.equal((await workspace(p)).nodes[id].status, "running");
   // Wait until the agent has really started and its grandchild is alive. An
   // immediate Stop killed the process before it spawned anything, so the orphan
   // check below had nothing to find and passed without proving anything.
-  const marker = join(workdir, String(id), "grandchild.txt");
-  for (let i = 0; i < 60 && !existsSync(marker); i++) await new Promise(r => setTimeout(r, 50));
-  assert.equal(existsSync(marker), true, "the stand-in agent and its grandchild are running before Stop is pressed");
+  // The agent works in the attempt directory the card reports, not in the card's own
+  // directory: that separation is what keeps a creator's files out of its reach.
+  let marker = null;
+  for (let i = 0; i < 60; i++) {
+    const n = (await workspace(p)).nodes[id];
+    if (n.attempt && existsSync(join(n.attempt, "grandchild.txt"))) { marker = join(n.attempt, "grandchild.txt"); break; }
+    await new Promise(r => setTimeout(r, 50));
+  }
+  assert.ok(marker, "the stand-in agent and its grandchild are running before Stop is pressed");
   const stopped = await post(p, "/api/cancel", { id });
   assert.equal(stopped.status, 200, JSON.stringify(stopped));
   const node = await until(p, id, n => n.status !== "running", 40);
   assert.equal(node.status, "cancelled", `stopped card reports cancelled, got ${JSON.stringify(node)}`);
   assert.match(node.error, /stopped/i);
   assert.match(node.artifact, /note\.txt$/, "the artifact from the earlier run is still the card's artifact");
-  assert.equal(readFileSync(join(workdir, String(id), "note.txt"), "utf8"), "first run\n", "and it was not overwritten");
+  assert.match(node.artifact, /^versions\//, "and it lives where the agent renders nothing");
+  assert.equal(readFileSync(join(workdir, String(id), node.artifact), "utf8"), "first run\n", "the bytes on the card are still the earlier run's, not the stopped attempt's");
+  assert.equal(existsSync(join(workdir, String(id), "note.txt")), false, "and the stopped attempt left nothing at the name the next run will use");
   // The grandchild lives in the agent's process group and keeps rewriting its
   // marker. Clearing the marker after the Stop and looking again is the honest
   // question: did anything survive to write it back?
@@ -172,9 +195,9 @@ test("a run interrupted by the server shutting down is not left looking idle", a
   const id = Object.keys((await post(p, "/api/node", { x: 0, y: 0, type: "text", method: "llm", prompt: "hi" })).nodes).at(-1);
   await post(p, "/api/generate", { id });
   assert.equal((await workspace(p)).nodes[id].status, "running");
-  const started = join(workdir, String(id), "argv.json");
-  for (let i = 0; i < 60 && !existsSync(started); i++) await new Promise(r => setTimeout(r, 50));
-  assert.equal(existsSync(started), true, "the run is in progress when the server dies");
+  let started = null;
+  for (let i = 0; i < 60; i++) { const n = (await workspace(p)).nodes[id]; const candidate = n.attempt && join(n.attempt, "argv.json"); if (candidate && existsSync(candidate)) { started = candidate; break; } await new Promise(r => setTimeout(r, 50)); }
+  assert.ok(started, "the run is in progress when the server dies");
   stopServer(app); await new Promise(r => setTimeout(r, 300));
   const q = await nextPort();
   start(q, workdir, {}); await ready(q);

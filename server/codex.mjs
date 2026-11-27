@@ -1,5 +1,5 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
-import { basename, extname, join, relative, resolve } from "node:path";
+import { basename, extname, isAbsolute, join, relative, resolve } from "node:path";
 import { spawn } from "node:child_process";
 import { methodRegistry, typeForFile, typeRegistry } from "./registry.mjs";
 import { assemblePrompt } from "./prompt.mjs";
@@ -63,14 +63,24 @@ const finalJson = file => {
 // The run is returned as a promise that also carries `cancel()`, because a person
 // who presses Stop expects the agent and everything it started to be gone - not
 // just the direct child process.
-export function generate({ node, workspace, context = {}, model, effort, useGhPrefix, onRaw }) {
-  const nodeDir = join(workspace.workdir, String(node.id)); mkdirSync(nodeDir, { recursive: true });
+// `attemptDir` is where this run is allowed to write. It is a directory of its own,
+// not the card's, because the card's holds things a person put there: a poster they
+// dropped in, the versions they kept. Keeping the two apart is what makes "throw
+// away the attempt" a single delete of a directory the harness created, instead of
+// a guess about which files in a shared folder are somebody else's.
+export function generate({ node, workspace, context = {}, model, effort, useGhPrefix, onRaw, attemptDir }) {
+  const nodeDir = join(workspace.workdir, String(node.id)), workDir = attemptDir || nodeDir;
+  mkdirSync(nodeDir, { recursive: true }); mkdirSync(workDir, { recursive: true });
   const prompt = assemblePrompt({ node, workspace, context });
+  // The record of how a card was made - the assembled prompt, the CLI's event stream,
+  // its final message - belongs with the card and outlives the run, because it is how
+  // a person checks what they were actually charged for. The agent's *output* is
+  // different: it is bulky, it is scratch once published, and it lives in workDir.
   const log = join(nodeDir, "codex.jsonl"), final = join(nodeDir, "codex-final.json"), devLog = join(workspace.projectCwd || process.cwd(), "dev.log");
   // Fingerprinted before the harness writes prompt.txt and the log, so this describes
   // the directory as the previous run left it. Comparing against it afterwards is how
   // the check below tells "this run wrote it" from "it was already here".
-  const before = snapshot(nodeDir);
+  const before = snapshot(workDir);
   const configured = process.env.CODEX_BIN || "codex";
     const command = configured.endsWith(".mjs") ? process.execPath : configured;
     const commandArgs = configured.endsWith(".mjs") ? [configured, "--output-last-message", final] : [];
@@ -83,9 +93,21 @@ export function generate({ node, workspace, context = {}, model, effort, useGhPr
     // line executes, and a reader of this directory (a person, or a test fixture
     // standing in for an agent) must never see the directory without the prompt
     // that produced it.
-    writeFileSync(join(nodeDir, "prompt.txt"), prompt, "utf8");
-    child = spawn(command, args, { cwd: workspace.projectCwd || process.cwd(), env: { ...process.env, HYPERMAKER_NODE_DIR: nodeDir, HYPERMAKER_NODE_TYPE: node.type, HYPERMAKER_NODE_ID: String(node.id) }, stdio: ["ignore", "pipe", "pipe"], detached: true });
+    // In the run's own directory: that is what HYPERMAKER_NODE_DIR means, and the
+    // agent reads the instruction from there. It is also the one file a person can
+    // read afterwards to see exactly what was asked, so it is copied to the card
+    // before the attempt directory is dropped.
+    writeFileSync(join(workDir, "prompt.txt"), prompt, "utf8");
+    // HYPERMAKER_NODE_DIR is where a run writes, and that is now its own directory.
+    // HYPERMAKER_CARD_DIR is the card's, for reading things a person put there.
+    child = spawn(command, args, { cwd: workspace.projectCwd || process.cwd(), env: { ...process.env, HYPERMAKER_NODE_DIR: workDir, HYPERMAKER_CARD_DIR: nodeDir, HYPERMAKER_NODE_TYPE: node.type, HYPERMAKER_NODE_ID: String(node.id) }, stdio: ["ignore", "pipe", "pipe"], detached: true });
     const commandLine = `${command} ${args.map(x => JSON.stringify(x)).join(" ")}`;
+    // What was actually invoked, kept with the card and not with the attempt: the
+    // attempt directory is scratch and goes away, but "which model, which flags, on
+    // what prompt" is the record a person needs when a result is not what they
+    // expected. The prompt is the last argument, so it is the one thing kept out of
+    // this file - prompt.txt holds it in full.
+    writeFileSync(join(nodeDir, "codex-command.json"), JSON.stringify({ command, args: args.slice(0, -1), at: new Date().toISOString() }, null, 1), "utf8");
     const commandLog = `[${new Date().toISOString()}] command: ${commandLine}\n${prompt}\n`;
     appendFileSync(devLog, commandLog); process.stdout.write(commandLog);
     const record = (stream, chunk) => { const raw = chunk.toString(); appendFileSync(log, raw); const line = `[${new Date().toISOString()}] ${stream}: ${raw}`; appendFileSync(devLog, line); process.stdout.write(line); onRaw?.(stream, raw); };
@@ -103,24 +125,46 @@ export function generate({ node, workspace, context = {}, model, effort, useGhPr
         // message and exited 1 with no reason in its event stream. Say what actually
         // happened, and point at the one cause worth suspecting.
         if (!existsSync(final)) {
-          return fail(new Error(`Codex exited with code ${code} and did not write its final message (${basename(final)} is missing): the run's directory was modified during the run. A run may write its own files but must not delete or rewrite prompt.txt, codex.jsonl, codex-final.json or versions/.`));
+          return fail(new Error(`Codex exited with code ${code} and did not write its final message (${basename(final)} is missing): the run's directory was modified during the run. A run may write its own files but must not delete ${basename(final)}.`));
         }
         const reason = reasonFrom(log);
         return fail(new Error(`Codex exited with code ${code}${reason ? `: ${reason}` : ""}`));
       }
       try {
-        const result = finalJson(final); const artifact = safe(nodeDir, result.artifact), script = result.script ? safe(nodeDir, result.script) : null;
+        const result = finalJson(final);
+        // An agent may name its output three ways: an absolute path, a path relative to
+        // the directory it wrote in (what HYPERMAKER_NODE_DIR means now), or - from an
+        // agent that still assumes the old layout - a path relative to the card. All
+        // three are accepted, and all three must land inside the card's directory.
+        // It also has to be this run's own work. A path that points anywhere else in
+        // the card - a kept version, an earlier take, something a person put there -
+        // is not output of this run, however valid the file looks. The old defence
+        // compared fingerprints of the card's directory; with a directory per run the
+        // same rule is stronger and simpler: publish only from the run's own folder.
+        const resolveOut = name => {
+          if (!name) return null;
+          const file = isAbsolute(name) ? name : (existsSync(join(workDir, name)) ? join(workDir, name) : join(nodeDir, name));
+          const inside = relative(workDir, resolve(file));
+          if (inside.startsWith("..") || isAbsolute(inside)) {
+            throw new Error(`The run named ${basename(name)}, which is outside the directory it was given to work in. A run may publish only a file it wrote itself this time, so an earlier result cannot be handed back as a new one.`);
+          }
+          return safe(workDir, resolve(file));
+        };
+        const artifact = resolveOut(result.artifact), script = resolveOut(result.script);
         if (!existsSync(artifact)) throw new Error("Agent artifact does not exist");
         const type = typeForFile(artifact); if (type !== node.type) throw new Error(`Artifact type mismatch: expected ${node.type}`);
         // Publishing is publishing a result. A file that still matches its pre-run
         // fingerprint means nobody wrote it during this run; a real agent did exactly
         // that and two different posters became two films with byte-identical video.
         // Failures are what a person can act on; a quiet duplicate is not.
-        const rel = relative(nodeDir, artifact);
+        const rel = relative(workDir, artifact);
         if (before.has(rel) && before.get(rel) === identity(artifact)) {
           throw new Error(`The agent returned ${rel} without rewriting it: the file is exactly as it was before this run started, so it holds the previous result rather than a new one. Try again, or ask the agent to render again into that path.`);
         }
         if (!existsSync(join(nodeDir, "AGENTS.md"))) writeFileSync(join(nodeDir, "AGENTS.md"), "", "utf8");
+        // Paths are relative to the card, because that is what `node.artifact` and
+        // `node.script` mean everywhere else, and because the attempt directory may
+        // not survive the run (a failure moves it aside).
         done({ script: script ? relative(nodeDir, script) : null, artifact: relative(nodeDir, artifact) });
       } catch (error) { fail(error); }
     });

@@ -1,5 +1,50 @@
 # Changelog
 
+## Unreleased — trying again costs nothing you care about, and a refused run says why, 2026-11-27
+
+A creator's normal path is not "generate once". It is try, fail, stop, retry, drop a
+reference file next to the card, retry again. Three things were wrong with that path.
+
+- **A failed retry could replace the take you had approved.** Adoption of a pre-publishing
+  artifact copied it into `versions/` but left the card pointing at the old name - and
+  that name is exactly where every agent renders. The first failure after upgrading
+  showed the half-finished attempt on the card. Now the card is moved onto the copy
+  before the agent starts, and the old file is only let go after that save has happened,
+  so a server that stops in between still reopens onto something playable.
+- **Discarded attempts accumulated forever.** Each failed or stopped run left its frozen
+  material copies, its half render and its scratch in the card's folder: four thrown-away
+  attempts grew one card from 5 files to 11, and the compaction notes for this repository
+  had already recorded an unreferenced `versions/` copy per failure with no test. Each run
+  now works in `attempts/<start>/`, which is dropped on success and bounded to the five
+  most recent abandoned ones.
+- **Clean-up was eating creators' own files.** The obvious fix - delete what appeared
+  during a run - cannot tell a poster a person dropped in from an agent's output, and
+  moving it to a quarantine bin is not much better: the path they knew stops working, and
+  the bin itself gets pruned. That is why the two are now in different directories
+  instead: nothing a run does can reach a file that sits next to the card.
+- **A linked draft greyed out Generate and said nothing.** Linking an empty card into
+  another and pressing Generate answered 400 with `path must be of type string, received
+  null` - in the browser console only - and left an attempt directory and a run marker
+  behind for a run that never started. The server now refuses with a sentence naming the
+  card that has nothing in it (`Generate #2 first, or unlink it: …`), creates nothing,
+  leaves the button usable, and shows the sentence both on the card and in a banner at the
+  bottom of the window - a card can sit low enough that its own message is off-screen.
+  Doing what the message says makes the same press work, and clears it.
+- **A run may publish only what it wrote.** With a directory per run, an agent can no
+  longer reach an earlier result by relative name; naming a file outside its own attempt
+  directory (a kept version, for instance) is now a failure with the reason on the card.
+- **What each take was asked survives the take.** The exact assembled prompt is kept next
+  to the card and per published take (`versions/v2-prompt.txt`), alongside the script and
+  the CLI invocation (`codex-command.json`). The sweep that bounds `versions/` first
+  deleted those two files on the very next run, which is what the newest test now pins.
+- Verified: **56/56** with a real Chromium. The three behaviours above each have a
+  negative control that restores the old code and turns exactly that test red: adoption
+  deleting before the save, the run writing into the card's directory with a deleting
+  cleanup, no pruning, no prompt exclusion, no refusal, and a hidden notice. The journey
+  was also walked at the real entry in a real browser: an old workspace opened, six
+  failures/stops with a creator's own file present throughout, a restart, then the linked
+  draft refusal and its successful retry - screenshots in `.tmp/accept-shots/`.
+
 ## Unreleased — two takes can be compared, and an unknown instruction stays unknown, 2026-11-27
 
 - **Compare two takes side by side.** A `compare` button on the kept row opens both

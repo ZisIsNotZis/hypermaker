@@ -49,10 +49,16 @@ canvasTest("a running card offers Stop, and pressing it ends the run visibly", a
   assert.equal(await stop.isVisible(), true, "Stop appears while the agent runs");
   assert.equal(await page.locator(`.card[data-id="${id}"] [data-generate]`).isDisabled(), true, "Generate is disabled rather than starting a second run");
   assert.equal(await page.locator(`.card[data-id="${id}"] [data-generate]`).textContent(), "Generating…");
-  // Wait for the agent to be genuinely alive before stopping it.
-  const marker = join(dir, String(id), "grandchild.txt");
-  for (let i = 0; i < 80 && !existsSync(marker); i++) await new Promise(r => setTimeout(r, 50));
-  assert.equal(existsSync(marker), true, "the agent was really running when Stop was pressed");
+  // Wait for the agent to be genuinely alive before stopping it. It works in the
+  // attempt directory the card reports, not in the card's own directory - that
+  // separation is what keeps a person's files out of an agent's reach.
+  let marker = null;
+  for (let i = 0; i < 80; i++) {
+    const n = await fetch(`http://127.0.0.1:${port}/api/workspace`).then(r => r.json()).then(w => w.nodes[id]);
+    if (n?.attempt && existsSync(join(n.attempt, "grandchild.txt"))) { marker = join(n.attempt, "grandchild.txt"); break; }
+    await new Promise(r => setTimeout(r, 50));
+  }
+  assert.ok(marker, "the agent was really running when Stop was pressed");
 
   await stop.click();
   await page.waitForFunction(id => document.querySelector(`.card[data-id="${id}"] .meta`)?.textContent.includes("cancelled"), id, { timeout: 6000 });

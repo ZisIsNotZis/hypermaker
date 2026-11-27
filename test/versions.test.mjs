@@ -158,12 +158,36 @@ test("an agent that hands back the previous render fails instead of publishing i
   // A real run did this: two different posters, two "versions", byte-identical video,
   // because the agent named the film it had already rendered. "The file exists" was
   // treated as "this run made it", so the card showed a second version made from
-  // material the film never saw. A creator needs to see a failure they can retry,
-  // with the approved version still playable.
+  // material the film never saw.
+  //
+  // The old defence was a fingerprint of the card's directory, compared afterwards.
+  // That is now backed by something stronger: every run gets an empty directory of
+  // its own, so the file a previous run rendered is not reachable by name at all.
+  // An agent that answers with the old filename without writing it does not get a
+  // quiet duplicate - it gets a failure a person can retry.
   const reuseBin = join(base, "reuse-codex");
-  // fake-agent.mjs is the one that can leave a file behind and name it again; the
-  // film stand-in above always renders a fresh PNG.
-  writeFileSync(reuseBin, `#!/bin/sh\nAGENT_MODE=reuse exec node ${JSON.stringify(join(root, "test/fake-agent.mjs"))} "$@"\n`);
+  // An agent that reaches outside its own working directory for its answer: it names
+  // the file the *previous* take left under versions/. That is the same deception as
+  // naming its own earlier render, and the only way left to attempt it - each run now
+  // works in an empty directory of its own, so a stale relative name cannot resolve.
+  writeFileSync(join(base, "reuse-agent.mjs"), `
+import { existsSync, readdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+const dir = process.env.HYPERMAKER_NODE_DIR, card = process.env.HYPERMAKER_CARD_DIR;
+const out = process.argv[process.argv.indexOf("--output-last-message") + 1];
+const previous = existsSync(join(card, "versions"))
+  ? readdirSync(join(card, "versions")).filter(f => /^v\\d+-note\\.txt$/.test(f)).sort()[0]
+  : null;
+if (previous) {
+  // The deceptive answer: reach into the card for the earlier take and offer it as
+  // this run's output, without writing anything of its own.
+  writeFileSync(out, JSON.stringify({ prompt: "stand-in", script: null, artifact: join(card, "versions", previous), type: "text", method: "llm", error: null }));
+} else {
+  writeFileSync(join(dir, "note.txt"), "made by an earlier run\\n");
+  writeFileSync(out, JSON.stringify({ prompt: "stand-in", script: null, artifact: "note.txt", type: "text", method: "llm", error: null }));
+}
+`);
+  writeFileSync(reuseBin, `#!/bin/sh\nexec node ${JSON.stringify(join(base, "reuse-agent.mjs"))} "$@"\n`);
   chmodSync(reuseBin, 0o755);
   const reusePort = await freePort(), reuseWorkdir = join(base, "reuse-ws");
   const reuse = startServer({ cwd: root, port: reusePort, env: { CODEX_BIN: reuseBin, HYPERMAKER_WORKDIR: reuseWorkdir, HYPERMAKER_RESET_WORKSPACE: "1" } });
@@ -189,8 +213,8 @@ test("an agent that hands back the previous render fails instead of publishing i
     await api("POST", "/api/generate", { id: card });
     const second = await wait(card);
 
-    assert.equal(second.status, "error", "handing back an old file is a failure, not a new version");
-    assert.match(second.error, /without rewriting it/, `the card says what happened, got ${second.error}`);
+    assert.equal(second.status, "error", "naming a file this run did not write is a failure, not a new version");
+    assert.match(second.error, /outside the directory it was given|does not exist|without rewriting it/, `the card says what happened, got ${second.error}`);
     assert.equal(second.artifact, approved, "the approved artifact is still the one on the card");
     assert.deepEqual(second.versions || [], [], "and no duplicate version was published");
     const approvedBytes = readFileSync(join(reuseWorkdir, String(card), approved), "utf8").trim();
