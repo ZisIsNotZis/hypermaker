@@ -72,7 +72,11 @@ if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith
   catch (error) { console.error(error.message); process.exit(2); }
   mkdirSync(dirname(out), { recursive: true });
   writeFileSync(out, toWav(rendered.samples, rendered.rate));
-  const timeline = { audio: out, rate: rendered.rate, seconds: rendered.samples.length / rendered.rate, phrases: rendered.segments };
+  // `voice` records the settings the bytes were made with, because the server rebinds a
+  // published WAV to its script by re-rendering it: the same words at a different speed or
+  // pitch are a different signal, and a timeline that did not say how it was rendered could
+  // only be checked by a tolerance loose enough to accept a different sentence.
+  const timeline = { audio: out, rate: rendered.rate, seconds: rendered.samples.length / rendered.rate, voice: { rate: Number((Number(arg("rate")) || 1).toFixed(3)), pitch: Number((Number(arg("pitch")) || 112).toFixed(3)) }, phrases: rendered.segments };
   const timelinePath = arg("timeline");
   if (timelinePath) { mkdirSync(dirname(timelinePath), { recursive: true }); writeFileSync(timelinePath, JSON.stringify(timeline, null, 2)); }
   console.log(JSON.stringify({ out, seconds: Number(timeline.seconds.toFixed(2)), phrases: timeline.phrases.map(p => ({ text: p.text, start: Number(p.start.toFixed(2)), duration: Number(p.duration.toFixed(2)) })) }, null, 2));

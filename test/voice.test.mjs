@@ -222,14 +222,17 @@ test("the server refuses each way a narration can lie about itself", () => {
   assert.match(verifyNarration({ attemptDir: foreign, artifact: "narration.wav" }).problems.join(" "), /cannot say/, "unpronounceable words are refused");
 
   // 4. A perfect timeline over a file of noise - the shape an agent produces without
-  //    speaking. The timeline is internally consistent and matches the file's length, so
-  //    only measuring the audio can catch it.
+  //    speaking. The timeline is contiguous and plausible; it is caught before the acoustic
+  //    judge even runs, because noise is not the recording those words make. That is the
+  //    stronger statement of the same fact: the file was refused for its contents, not for
+  //    its length, and `test/bind.test.mjs` covers the case where a take's timeline belongs
+  //    to another take of exactly the same duration.
   const liar = mkdtempSync(join(base, "liar-"));
   const noise = impostor(liar, "noise");
   const noiseSeconds = wavSamples(readFileSync(noise)).samples.length / 22050;
   writeFileSync(join(liar, "timeline.json"), JSON.stringify({ phrases: [{ text: "The sea at night is never still.", start: 0, duration: noiseSeconds }] }));
   const caught = verifyNarration({ attemptDir: liar, artifact: "noise.wav" });
   assert.equal(caught.ok, false, "a consistent timeline over noise must not pass");
-  assert.match(caught.problems.join(" "), /syllable onsets|vowel region|periodic/, `the audio itself is what failed, got: ${caught.problems.join("; ")}`);
+  assert.match(caught.problems.join(" "), /not that recording|does not match the script/, `the audio itself is what failed, got: ${caught.problems.join("; ")}`);
   assert.equal(caught.evidence, null, "and nothing is kept as evidence for a take that is not speech");
 });

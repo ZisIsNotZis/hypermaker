@@ -18,10 +18,21 @@ import { basename, join } from "node:path";
 import { judge } from "../voice/render.mjs";
 import { audit } from "../voice/lexicon.mjs";
 import { wavSamples } from "../voice/wav.mjs";
+import { appearsInOrder, bindTake, spokenWords, wordsOf } from "../voice/bind.mjs";
 
-export function verifyNarration({ attemptDir, artifact }) {
+// `material` is what the card was reading: the frozen text inputs (or the user prompt when
+// there is no text input), already concatenated by the caller. It is the third thing the
+// narration is checked against, and it is the one a reviewer found missing: the text of a
+// take and the sound of a take could come from two different runs, so the card wrote one
+// sentence and played another. Passing it in makes "what did it read" a fact about the
+// card rather than a claim in a JSON file.
+// `from` is the card the material came from, when there was one: {id, artifact}. It is
+// recorded in the evidence so a reopened card can say whose words were read, not only which
+// words - the creator asked for both.
+export function verifyNarration({ attemptDir, artifact, material = null, from = null }) {
   const wav = join(attemptDir, basename(String(artifact || "")));
   const problems = [];
+  let bound = null;
   if (!artifact || !existsSync(wav)) return { ok: false, problems: [`the run named ${artifact || "no artifact"}, which is not a file in its directory`], report: null };
 
   // A missing timeline is a failure, not a shrug: it is the record that makes the claim
@@ -60,6 +71,29 @@ export function verifyNarration({ attemptDir, artifact }) {
     if (cursor && Math.abs(cursor - seconds) > tolerance) {
       problems.push(`the timeline lasts ${cursor.toFixed(2)}s but the WAV is ${seconds.toFixed(2)}s, so it does not describe this file`);
     }
+
+    // Length agreement is not enough, and this is the bug a reviewer reproduced: two takes
+    // of different sentences can have the same duration to the sample, and the old check was
+    // happy with either one's timeline beside either one's audio. Rendering is deterministic,
+    // so the published bytes can be compared with the sound these very words make.
+    if (phrases.length && problems.length === 0) {
+      bound = bindTake({ file: wav, timeline });
+      if (!bound.ok) problems.push(...bound.problems);
+    }
+
+    // And the script has to be a selection of what the card was reading, not merely a list
+    // of pronounceable words. Without this an agent can speak a fluent sentence about
+    // something else, and the card will honestly report that it said it - true of the file,
+    // false about the card.
+    if (material != null) {
+      const source = wordsOf(material);
+      // A card with no text input narrates its own prompt, and the caller passes that.
+      if (!source.length) problems.push("this card had no text to read, so a narration of it cannot be shown to come from its material");
+      else {
+        const { ok, missing } = appearsInOrder(spokenWords(timeline), source);
+        if (!ok) problems.push(`the script says ${[...new Set(missing)].map(w => `"${w}"`).join(", ")}, which ${missing.length === 1 ? "is" : "are"} not in the material this card was given; a narration may leave words out but cannot add them`);
+      }
+    }
   }
 
   // Measured only when the timeline held up: running the judge against an unknown script
@@ -77,7 +111,15 @@ export function verifyNarration({ attemptDir, artifact }) {
     vowelKinds: report.vowelKinds,
     voicedShare: Number(report.voicedShare.toFixed(2)),
     peak: report.peakSample,
-    phrases: (timeline?.phrases || []).map(p => ({ text: String(p.text).trim(), start: Number(Number(p.start).toFixed(2)), duration: Number(Number(p.duration).toFixed(2)) }))
+    phrases: (timeline?.phrases || []).map(p => ({ text: String(p.text).trim(), start: Number(Number(p.start).toFixed(2)), duration: Number(Number(p.duration).toFixed(2)) })),
+    // How the words over the player were tied to the sound under it: the published bytes
+    // were re-rendered from this very script and agreed to this correlation. Kept because
+    // it is what a person is trusting when they read the sentence and press play, and it is
+    // a number a later check cannot quietly stop computing.
+    take: { correlation: bound?.correlation ?? null },
+    // Which card was read, when there was one. Provenance the creator asked for: reopening
+    // the workspace must say both what was said and where the words came from.
+    source: from ? { id: Number(from.id), artifact: from.artifact ?? null } : null
   } : null;
   return { ok: problems.length === 0, problems, report, evidence, seconds, words: words.trim() };
 }

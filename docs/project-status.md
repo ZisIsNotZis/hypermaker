@@ -17,7 +17,8 @@ Development continues, but the open work is **evidence, not features**: output
 quality has not been judged, a *natural* voice has never run, `realistic` and long
 renders are unexercised, and a creator's file next to a card is protected from the
 harness's clean-up but not from the agent itself. The offline voice does run and is
-measured — see the narration rows below. The sections below say what each
+measured — see the narration rows below — but "intelligible" is not one of the measured
+facts: it is a judgement only a listener can make, and nothing here has made it. The sections below say what each
 claim rests on.
 
 ## What is real and what is simulated
@@ -36,7 +37,8 @@ pass" means "generation works". Both are true, but for different reasons.
 | Film from canvas material | `test/film.test.mjs`, one real run | the agent's direction | a real h264 MP4 whose embedded AAC track was measured audible (4.05 s, peak 11506 over 178752 samples, ~0.9997 correlated with the source WAV) |
 | Artifact provenance | `test/sources.test.mjs` | — | frozen-at-start sources, kept mid-run links, failure-safe, key-based ids |
 | Audio artifact (`synth`) | `test/audio.test.mjs`, one real run | the agent's taste in sound | PCM synthesis, RIFF header, file endpoint, the decoded `<audio>` with a real duration |
-| Audio narration (`narration`, offline) | `test/voice.test.mjs`, `test/narration.test.mjs` | which words to read | a formant synthesizer in `voice/`, a real WAV, the server verifying timeline against bytes, the film's own extracted track measured, the phrase record read back after a restart |
+| Audio narration (`narration`, offline) | `test/voice.test.mjs`, `test/bind.test.mjs`, `test/narration.test.mjs` | which words to read | a formant synthesizer in `voice/`, a real WAV, the server re-rendering the timeline's script and requiring the published bytes to match it (correlation 1.000, refused below 0.85), every spoken word checked against the frozen material, the film's own extracted track measured, the phrase record and source card read back after a restart |
+| A listener understanding the voice | — | — | nothing: the checks are measurements of a signal. No recogniser or speech model exists on this machine, so intelligibility rests on a person playing `node voice/render.mjs --text … --out out.wav` |
 | Audio natural voice (`tts.cpp`, `bark.cpp`) | — | everything | nothing: the binaries are not on this machine |
 | `hyperframe` image/video | — | everything | nothing beyond the method guidance being passed to the agent |
 | Quality presets | — | — | passed as guidance only; never measured against a real model |

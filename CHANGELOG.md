@@ -1,5 +1,43 @@
 # Changelog
 
+## Unreleased — a take's words and a take's sound have to be the same take, 2026-11-27
+
+A reviewer took two narrations of different sentences, both 3.291 s long to the sample, and
+put one take's `timeline.json` beside the other take's WAV. The server accepted it and the
+card reported the second sentence over the first one's audio. Nothing in the old check was
+wired wrong: it compared the timeline with the file's *duration*, and duration cannot tell
+two sentences of equal syllable count apart.
+
+- **The published bytes are re-rendered from their own script.** Rendering is deterministic
+  - the noise source is seeded from the words - so the server renders the timeline's phrases
+  again and correlates the result with the file. Measured on this voice: same words 1.000,
+  one word changed 0.515, two clauses swapped 0.166, same words reordered 0.026. A take below
+  **0.85** is refused, with a message that gives the correlation. `voice/bind.mjs` owns the
+  comparison; `timeline.json` now records the rate and pitch it was rendered at, and an older
+  timeline without them is still verified at the defaults rather than breaking workspaces
+  written by the previous build.
+- **A narration may select from its material, but not invent.** Every spoken word must appear,
+  in order, in the frozen text the card was given; words that are absent are named in the
+  refusal. This is the check that stops an agent which "improved" the copy from publishing a
+  fluent narration of something the card never said.
+- **The card says which card it read.** Evidence carries `take.correlation` and
+  `source: {id, artifact}`, so a reopened card reads `read from #2 lines.txt · matched 1.000`
+  next to the numbers it already showed. That is the creator's requirement: the sentence over
+  the player must be the sentence in the file, from the take it came from.
+- **The docs stopped letting a measurement stand in for listening.** "Robotic but
+  intelligible" was backed by formant counts and onset floors - real measurements of a
+  signal, and not evidence that anyone understood a sentence. There is no recogniser or
+  speech model on this machine, so the docs now say that plainly, give the command that
+  produces a file to listen to, and record the defects a listener hears and a measurement
+  does not (`science` → "S-S-IY-N-S", `moved` → "M-AA-V-EH-D"). `test/docs.test.mjs` pins
+  both the removed phrase and the honest replacement, in both languages.
+
+Tests: 75 → 81. `test/bind.test.mjs` is new and pins the swap, the reorder, the one-word
+edit, the length mismatch, a timeline that misstates its own speed, an invented word, and the
+legacy timeline. `test/narration.test.mjs` gained the reviewer's case end to end through the
+server, and its reopened-card assertions now check the source card and the correlation. Each
+new guard was observed to fail its own test when disabled.
+
 ## Unreleased — a card's text can be heard, and the voice is measured rather than claimed, 2026-11-27
 
 A creator put a line of text on one card and wanted to hear it on the next, then wanted the

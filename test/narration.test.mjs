@@ -1,6 +1,6 @@
 import test, { after, before } from "node:test";
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
@@ -170,8 +170,79 @@ test("canvas text becomes a narration that measures as speech, and a film that c
   // The same numbers the card showed before the restart, not merely a line that looks similar:
   // a record that survives as a stale copy would be as bad as one that vanished.
   assert.equal(reopened, narrationLine, "the reopened card reports the same measurement it did before");
+  // And the correspondence the reviewer asked for: the reopened card says which card was
+  // read and that the bytes agree with the words. Without these, a restart could keep a
+  // measurement that no longer described anything a person can check.
+  assert.match(reopened, new RegExp(`read from #${textId}`), `the reopened narration names the card it read, got ${reopened}`);
+  assert.match(reopened, /matched 1\.000/, `and says the audio was re-rendered from its script, got ${reopened}`);
   assert.deepEqual(errors, [], `no page errors, got ${errors.join(" | ")}`);
   await page.close();
+});
+
+test("a real recording of the wrong words is refused, so the card cannot play one sentence and write another", async t => {
+  // The reviewer's report, end to end through the server: an audio card that really runs the
+  // shipped renderer, but speaks a different sentence of the same length. Every file-level
+  // property holds - it is the voice, it measures as speech, the timeline is contiguous and
+  // matches the duration - and the card used to publish it over the material it was given.
+  if (skip) return t.skip(skip);
+  const wrong = join(base, "wrong-codex.mjs");
+  writeFileSync(wrong, `
+import { execFileSync } from "node:child_process";
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
+const dir = process.env.HYPERMAKER_NODE_DIR, root = process.env.HYPERMAKER_PROJECT;
+// The reviewer's shape: a real recording of the card's own words, published beside a timeline
+// left over from a different take. Both files are genuine; they are simply not the same take.
+const script = join(dir, "script.txt");
+writeFileSync(script, "Open the blue door.\\nClose the red gate.");
+execFileSync(process.execPath, [join(root, "voice/render.mjs"), "--file", script, "--out", join(dir, "narration.wav"), "--timeline", join(dir, "timeline.json")], { stdio: "inherit" });
+// Same length to the sample, different sentence: duration cannot tell them apart.
+const borrowed = join(dir, "borrowed.txt");
+writeFileSync(borrowed, "Open the red gate.\\nClose the blue door.");
+execFileSync(process.execPath, [join(root, "voice/render.mjs"), "--file", borrowed, "--out", join(dir, "borrowed.wav"), "--timeline", join(dir, "timeline.json")], { stdio: "inherit" });
+const out = process.argv[process.argv.indexOf("--output-last-message") + 1];
+if (out) writeFileSync(out, JSON.stringify({ prompt: "read it", script, artifact: join(dir, "narration.wav"), type: "audio", method: "narration", error: null }));
+`);
+  const port3 = await freePort(), workdir3 = join(base, "ws-wrong"), binPath3 = join(base, "wrong");
+  // The text card is written by the ordinary stand-in; only the audio card misbehaves. A
+  // single binary for both would have the material card produce a WAV.
+  writeFileSync(binPath3, `#!/bin/sh\ncase "$HYPERMAKER_NODE_TYPE" in\n  text) exec node ${JSON.stringify(join(root, "test/fake-narration-text-codex.mjs"))} "$@" ;;\n  *) exec node ${JSON.stringify(wrong)} "$@" ;;\nesac\n`); chmodSync(binPath3, 0o755);
+  const app3 = startServer({ cwd: root, port: port3, env: { CODEX_BIN: binPath3, HYPERMAKER_WORKDIR: workdir3, HYPERMAKER_RESET_WORKSPACE: "1", HYPERMAKER_PROJECT: root } });
+  try {
+    await waitReady(port3);
+    const create = (path, body) => fetch(`http://127.0.0.1:${port3}${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }).then(r => r.json());
+    // The material: a real text card, generated through the same route a person uses, so the
+    // frozen copy the narration reads is the one the harness actually makes. Writing the file
+    // by hand and setting `artifact` skipped the copy, and the check then read the fallback
+    // prompt instead - the failure that made this case assert the wrong thing.
+    const material = "Open the blue door. Close the red gate.";
+    const madeText = await create("/api/node", { x: 10, y: 10, type: "text", method: "llm", prompt: material, quality: "demo" });
+    const tid = Number(Object.keys(madeText.nodes).at(-1));
+    await create("/api/generate", { id: tid });
+    let textNode;
+    for (let i = 0; i < 200; i++) {
+      textNode = (await fetch(`http://127.0.0.1:${port3}/api/workspace`).then(r => r.json())).nodes[tid];
+      if (textNode?.artifact || textNode?.error) break;
+      await new Promise(r => setTimeout(r, 100));
+    }
+    assert.match(textNode.artifact || "", /lines\.txt$/, `the material card was written, got ${textNode.artifact} / ${textNode.error}`);
+    const made = await create("/api/node", { x: 300, y: 10, type: "audio", method: "narration", quality: "demo", prompt: "read it", inputs: [tid] });
+    const id = Number(Object.keys(made.nodes).at(-1));
+    await create("/api/generate", { id });
+    let node;
+    for (let i = 0; i < 400; i++) {
+      node = (await fetch(`http://127.0.0.1:${port3}/api/workspace`).then(r => r.json())).nodes[id];
+      if (node?.artifact || node?.error) break;
+      await new Promise(r => setTimeout(r, 100));
+    }
+    assert.equal(node.artifact, null, "a take whose words and audio came from different recordings was published");
+    assert.match(node.error || "", /not a narration/, `the card says the take was refused, got ${node.error}`);
+    // The decisive check: both files are real speech of the card's own words, so only the
+    // rebind can tell that the sentence now written on the card was recorded by another take.
+    // Duration, syllable count and pronunciation all agree; the signal does not.
+    assert.match(node.error, /does not match the script recorded next to it/, `and says the audio is not its script, got ${node.error}`);
+    assert.equal(node.narration, null, "no evidence was recorded for a refused take");
+  } finally { stopServer(app3); stopAll(); }
 });
 
 test("a narration that does not measure as speech is refused, and the card says why", async t => {
@@ -216,7 +287,11 @@ if (out) writeFileSync(out, JSON.stringify({ prompt: "read it", script: "make.mj
     }
     assert.equal(node.artifact, null, "nothing was published");
     assert.match(node.error || "", /not a narration/, `the card says what failed, got ${node.error}`);
-    assert.match(node.error, /syllable onsets|vowel region|periodic/, `and names the measurement that failed, got ${node.error}`);
+    // The reason is now the correspondence, caught before the acoustic judge could run:
+    // these bytes are not the recording the timeline claims, and the words are not in the
+    // material either. Both are named, because a person fixing this needs to know which
+    // one to fix. Naming only "not speech" would have been true and less useful.
+    assert.match(node.error, /not that recording|does not match the script|not in the material/, `and names the check that failed, got ${node.error}`);
     assert.equal(node.narration, null, "no evidence was recorded for a take that was not speech");
     // The refused take is not reachable from the canvas at all: the attempt directory is
     // kept for inspection, but nothing was published into `versions/`, so there is no file a

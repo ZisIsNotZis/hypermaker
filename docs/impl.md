@@ -99,9 +99,40 @@ visits one formant pair. `test/voice.test.mjs` pins tone, noise, sweep and silen
 failures for that reason.
 
 A kept narration is evidence on the card, not just an artifact: the server stores
-`{verdict, seconds, words, onsets, vowelKinds, voicedShare, peak, phrases}` on the node, and
-`workspace.yml` round trips it per version, so a reopened workspace still shows which phrases
-were spoken and when. The canvas prints the numbers with the script in a tooltip.
+`{verdict, seconds, words, onsets, vowelKinds, voicedShare, peak, phrases, take, source}` on
+the node, and `workspace.yml` round trips it per version, so a reopened workspace still shows
+which phrases were spoken and when. The canvas prints the numbers with the script in a
+tooltip.
+
+**The words and the sound have to be the same take.** A reviewer reproduced this on the
+first build of the slice: two sentences of the same syllable count render to files of exactly
+the same length (3.291 s to the sample), so a check that compared the timeline with the
+file's *duration* accepted either timeline beside either audio. The card then wrote one
+sentence over a player that spoke another - a record worse than none, because it invites
+trust.
+
+The fix uses determinism rather than resemblance. Rendering is a pure function of the words
+(the noise source is seeded from the words themselves), so `voice/bind.mjs` re-renders the
+timeline's own phrases at the rate and pitch the timeline records (`timeline.voice`) and
+correlates the result with the published samples. Measured: the same words 1.000, one word
+changed 0.515, two clauses swapped 0.166, the same words reordered 0.026. `SAME_TAKE` is
+0.85, inside that gap on both sides, and `verifyNarration` refuses below it. A length check
+runs first and reports the lengths rather than a score, because `"2.00s vs 2.63s"` says what
+to fix.
+
+The third check is about the material: every spoken word must appear, in order, in the text
+the card was given (`materialText` in `server/prompt.mjs` reads the *frozen* copies, so an
+upstream edit during a render cannot retroactively legitimise a script). A selection is
+allowed - cutting a paragraph to one line is a normal take - but a word the material does
+not contain is refused, and the refusal names it. This is what stops an agent that
+"improved" the copy from publishing a fluent narration of something nobody asked for.
+
+Evidence now carries `take.correlation` and `source: {id, artifact}`, so the card can say
+`read from #2 lines.txt · matched 1.000` and a reader can tell which card's words were
+spoken. `test/bind.test.mjs` pins the swap, the reorder, the one-word edit, the length
+mismatch, the misstated rate, the invented word and the legacy timeline written before
+`voice` was recorded (which must still verify at the defaults). Each guard was observed to
+fail its own test with the guard disabled.
 
 One related bug: `POST /api/node` with no explicit method gave **every** card
 `method: "llm"`, so an audio card carried a text method. It now defaults to the first method

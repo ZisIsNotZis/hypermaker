@@ -4,7 +4,7 @@ import { basename, dirname, extname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readWorkspace, writeWorkspace, nodeRecord } from "./workspace.mjs";
 import { methodFor, methodsFor, registryInfo, typeForFile } from "./registry.mjs";
-import { assemblePrompt } from "./prompt.mjs";
+import { assemblePrompt, materialText } from "./prompt.mjs";
 import { generate as runCodex } from "./codex.mjs";
 import { verifyNarration } from "./narration.mjs";
 
@@ -442,7 +442,13 @@ const server = createServer(async (req, res) => { try {
       // and the take a person already had stays where it is - the same rule as any other
       // failure. This runs before `publish`, so nothing that fails the check is ever
       // reachable as an artifact on the canvas.
-      const narration = run.type === "audio" && run.method === "narration" ? verifyNarration({ attemptDir, artifact: result.artifact }) : null;
+      // `materialText` reads the frozen copies the agent was given, not the live cards: what
+      // matters is the words this run could see, and an upstream card edited during a render
+      // must not be able to make the take that is already spoken look like it read the new
+      // text. The material is what the script must be a selection of, and `from` is the card
+      // whose words those were, recorded so a reopened canvas can say where they came from.
+      const material = run.type === "audio" && run.method === "narration" ? materialText({ node: run, workspace: { workdir, nodes: promptNodes } }) : null;
+      const narration = material ? verifyNarration({ attemptDir, artifact: result.artifact, material: material.text, from: material.from }) : null;
       if (narration && !narration.ok) throw new Error(`This take is not a narration: ${narration.problems.join("; ")}`);
       // The finished bytes are published under a name no later run can write to, and
       // that is what the card shows. Whatever the agent left behind at its own

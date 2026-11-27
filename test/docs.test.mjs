@@ -106,6 +106,31 @@ test("speech is claimed only as far as it was measured", () => {
   assert.match(en, /^- \*\*A natural voice\.\*\*/m, "README.md's open work still names the natural voice as the missing piece");
   assert.match(zh, /^- \*\*自然嗓音。\*\*/m, "README.zh-CN.md's open work still names the natural voice as the missing piece");
 });
+
+test("the docs do not pass an acoustic measurement off as a listener understanding it", () => {
+  // A reviewer pointed out the exact overclaim this pins shut: the README called the voice
+  // "robotic but intelligible" and backed that with numbers about formants and syllable
+  // onsets. Those numbers are real, and they are a measurement of a signal - they cannot
+  // show that a person understood a sentence, and no recogniser exists on this machine to
+  // say so either. Both languages now have to say which part is measured, and that judging
+  // whether it is understandable is a person's job, with a command to do it.
+  const en = doc("README.md"), zh = doc("README.zh-CN.md");
+  // The removed wording: one word doing the work of an unrun listening test.
+  assert.doesNotMatch(en, /robotic but intelligible/i, "README.md claims intelligibility outright");
+  assert.doesNotMatch(zh, /机械但听得懂/, "README.zh-CN.md claims intelligibility outright");
+  // And the honest replacement has to stay: the limit is named, and there is a way to check
+  // it. A negative control that dropped the limitation but kept `--check` stayed green
+  // until this was split into two assertions.
+  assert.match(en, /no independent check has established that a listener understands it/i,
+    "README.md says plainly that intelligibility was not independently tested");
+  assert.match(zh, /“听不听得懂”没有人独立听过/, "README.zh-CN.md says plainly that nobody listened independently");
+  // The way for a person to settle it must be runnable, not a promise to test it later.
+  assert.match(en, /node voice\/render\.mjs --text/, "README.md gives a command that produces a file to listen to");
+  assert.match(zh, /node voice\/render\.mjs --text/, "README.zh-CN.md gives a command that produces a file to listen to");
+  // The binding a reviewer asked for, described where a reader trusts the card.
+  assert.match(en, /must \*\*be that recording\*\*/, "README.md says the WAV is checked against its own script");
+  assert.match(zh, /必须\*\*真的是那段录音\*\*/, "README.zh-CN.md says the WAV is checked against its own script");
+});
 test("the status documents agree on where the project stands", () => {
   // Two contradictory status blocks at the top of one README is what a reader met: an
   // "active, versions kept" line followed immediately by "no further development is

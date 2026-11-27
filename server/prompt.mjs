@@ -37,6 +37,33 @@ function inputSection(node, inputs, workspace) {
     return lines.join("\n");
   }).join("\n\n");
 }
+
+// The words a run was actually given to read, as text.
+//
+// A narration has to be a selection of its material, and checking that means reading the
+// material the same way the agent did: the frozen copy of every linked *text* card, and the
+// card's own prompt for the words when there is none. It deliberately does not include the
+// method guide, the quality preset or AGENTS.md - those are instructions to the agent, not
+// material, and a script that quoted them back would be reading its own brief rather than the
+// card. `from` names the first card whose text was used, so the evidence can say whose words
+// were spoken.
+export function materialText({ node, workspace }) {
+  const parts = [];
+  let from = null;
+  for (const id of node.inputs || []) {
+    const source = workspace.nodes[id];
+    if (!source || source.type !== "text" || !source.artifact) continue;
+    const file = source.frozen || join(workspace.workdir, String(id), source.artifact);
+    if (!existsSync(file)) continue;
+    parts.push(fileText(file));
+    if (!from) from = { id: Number(id), artifact: source.artifact };
+  }
+  // With no text input, the guide tells the agent to narrate the prompt itself, and that is
+  // material too - otherwise such a card could never pass its own check.
+  if (!parts.length && node.prompt) parts.push(node.prompt);
+  return { text: parts.join("\n"), from, hadTextInput: !!from };
+}
+
 export function assemblePrompt({ node, workspace, context = {} }) {
   const type = typeRegistry.get(node.type), method = methodRegistry.get(`${node.type}/${node.method}`);
   if (!type || !method) throw new Error("Unsupported output type or generation method");
