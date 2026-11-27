@@ -47,6 +47,66 @@ Canvas implementation invariants (each has a regression test; two were once live
 
 `types/audio/methods/synth.mjs` exists because the two speech methods name binaries under `~/tts.cpp` and `~/bark.cpp`; when those are absent an audio card had no usable method at all. `synth` asks the agent to synthesize PCM in Node and write the RIFF header itself, so it needs nothing installed, and its guide says plainly that it makes tones and rhythm, not words. It is not a replacement for `tts.cpp`/`bark.cpp`, and the docs never present it as speech.
 
+## Narration
+
+`narration` is the method that actually reads a card out loud, and the reason it exists is a
+user asking for exactly that: text on one card, a voice on the next, a film that carries the
+voice. Nothing on this machine could speak - no `espeak`/`flite`/`piper`, no shared TTS
+library, no GGUF or ONNX model, and the bundled Chromium reports zero `speechSynthesis`
+voices - so the voice is written here, in `voice/`, with no dependency beyond Node: a
+lexicon that spells words into phonemes, a formant synthesizer (a pulse train through three
+resonators per vowel, plus noise for fricatives), WAV I/O, and a `measure()` that reads a
+file back.
+
+The method is only as good as its check, so the check is the part worth reading.
+`voice/render.mjs --check file.wav --words "…"` exports `judge()`, which owns every threshold;
+the server imports that same function, so an agent reporting the tool's numbers and the
+server checking the same bytes cannot disagree. A narration is verified twice before it is
+published, and each half can fail alone:
+
+1. **The timeline describes this file.** `timeline.json` lists each phrase with `text`,
+   `start` and `duration`. The phrases must be contiguous (a gap over 0.2 s is a failure),
+   positive, within tolerance of the WAV's real length, and every word must be one the
+   shipped lexicon can pronounce. A missing timeline is a failure, not a shrug: it is the
+   record that makes the claim checkable at all.
+2. **The file measures as speech.** `judge()` requires a peak well above silence, at least
+   0.3 s, at least a quarter of the loud frames periodic, a floor of syllable onsets for the
+   words claimed, and more than one vowel region.
+
+Three real defects were found while building it, and each is why a check exists:
+
+- A Chinese script produced a **0-second WAV and exit 0**. `tokenize()` dropped every token
+  with no Latin letters left, so a card of Chinese silently rendered nothing. A token that
+  *was* letters and now has none is pushed to `unreadable`, and the render exits 2.
+- The synthesizer was a **square wave**. Three chained resonators have large gain, and a
+  per-sample `clamp()` clipped 75% of samples flat. The result was periodic and
+  formant-shaped - it passed a naive "looks like speech" test - and sounded like a rasp. The
+  clamp is gone; the finished buffer is normalized once to 0.9 of full scale, which keeps the
+  syllable envelope. `test/voice.test.mjs` asserts under 1% of samples at full scale and a
+  90th/10th frame-energy ratio above 3.
+- Onset detection **died on one digital-zero frame**. AAC encoder padding puts zeros at
+  t=0; the noise floor stuck at 0 and no frame ever exceeded it, so a film's extracted track
+  measured 0 onsets while its source WAV measured 14. Frames below 3/32768 are now excluded
+  from the floor. An earlier attempt clamping the floor to `peak*0.02` over-corrected to 31
+  onsets and was reverted.
+
+The onset check is a **floor**, not an equality, and that is deliberate: this synthesizer
+produces roughly two envelope rises per syllable (38 onsets for 18 syllables), so pinning
+one per syllable would be tuning the threshold to its own answer. What separates speech from
+a plausible impostor is the vowel-region count: a 220 Hz tone amplitude-modulated at 4 Hz
+gets 15 onsets and `voicedShare 1.00`, as convincing as a sentence by those measures, and
+visits one formant pair. `test/voice.test.mjs` pins tone, noise, sweep and silence as
+failures for that reason.
+
+A kept narration is evidence on the card, not just an artifact: the server stores
+`{verdict, seconds, words, onsets, vowelKinds, voicedShare, peak, phrases}` on the node, and
+`workspace.yml` round trips it per version, so a reopened workspace still shows which phrases
+were spoken and when. The canvas prints the numbers with the script in a tooltip.
+
+One related bug: `POST /api/node` with no explicit method gave **every** card
+`method: "llm"`, so an audio card carried a text method. It now defaults to the first method
+of the card's type that is actually available - `narration` for audio.
+
 The file endpoint had two defects with one cause. It sent no `content-length` and ignored `Range`, so a media element could not learn a length or seek: Chromium reported `duration: null` for a real WAV, while an MP4 survived on its own `moov` box and looked healthy. The failure was also size-dependent — a 176 KB clip still reported a duration, a 352 KB one did not — so a short test fixture proves nothing. `sendFile` now sends a length, advertises `accept-ranges: bytes`, and answers a range request with `206`, a `content-range`, and exactly that slice (or `416` when unsatisfiable). `test/audio.test.mjs` uses a six-second clip for that reason, and fails with `Infinity` as the duration when the endpoint regresses.
 
 ## A film from canvas material

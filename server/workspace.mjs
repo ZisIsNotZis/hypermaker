@@ -34,6 +34,11 @@ export function serializeWorkspace(nodes = {}) {
     // artifact, so it has no instruction behind one, and repeating `null` on every
     // draft would be noise in a file people are meant to be able to read.
     if (typeof node.promptUsed === "string") lines.push(`  promptUsed: ${JSON.stringify(node.promptUsed)}`);
+    // What the audio of a narration measured, as the server measured it and not as the
+    // agent said it did. It is kept with the artifact because it is a fact about those
+    // bytes: a person who reopens the workspace tomorrow can still read that this take was
+    // checked, and against how many words. A card without a narration has no such line.
+    if (node.narration && typeof node.narration === "object") lines.push(`  narration: ${JSON.stringify(node.narration)}`);
     if (Array.isArray(node.sources) && node.sources.length) {
       lines.push(`  sources: ${JSON.stringify(compactSources(node.sources))}`);
     }
@@ -46,7 +51,7 @@ export function serializeWorkspace(nodes = {}) {
       // `prompt` is part of a version for the same reason `sources` is: two takes of
       // one card are told apart by what they were asked for, and a version that
       // only remembered its bytes could not say which of two prompts made it.
-      const compact = node.versions.map(v => ({ id: v.id, artifact: v.artifact ?? null, file: v.file ?? null, sources: compactSources(v.sources), prompt: v.prompt ?? null }));
+      const compact = node.versions.map(v => ({ id: v.id, artifact: v.artifact ?? null, file: v.file ?? null, sources: compactSources(v.sources), prompt: v.prompt ?? null, ...(v.narration ? { narration: v.narration } : {}) }));
       lines.push(`  versions: ${JSON.stringify(compact)}`);
     }
     return `${id}:\n${lines.join("\n")}`;
@@ -82,7 +87,7 @@ export function writeWorkspace(workdir, nodes) {
   renameSync(temp, target);
 }
 export function nodeRecord(id, node) {
-  const record = { id: Number(id), x: node.x ?? 0, y: node.y ?? 0, inputs: (node.inputs || []).map(Number), type: node.type, method: node.method ?? null, prompt: node.prompt || "", promptUsed: typeof node.promptUsed === "string" ? node.promptUsed : null, quality: node.quality || "standard", script: node.script ?? null, artifact: node.artifact ?? null, status: node.status ?? null, error: node.error ?? null, sources: Array.isArray(node.sources) ? node.sources : null, versions: Array.isArray(node.versions) && node.versions.length ? node.versions : null };
+  const record = { id: Number(id), x: node.x ?? 0, y: node.y ?? 0, inputs: (node.inputs || []).map(Number), type: node.type, method: node.method ?? null, prompt: node.prompt || "", promptUsed: typeof node.promptUsed === "string" ? node.promptUsed : null, quality: node.quality || "standard", script: node.script ?? null, artifact: node.artifact ?? null, status: node.status ?? null, error: node.error ?? null, sources: Array.isArray(node.sources) ? node.sources : null, narration: node.narration && typeof node.narration === "object" ? node.narration : null, versions: Array.isArray(node.versions) && node.versions.length ? node.versions : null };
   return record;
 }
 export function workspacePath(workdir, id, filename) {

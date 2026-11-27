@@ -6,6 +6,7 @@ import { readWorkspace, writeWorkspace, nodeRecord } from "./workspace.mjs";
 import { methodFor, methodsFor, registryInfo, typeForFile } from "./registry.mjs";
 import { assemblePrompt } from "./prompt.mjs";
 import { generate as runCodex } from "./codex.mjs";
+import { verifyNarration } from "./narration.mjs";
 
 const root = resolve(new URL("..", import.meta.url).pathname), publicDir = join(root, "public"), defaultWorkdir = join(root, ".hypermaker");
 let workdir = resolve(process.env.HYPERMAKER_WORKDIR || defaultWorkdir), nodes = readWorkspace(workdir), idCounter = Math.max(0, ...Object.keys(nodes).map(Number));
@@ -259,7 +260,17 @@ const server = createServer(async (req, res) => { try {
   if (url.pathname === "/api/workspace" && req.method === "GET") return json(res, 200, view());
   if (url.pathname === "/api/workspace" && req.method === "POST") { const b = await body(req); workdir = resolve(b.workdir || defaultWorkdir); nodes = adopt(readWorkspace(workdir), workdir); writeWorkspace(workdir, nodes); idCounter = Math.max(0, ...Object.keys(nodes).map(Number)); return json(res, 200, view()); }
   if (url.pathname === "/api/file") { const file = resolve(url.searchParams.get("path") || ""); const rel = relative(resolve(workdir), file); if (rel.startsWith("..") || rel.startsWith("/")) throw new Error("File outside workspace"); return sendFile(req, res, file); }
-  if (url.pathname === "/api/node" && req.method === "POST") { const b = await body(req), id = nextId(); nodes[id] = nodeRecord(id, { ...b, inputs: [], method: b.method || "llm", quality: b.quality || "standard" }); save(); return json(res, 200, view()); }
+  if (url.pathname === "/api/node" && req.method === "POST") {
+    const b = await body(req), id = nextId();
+    // A card with no method named starts on the first method that works for its own type.
+    // It used to start on `llm` whatever the type was, so an audio card created through the
+    // API - which is what a person gets from the canvas's own "+ Card" when they switch the
+    // type before the card has loaded - carried `llm` as its method. The record then named a
+    // text method for an audio card, and Generate asked the prompt assembler for a method
+    // that does not exist for that type.
+    const fallback = methodsFor(b.type || "text").find(m => m.available !== false)?.id ?? null;
+    nodes[id] = nodeRecord(id, { ...b, inputs: [], method: b.method || fallback, quality: b.quality || "standard" }); save(); return json(res, 200, view());
+  }
   if (url.pathname === "/api/import" && req.method === "POST") { const b = await body(req), id = nextId(), type = typeForFile(b.path); if (!type) throw new Error("Unsupported asset type"); const name = String(b.path).split(/[\\/]/).pop(); mkdirSync(join(workdir, String(id)), { recursive: true }); copyFileSync(resolve(b.path), join(workdir, String(id), name)); nodes[id] = nodeRecord(id, { x: b.x, y: b.y, type, inputs: [], artifact: name }); save(); return json(res, 200, view()); }
   if (url.pathname === "/api/link" && req.method === "POST") { const b = await body(req), target = getNode(b.target); if (Number(b.source) !== Number(b.target) && !target.inputs.includes(Number(b.source))) target.inputs.push(Number(b.source)); nodes[b.target] = target; save(); return json(res, 200, view()); }
   if (url.pathname === "/api/unlink" && req.method === "POST") { const b = await body(req), target = getNode(b.target); target.inputs = target.inputs.filter(id => id !== Number(b.source)); nodes[b.target] = target; save(); return json(res, 200, view()); }
@@ -269,7 +280,9 @@ const server = createServer(async (req, res) => { try {
     // Changing the output type drops the artifact (a PNG cannot be a soundtrack).
     // `promptUsed` describes an artifact, so it goes with it; leaving it behind
     // would let the next Generate keep that prompt as "the version it replaced".
-    if (n.artifact == null) n.promptUsed = null;
+    // The narration evidence describes an artifact, so it goes with it for the same reason
+    // the instruction does: a card with no artifact cannot have measured anything.
+    if (n.artifact == null) { n.promptUsed = null; n.narration = null; }
     nodes[b.id] = nodeRecord(b.id, n); save(); return json(res, 200, view()); }
   // Going back must move the provenance with the bytes. Restoring only the file
   // would leave the card claiming the newest film's materials over an older
@@ -291,7 +304,7 @@ const server = createServer(async (req, res) => { try {
     // publishes rather than overwrites, that is enough: the file it points at is not
     // going anywhere, so there is nothing to copy and nothing to roll back.
     const backAdopt = n.artifact ? adoptLegacy(workdir, n.id, n.artifact) : null;
-    const back = n.artifact ? { ...(list[index]), id: ordinal, artifact: n.artifact, file: backAdopt.file, sources: n.sources || [], prompt: n.promptUsed ?? null } : null;
+    const back = n.artifact ? { ...(list[index]), id: ordinal, artifact: n.artifact, file: backAdopt.file, sources: n.sources || [], prompt: n.promptUsed ?? null, narration: n.narration ?? null } : null;
     if (back?.file) list.splice(index, 1, back); else list.splice(index, 1);
     // The instruction has to move with the bytes, and "no instruction recorded" is
     // itself a fact that has to move. A version kept before prompts were recorded
@@ -307,7 +320,10 @@ const server = createServer(async (req, res) => { try {
     const instruction = typeof chosen.prompt === "string"
       ? { prompt: chosen.prompt, promptUsed: chosen.prompt }
       : { promptUsed: null };
-    nodes[n.id] = nodeRecord(n.id, { ...n, ...instruction, artifact: chosen.file, sources: chosen.sources || [], versions: list, status: "idle", error: null }); save();
+    // The narration evidence is provenance for the bytes, so it moves with them: restoring a
+    // spoken take must restore what was measured about it, and restoring a tone take must
+    // not leave the previous narration's numbers describing it.
+    nodes[n.id] = nodeRecord(n.id, { ...n, ...instruction, artifact: chosen.file, sources: chosen.sources || [], narration: chosen.narration ?? null, versions: list, status: "idle", error: null }); save();
     // Only now that no record names the old path may it go: the copy is already
     // safe under versions/ and the card has already moved somewhere else.
     if (backAdopt?.retire) rmSync(join(workdir, String(n.id), backAdopt.retire), { force: true });
@@ -397,7 +413,7 @@ const server = createServer(async (req, res) => { try {
     // The card was moved onto the published copy above, so this is already a name
     // nothing writes to. Referencing it by the same path is what keeps the kept
     // version and the card from being two different files.
-    const kept = n.artifact ? { id: ordinal, artifact: n.artifact, file: n.artifact, sources: n.sources || [], prompt: n.promptUsed ?? null } : null;
+    const kept = n.artifact ? { id: ordinal, artifact: n.artifact, file: n.artifact, sources: n.sources || [], prompt: n.promptUsed ?? null, narration: n.narration ?? null } : null;
     // Freezing the copies is this run's own bookkeeping, so its number must not be
     // reused - but publishing picks its own free name, above.
     // The card keeps pointing at the published artifact while the run works; only a
@@ -420,6 +436,14 @@ const server = createServer(async (req, res) => { try {
     const agent = runCodex({ node: run, workspace: { workdir, nodes: promptNodes, projectCwd: root }, model: b.model, effort: b.effort, useGhPrefix: b.useGhPrefix, attemptDir });
     running.set(n.id, agent);
     agent.then(result => {
+      // A narration card claims to have spoken a script. Check that claim against the bytes
+      // before anything is published: the timeline must describe this WAV, and the WAV must
+      // measure as speech. A card that fails becomes an error card with the reason on it,
+      // and the take a person already had stays where it is - the same rule as any other
+      // failure. This runs before `publish`, so nothing that fails the check is ever
+      // reachable as an artifact on the canvas.
+      const narration = run.type === "audio" && run.method === "narration" ? verifyNarration({ attemptDir, artifact: result.artifact }) : null;
+      if (narration && !narration.ok) throw new Error(`This take is not a narration: ${narration.problems.join("; ")}`);
       // The finished bytes are published under a name no later run can write to, and
       // that is what the card shows. Whatever the agent left behind at its own
       // filename is scratch, and is free to be overwritten next time.
@@ -464,7 +488,10 @@ const server = createServer(async (req, res) => { try {
       // What the person asked for *this* artifact, frozen at start exactly like the
       // material: `prompt` stays theirs to edit for the next take, `promptUsed`
       // answers "what is on screen and what was it asked to be".
-      nodes[n.id] = nodeRecord(n.id, { ...nodes[n.id], ...result, artifact: published || result.artifact, script: publishedScript ?? nodes[n.id].script ?? null, sources, promptUsed: run.prompt || "", versions: previous, status: "idle", error: null }); save();
+      // The measured narration, when there was one: it describes the take being published, so
+      // it moves with the artifact exactly like `sources` does, and it is cleared by any
+      // later take that is not a narration.
+      nodes[n.id] = nodeRecord(n.id, { ...nodes[n.id], ...result, artifact: published || result.artifact, script: publishedScript ?? nodes[n.id].script ?? null, sources, narration: narration?.evidence ?? null, promptUsed: run.prompt || "", versions: previous, status: "idle", error: null }); save();
       // After the save, not before: the sweep asks the record what is still reachable,
       // so running it first deleted the script and the per-take prompt this run had
       // just written - the files that say what produced the take now on the card.

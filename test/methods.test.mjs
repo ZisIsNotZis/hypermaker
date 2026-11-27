@@ -31,9 +31,10 @@ const fileExists = path => { try { return statSync(expand(path)).isFile(); } cat
 
 test("a method whose tool is missing is marked, and never sorts ahead of one that works", () => {
   const audio = methodsFor("audio");
-  const synth = audio.find(m => m.id === "synth"), bark = audio.find(m => m.id === "bark.cpp"), tts = audio.find(m => m.id === "tts.cpp");
-  assert.ok(synth && bark && tts, "all three audio methods are registered");
-  assert.equal(synth.available, true, "the offline method needs nothing, so it is always available");
+  const synth = audio.find(m => m.id === "synth"), narration = audio.find(m => m.id === "narration"), bark = audio.find(m => m.id === "bark.cpp"), tts = audio.find(m => m.id === "tts.cpp");
+  assert.ok(synth && narration && bark && tts, "all four audio methods are registered");
+  assert.equal(synth.available, true, "the offline tone method needs nothing, so it is always available");
+  assert.equal(narration.available, true, "and neither does the voice that ships in this repository");
   // The real claim: availability is a fact about the declared binary, not a guess. On a
   // machine that does have the binary this stays true and the method becomes selectable
   // as a default, which is the correct behaviour there.
@@ -66,7 +67,11 @@ test("a card whose method needs a missing tool refuses before creating anything,
     const answer = await post("/api/generate", { id });
     assert.match(answer.error || "", new RegExp(missing.id.replace(/\./g, "\\.")), "the refusal names the method that cannot run");
     assert.match(answer.error, /needs /, "and says what is missing");
-    assert.match(answer.error, /synth/, "and points at the method that works with nothing installed");
+    // It points at the method the registry itself offers first, rather than at a name
+    // written into the message: when `narration` was added it became the default for an
+    // audio card, and a refusal that still said `synth` would send a person to a tone.
+    const offered = methodsFor("audio").find(m => m.available !== false).id;
+    assert.match(answer.error, new RegExp(offered.replace(/\./g, "\\.")), `and points at ${offered}, the method that works with nothing installed`);
     assert.equal(answer.nodes[id].status, "draft", "the card was not marked running");
     let made = [];
     try { made = readdirSync(join(workdir, String(id)), { recursive: true }); } catch {}

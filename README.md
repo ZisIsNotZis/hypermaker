@@ -1,6 +1,6 @@
 **English** | [简体中文](README.zh-CN.md)
 
-> **Status: an ordinary creative session works, and is now what the tests follow (0.1.0, 2026-11-27).** You can make a film from canvas material, change the material, keep the take you approved, compare two takes, go back to one, and survive a failure, a Stop or a restart without losing the one you liked. `npm test` passes **65/65** with a usable Chromium; [Verification limits](#verification-limits) separates what is real from what a fixture stands in for, and says plainly that **speech synthesis is not proven** and that nothing here has been judged on *taste*.
+> **Status: an ordinary creative session works, and is now what the tests follow (0.1.0, 2026-11-27).** You can make a film from canvas material, change the material, keep the take you approved, compare two takes, go back to one, and survive a failure, a Stop or a restart without losing the one you liked. `npm test` passes **75/75** with a usable Chromium; [Verification limits](#verification-limits) separates what is real from what a fixture stands in for, says what the offline voice was **measured** to do and that a *natural* voice is still unproven, and that nothing here has been judged on *taste*.
 
 <div align="center">
   <img src="docs/logo.svg" alt="Hypermaker logo" width="112" />
@@ -20,8 +20,9 @@
 
 > **Status: 0.1.0, still being developed.** This is not a closed experiment. The
 > canvas and the generation path are usable and covered by tests; the open work is
-> evidence rather than features — output quality has not been judged, speech
-> synthesis has never run, and the `realistic` preset has not been measured. See
+> evidence rather than features — output quality has not been judged, the offline voice
+> is measured but robotic while a *natural* voice has never run, and the `realistic`
+> preset has not been measured. See
 > [`docs/project-status.md`](docs/project-status.md) for the real-vs-simulated table
 > and what a first run is like.
 
@@ -73,7 +74,7 @@ Server environment variables:
 - Build a DAG by dragging cards together; only direct inputs enter a downstream prompt.
 - Generate plain UTF-8 text with the `llm` method.
 - Generate still images and video with the `hyperframe` or `remotion` methods. Both are verified end to end through real Remotion renders (`test/media.test.mjs`, `demo` quality): a 320x180 PNG asserted by signature and by the loaded preview, and a 320x180 h264 MP4 asserted by container and by the `<video>` the browser decodes.
-- Generate audio with the offline `synth` method, which writes a real WAV with nothing installed (tones, chords, rhythm, sound effects). `test/audio.test.mjs` renders one and asserts the canvas player reports its true length, and one real Codex CLI run produced a 4-second WAV the canvas played. **Speech is not available out of the box**: the `tts.cpp` and `bark.cpp` methods only describe how to call binaries under `~/tts.cpp` and `~/bark.cpp`, which are not on this machine, so no speech run has ever been taken — see **Verification limits**.
+- Generate audio two ways, both with nothing installed. `synth` writes a real WAV of tones, chords, rhythm and sound effects. `narration` reads a card's text out loud with a formant synthesizer written in this repository (`voice/` — no model, no download, no network), **robotic but intelligible**, English words and digits only; the card then shows what the audio measured and which phrases it said. Link a text card into an audio card and that text is what gets spoken. The `tts.cpp` and `bark.cpp` methods stay the path to a natural voice, and still need binaries under `~/tts.cpp` and `~/bark.cpp` that this machine does not have — see **Verification limits**.
 - Pick a quality preset — `sketch`, `demo`, `standard`, `artistic`, `realistic` — which changes how much inspection and repair the agent does.
 - **The method list follows the card's type, and says which methods can run here.** Switching a card's output type refills its method list; a method whose local tool is missing stays selectable but is labelled `(needs a local install)`, and pressing Generate on it is refused with a sentence naming the missing binary and the method that works instead. Before this, switching a text card to audio left `llm` in the dropdown (so the offline `synth` method could not be picked at all) while the server would have run `bark.cpp`, whose binary does not exist.
 - Import an existing local file as a constant node (no method, no Generate); the file is copied into its node directory. Import is HTTP-only today (`POST /api/import`), like clone and relayout below.
@@ -105,7 +106,8 @@ This section mixes two kinds of evidence, and they are marked as they appear:
 - **Text** generation is exercised end to end against `test/fake-codex.mjs`, which writes the artifact a real agent would. Separately, one **real Codex CLI run** was taken on 2026-11-27 (`codex-cli 0.172.0`, ChatGPT auth): the agent wrote `generate.mjs`, ran it, and returned a plain-text artifact the canvas previewed (37 s, ~48k input tokens). That proves the adapter matches the real binary's `exec --json --output-last-message …` contract; it says nothing about output quality.
 - **Image** generation is exercised end to end against `test/fake-remotion-codex.mjs`, which really bundles and renders with Remotion; the artifact is checked to be a real PNG. The "agent" is fake, the render is not. A **real Codex CLI run** also rendered a 1200x675 PNG whose preview the canvas showed. It is worth knowing what that run did: the agent produced a correct image, but it reached for a Playwright screenshot because the method guide never told it where a browser was, so Remotion could not start. The guide now names `HYPERMAKER_CHROME`/`CHROME_BIN`.
 - **Video** generation is exercised end to end against the same fixture with `REMOTION_TEST_VIDEO=1`: Remotion bundles, selects, and calls `renderMedia` with h264, and the test asserts an `ftyp`/`avc1`/`moov` container plus a preview `<video>` that decodes 320x180 with a non-zero duration. Beyond the fixture, a **real Codex CLI run** took the generated poster as an input card, rendered a 720x404 h264 MP4 (3 s, 30 fps) from it - h264 needs even dimensions, so the requested 405 becomes 404, and the canvas played it — so a realistic composition is now covered once, by one run. What is still not proven is that the result is *good*: the fixture composition is two frames, and one real render says nothing about wording, pacing or how often a model picks sensible dimensions.
-- **Audio.** The **artifact path** is proven, including against a real model: `test/audio.test.mjs` drives a card whose agent writes a real 6-second 44.1 kHz mono PCM WAV with nothing installed, and asserts the RIFF header, the sample rate, that the data chunk size matches the bytes, that the samples are not silence, and that the canvas player reports the true length and can seek. Separately, a real Codex CLI run produced a 4-second WAV the canvas played (`0:00 / 0:04`) through the new offline `synth` method. **Speech synthesis is not proven**: `tts.cpp` and `bark.cpp` name binaries (`~/tts.cpp/build/bin/tts-cli`, `~/bark.cpp/build/examples/main/main`) that this machine does not have, so no speech run has been taken. `synth` produces tones, chords and rhythm, not words, and its guide says so.
+- **Audio.** The **artifact path** is proven, including against a real model: `test/audio.test.mjs` drives a card whose agent writes a real 6-second 44.1 kHz mono PCM WAV with nothing installed, and asserts the RIFF header, the sample rate, that the data chunk size matches the bytes, that the samples are not silence, and that the canvas player reports the true length and can seek. Separately, a real Codex CLI run produced a 4-second WAV the canvas played (`0:00 / 0:04`) through the offline `synth` method, which produces tones, chords and rhythm, not words.
+- **Narration is measured, not asserted.** The offline voice is measured on the bytes, not on a function having been called. `node voice/render.mjs --check file.wav --words "…"` reports what it heard, and a published narration is checked twice before it appears: the `timeline.json` beside the WAV must describe *this* file (phrases contiguous, adding up to its real length, every word pronounceable by the shipped voice) **and** the file itself must measure as speech — periodic rather than noisy, syllable onsets for the words it claims, and more than one vowel region. Sentence "The sea at night is never still. It carries every colour of the sky." measures 14 words, 18 syllables, 5.98 s, peak 29489, 87% voiced frames, 38 onsets for 18 syllables and several vowel regions. The onset count is a *floor*, roughly two rises per syllable — pinning it to one per syllable would be fitting the threshold to its own answer. The check that separates speech from a plausible impostor is the vowel regions: a 220 Hz tone amplitude-modulated at 4 Hz rings up 15 onsets, as many as a sentence, and never leaves one formant pair. `test/voice.test.mjs` pins tone, noise, sweep and silence as failures; `test/narration.test.mjs` drives a real WAV through a real Remotion film and measures the film's own audio track; `test/narration.test.mjs` also reopens the workspace after a restart and reads the phrase record back. **What this does not prove:** the voice is robotic, not natural, and its quality on a longer script has not been judged. For a natural voice, `tts.cpp` and `bark.cpp` name binaries (`~/tts.cpp/build/bin/tts-cli`, `~/bark.cpp/build/examples/main/main`) that this machine does not have, so no natural-voice run has been taken.
 - **A creator's own file next to a card survives the harness, not the agent.** The cleanup rule
   cannot reach it: a run writes only in `attempts/<start>/`, and nothing in a run's
   bookkeeping reads or deletes anything in the card's own directory. That is the
@@ -231,6 +233,8 @@ server/codex.mjs       Codex CLI adapter: one process per node, result validatio
 server/prompt.mjs      assembles the sectioned prompt from a node and its inputs
 server/registry.mjs    filesystem type/method registry
 server/workspace.mjs   workspace.yml serialization, atomic write, path safety
+server/narration.mjs   verifies a reported narration against its WAV and timeline
+voice/                 the offline voice: lexicon, formant synth, WAV I/O, measure, CLI
 public/index.html      single-file canvas UI (drag, link, pan, zoom, preview)
 prompts/               fixed prompt blocks: shared, output-*, type-*, quality-*
 types/                 text, image, audio, video definitions + methods
@@ -280,14 +284,14 @@ git diff --check
 **Implemented (0.1.0)**
 
 - Integer-id node graph persisted as one `workspace.yml`, atomic writes, node-local paths.
-- Filesystem registry with four output types and six methods (`llm`, `remotion`, `hyperframe`, `synth`, `tts.cpp`, `bark.cpp`); an artifact also records the materials it was made from.
+- Filesystem registry with four output types and seven methods (`llm`, `remotion`, `hyperframe`, `synth`, `narration`, `tts.cpp`, `bark.cpp`); an artifact also records the materials it was made from.
 - Concurrent async generation through the Codex CLI, one run per node, with per-node status over SSE, a real Stop, persisted outcomes and validated artifact/script output.
 - Canvas: create, drag, link, unlink, pan, zoom, preview, download, delete-with-confirmation, import.
 - Deterministic tests plus a Playwright browser suite running against fake Codex binaries.
 
 **Open work — evidence, not new features**
 
-- **Speech.** `tts.cpp` and `bark.cpp` name binaries that are not on this machine. Until one exists and a GGUF model is present, speech is a documented method with no run behind it.
+- **A natural voice.** The offline `narration` method speaks and was measured (see above), but it is a formant synthesizer: robotic, English-only. `tts.cpp` and `bark.cpp` name binaries that are not on this machine, so a natural voice is a documented method with no run behind it.
 - **Output quality.** No take has been judged on wording, pacing or taste. The tests prove the artifact, the provenance and the recovery path; they say nothing about whether a film is good.
 - **The `realistic` preset and long renders.** `realistic` asks for more inspection and repair; neither it nor a multi-minute render has been exercised against a real agent.
 - **A creator's own file is protected from clean-up, not from the agent.** The harness never touches a file next to the card, but the agent is given `HYPERMAKER_CARD_DIR` and `--sandbox danger-full-access`, so an agent that decides to tidy that directory can delete it. Nothing stops that today; keeping it out of the agent's hands is the fix, and it is not done.

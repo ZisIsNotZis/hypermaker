@@ -14,9 +14,10 @@ canvas being reachable and the canvas being usable, and then checked the one pat
 a local fixture cannot stand in for: a real Codex CLI run.
 
 Development continues, but the open work is **evidence, not features**: output
-quality has not been judged, speech synthesis has never run, `realistic` and long
+quality has not been judged, a *natural* voice has never run, `realistic` and long
 renders are unexercised, and a creator's file next to a card is protected from the
-harness's clean-up but not from the agent itself. The sections below say what each
+harness's clean-up but not from the agent itself. The offline voice does run and is
+measured — see the narration rows below. The sections below say what each
 claim rests on.
 
 ## What is real and what is simulated
@@ -35,7 +36,8 @@ pass" means "generation works". Both are true, but for different reasons.
 | Film from canvas material | `test/film.test.mjs`, one real run | the agent's direction | a real h264 MP4 whose embedded AAC track was measured audible (4.05 s, peak 11506 over 178752 samples, ~0.9997 correlated with the source WAV) |
 | Artifact provenance | `test/sources.test.mjs` | — | frozen-at-start sources, kept mid-run links, failure-safe, key-based ids |
 | Audio artifact (`synth`) | `test/audio.test.mjs`, one real run | the agent's taste in sound | PCM synthesis, RIFF header, file endpoint, the decoded `<audio>` with a real duration |
-| Audio speech (`tts.cpp`, `bark.cpp`) | — | everything | nothing: the binaries are not on this machine |
+| Audio narration (`narration`, offline) | `test/voice.test.mjs`, `test/narration.test.mjs` | which words to read | a formant synthesizer in `voice/`, a real WAV, the server verifying timeline against bytes, the film's own extracted track measured, the phrase record read back after a restart |
+| Audio natural voice (`tts.cpp`, `bark.cpp`) | — | everything | nothing: the binaries are not on this machine |
 | `hyperframe` image/video | — | everything | nothing beyond the method guidance being passed to the agent |
 | Quality presets | — | — | passed as guidance only; never measured against a real model |
 
@@ -83,12 +85,15 @@ Two honest gaps a first-time user will meet:
 
 - Product source of truth: [`design.md`](design.md).
 - Implementation source of truth: [`impl.md`](impl.md).
-- `npm test`: **65 cases** across 16 files. 4 registry/prompt, 4 method
-  availability/refusal, 6 workspace round trips, 3 canvas script checks, 12 browser
-  canvas cases, 2 media renders, 1 audio render, 1 film, 3 provenance, 2 wav
-  measurement, 8 run-lifecycle, 2 Stop/failure UI, 4 attempt/retry, 7 version, and 5
-  documentation checks. Without a browser the canvas cases skip and say which browser
-  they looked for.
+- `npm test`: **75 cases** across 18 files — 4 registry/prompt (`core`), 4 method
+  availability/refusal, 6 workspace round trips, 4 canvas-script checks (a fourth now
+  pins that a helper used only inside a nested template interpolation is still seen),
+  8 browser canvas cases (`e2e`), 2 media renders, 1 audio render, 1 film, 3 provenance,
+  2 wav measurement, 8 run-lifecycle, 2 Stop/failure UI, 4 attempt/retry, 11 version,
+  1 draft-link, **7 voice** (`voice`: the synthesizer's own measurements, with tone,
+  noise, sweep and silence pinned as failures), **2 narration** (a real WAV, a real
+  Remotion film, and a restart), and 5 documentation checks. Without a browser the
+  canvas cases skip and say which browser they looked for.
 - `test/docs.test.mjs` pins the facts in these documents that a reader is misled by
   when they rot: the stated test count, the claim that audio has no real-generation
   evidence, speech being presented as working, the project being described as closed,
@@ -120,8 +125,8 @@ No benchmark results, project video, or paper were produced; these remain out of
 scope. Generated video *output* is a product feature and is covered by a
 real-render test — see [impl.md](impl.md).
 
-Audio *artifacts* are verified (table above); **speech** is not, and neither are
-`hyperframe` or the quality presets. Those, and a judgement of whether a finished
+Audio *artifacts* and the offline voice are verified (table above); a **natural voice**
+is not, and neither are `hyperframe` or the quality presets. Those, and a judgement of whether a finished
 film is any good, are the natural next evidence to collect rather than new features
 to add. One limit is a real gap rather than missing evidence: the harness keeps a
 run out of the card's directory, but the agent is given that directory and

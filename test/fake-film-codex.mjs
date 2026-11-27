@@ -25,19 +25,31 @@ mkdirSync(publicDir, { recursive: true });
 const trackName = "track.wav";
 copyFileSync(audioSrc, join(publicDir, trackName));
 
+// The film has to last as long as the audio it carries, which the video method's guide says
+// in so many words: a fixed 90 frames (3 s) under a 6 s narration cut the last half of the
+// sentence off, and every cheap check still passed. Frames are computed from the real sample
+// count, rounded up so nothing is lost to the tail.
+const { wavStats } = await import("./wav.mjs");
+const { samples } = wavStats(audioSrc);
+// The rate comes from the file, not from an assumption: the canvas WAVs are 44.1 kHz and the
+// narration voice is 22.05 kHz, and dividing a 22.05 kHz sample count by 44100 would cut the
+// film to half the length of its own soundtrack.
+const rate = readFileSync(audioSrc).readUInt32LE(24);
+const fps = 30, durationInFrames = Math.ceil(samples / rate * fps);
+
 const entry = join(dir, "film-entry.jsx");
 writeFileSync(entry, `
 import React from 'react';
 import { AbsoluteFill, Audio, Composition, interpolate, registerRoot, staticFile, useCurrentFrame } from 'remotion';
 const Film = () => {
   const frame = useCurrentFrame();
-  const x = interpolate(frame, [0, 90], [0, 120]);
+  const x = interpolate(frame, [0, ${durationInFrames}], [0, 120]);
   return <AbsoluteFill style={{ background: '#101217', justifyContent: 'center', alignItems: 'center' }}>
     <div style={{ color: '#53e0c1', fontSize: 64, fontFamily: 'Arial', transform: \`translateX(\${x}px)\` }}>SOUND HAS A SHAPE</div>
     <Audio src={staticFile('${trackName}')} />
   </AbsoluteFill>;
 };
-const Root = () => <Composition id="Film" component={Film} width={720} height={404} fps={30} durationInFrames={90} />;
+const Root = () => <Composition id="Film" component={Film} width={720} height={404} fps={30} durationInFrames={${durationInFrames}} />;
 registerRoot(Root);
 `);
 
@@ -53,7 +65,6 @@ const { execFileSync } = await import("node:child_process");
 const ff = join(process.cwd(), "node_modules/@remotion/compositor-linux-x64-gnu/ffmpeg");
 const check = join(dir, "check.wav");
 execFileSync(ff, ["-hide_banner", "-loglevel", "error", "-y", "-i", artifact, "-map", "0:a:0", "-ac", "1", "-ar", "44100", check]);
-const { wavStats } = await import("./wav.mjs");
 const { peak } = wavStats(check);
 if (peak === 0) throw new Error("rendered film has a silent audio track");
 

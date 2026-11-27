@@ -1,5 +1,63 @@
 # Changelog
 
+## Unreleased — a card's text can be heard, and the voice is measured rather than claimed, 2026-11-27
+
+A creator put a line of text on one card and wanted to hear it on the next, then wanted the
+voice inside a film. Nothing could speak: no `espeak`/`flite`/`piper`/`festival`, no shared TTS
+library, no GGUF or ONNX model, npm couldn't reach anything, and the bundled Chromium reports
+**zero** `speechSynthesis` voices. So the voice is written here.
+
+- **`narration`, a new audio method, speaks with nothing installed.** `voice/` is a formant
+  synthesizer in plain Node: a lexicon that spells words to phonemes, a pulse train through
+  three resonators per vowel plus noise for fricatives, WAV I/O, and a measurement pass. It is
+  robotic and it is intelligible; it says English words and digits and refuses (exit 2)
+  anything it cannot spell rather than inventing a sound. It has no `requires`, so it is the
+  default method for a new audio card - the card that previously defaulted to a binary that is
+  not on this machine.
+- **The card is checked against its own bytes before it is published, twice.** The
+  `timeline.json` beside the WAV must describe *that* file - phrases contiguous, adding up to
+  its real length, every word pronounceable by the shipped voice - and the file must measure
+  as speech: periodic rather than noisy, a floor of syllable onsets for the words claimed, and
+  more than one vowel region. `judge()` in `voice/render.mjs` owns the thresholds, and the
+  server imports it, so the agent's `--check` and the server cannot disagree. An agent that
+  writes a convincing JSON next to a file of noise produces no card.
+- **Three real defects, each found by looking at the audio rather than the exit code.**
+  A Chinese script rendered a **0-second WAV and exited 0** (tokens with no Latin letters were
+  dropped silently); the synthesizer was a **square wave**, because a per-sample clamp
+  flattened 75% of samples and a formant-shaped rasp passed a naive check; and onset
+  detection **died on one digital-zero frame** of AAC padding, so a film's track measured 0
+  onsets while its source WAV measured 14. All three are fixed and pinned by tests.
+- **The onset check is a floor, and the docs say so.** This voice makes ~2 energy rises per
+  syllable (38 onsets for 18 syllables). Tuning the test until it counted one per syllable
+  would be fitting the threshold to its own answer. The real discriminator is the vowel
+  count: a 220 Hz tone amplitude-modulated at 4 Hz gets 15 onsets and `voicedShare 1.00` and
+  still fails, which is why `test/voice.test.mjs` pins tone, noise, sweep and silence.
+- **A kept narration is provenance, not just a file.** The measured numbers and the phrase
+  list are stored on the node and per version, round-tripped through `workspace.yml`, and
+  printed on the card; after a server restart the card still says what was spoken and when.
+- **A vertical slice test joins the two.** `test/narration.test.mjs` links a text card into an
+  audio card, has the test agent run the *real* render and the *real* `--check`, renders a
+  real Remotion film from that WAV, extracts the film's own audio track and measures it with
+  the same judge, then restarts and reads the phrase record back. The only invented part is
+  which words to read.
+- **The documents follow the measurement, not the other way round.** Both READMEs and
+  `project-status.md` said speech was never run and unproven; that stopped being true, so the
+  claim was rewritten rather than deleted - `test/docs.test.mjs` now pins *both* halves: the
+  offline voice is described as working and robotic, and a **natural** voice (`tts.cpp`,
+  `bark.cpp`) stays documented-but-unrun. The method list went from six to seven, and the
+  docs test compares that count with the registry instead of a typed number.
+- **One test itself was wrong and is fixed.** `test/html-syntax.test.mjs` strips strings and
+  template *text* before checking that every helper the canvas calls is declared. It ended a
+  template at the first inner backtick, so the nested-template tooltip this change added made
+  it report `render(` and `unknown(` as undeclared on a canvas that parses and runs. The
+  stripper now recurses into `${...}` interpolations - which makes the check stronger, since
+  a name used only inside one is now checked - and a new test pins that case with a
+  deliberately broken script.
+- Verified: **75/75** with a real Chromium. The voice's positives and negatives were observed
+  on real files (`node voice/render.mjs --check` on the rendered WAV, and on a tone, noise,
+  a sweep, silence, a 4 Hz AM tone and a 0-second file), the film's track was extracted with
+  the bundled ffmpeg and measured, and the whole path was walked at the real entry point.
+
 ## Unreleased — the audio card can be used, and the docs stop contradicting themselves, 2026-11-27
 
 A creator following the README to an audio card hit two failures and a set of documents that
