@@ -1,5 +1,43 @@
 # Changelog
 
+## Unreleased — a version keeps the instruction that made it, and takes are numbered, 2026-11-27
+
+- **Going back to an earlier take now brings its words back with its picture.**
+The card kept each version's bytes and the materials it was made from, but not
+the prompt - so after restoring an earlier film the box still held the newer
+prompt, and the next Generate silently redid the take the person thought they
+were looking at. Building a card now records `promptUsed` (what the artifact on
+screen was asked for), each kept version records its own `prompt`, and restoring
+puts that prompt back in the box. A version kept before prompts were recorded has
+none and is left unknown rather than filled in with today's words.
+- **Editing the box no longer rewrites the history of the film already on screen.**
+The record kept for the replaced version used to be read from the prompt box when
+the next run *started*, so merely typing a new idea and pressing Generate
+relabelled the approved take. The instruction now comes from what the run
+actually ran.
+- **The card says so when the box and the artifact disagree** - "asked for: …"
+under the prompt while you type the next take, and on each kept version's
+tooltip.
+- **Two takes get different numbers.** Publishing numbered a version by
+filename collision, so an agent that renders to a fresh path each run (which the
+video method guide tells it to do) produced `v1-shot-a.mp4` and `v1-shot-b.mp4`:
+two takes of one card, both labelled v1. The number is now the card's publish
+ordinal, counted from `versions/`.
+- Two bugs found while verifying this, both fixed: `workspace.yml` could not read
+back a camelCase field at all (the parser's name pattern was `[a-z]+`, and it
+dropped the line silently rather than failing), and one undefined name in the
+canvas script - a helper declared inside another helper - took the whole page
+down with no cards on it.
+- Verified: **48/48** with a real Chromium, and the real entry walked in a browser
+with two real Remotion renders: edit the box and the card still says what the
+picture was made from, generate again and the card reads v2 with v1 kept, click
+v1 and the picture, the badge, the box and the version row all agree. Four
+negative controls: removing the restore step, the kept-version record, the
+success record, the parser fix or either browser assertion each turns a test red.
+The first version of the numbering test was green with the bug in place, because
+it used a stand-in that always writes the same filename; it now uses one that
+renders to a fresh path, as a real agent does.
+
 ## Unreleased — a stale file is refused at any speed, 2026-11-27
 
 - **A run that hands back an untouched file is refused, even one second after

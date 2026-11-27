@@ -47,11 +47,17 @@ function publish(workdir, id, artifact) {
   if (!existsSync(source)) return null;
   const name = basename(artifact).replace(/^v\d+-/, "");
   mkdirSync(join(dir, "versions"), { recursive: true });
-  // Keep asking for a name until one is free. Deriving the number from the version
-  // list was not enough: restoring a version empties a slot, so the next run picked
-  // a number that already named the artifact on the card and wrote straight over
-  // the film the person was watching - the exact thing publishing exists to stop.
-  let n = 1, rel;
+  // The number is "which publish this is for this card", counted from the files in
+  // versions/ rather than from the version list - restoring a version empties a slot
+  // there, so the next run used to pick a number that already named the artifact on
+  // the card and wrote straight over the film the person was watching.
+  //
+  // Counting per filename was the next mistake, and a quieter one: our own video
+  // guide tells the agent to render to a fresh path every time, so two takes became
+  // `v1-shot-a.mp4` and `v1-shot-b.mp4` and the card read "v1" for both. A person
+  // comparing two takes has only that number to go by.
+  const taken = readdirSync(join(dir, "versions")).map(f => /^v(\d+)-/.exec(f)?.[1]).filter(Boolean).map(Number);
+  let n = Math.max(0, ...taken) + 1, rel;
   do { rel = join("versions", `v${n++}-${name}`); } while (existsSync(join(dir, rel)));
   copyFileSync(source, join(dir, rel));
   return rel;
@@ -127,10 +133,18 @@ const server = createServer(async (req, res) => { try {
   if (url.pathname === "/api/unlink" && req.method === "POST") { const b = await body(req), target = getNode(b.target); target.inputs = target.inputs.filter(id => id !== Number(b.source)); nodes[b.target] = target; save(); return json(res, 200, view()); }
   // status/error belong to the run, not to the client: a card's prompt or position
   // edit must never be able to claim a run succeeded or erase a failure.
-  if (url.pathname === "/api/node" && req.method === "PATCH") { const b = await body(req), n = getNode(b.id); delete b.status; delete b.error; Object.assign(n, b); nodes[b.id] = nodeRecord(b.id, n); save(); return json(res, 200, view()); }
+  if (url.pathname === "/api/node" && req.method === "PATCH") { const b = await body(req), n = getNode(b.id); delete b.status; delete b.error; delete b.promptUsed; Object.assign(n, b);
+    // Changing the output type drops the artifact (a PNG cannot be a soundtrack).
+    // `promptUsed` describes an artifact, so it goes with it; leaving it behind
+    // would let the next Generate keep that prompt as "the version it replaced".
+    if (n.artifact == null) n.promptUsed = null;
+    nodes[b.id] = nodeRecord(b.id, n); save(); return json(res, 200, view()); }
   // Going back must move the provenance with the bytes. Restoring only the file
   // would leave the card claiming the newest film's materials over an older
-  // picture - the same lie the frozen-source work was about.
+  // picture - the same lie the frozen-source work was about. The instruction is
+  // provenance too: a person who had asked for a sea film and then for a mountain
+  // one must not be shown the sea film under the mountain words, or the next
+  // Generate silently re-does a take they thought they were looking at.
   if (url.pathname === "/api/restore" && req.method === "POST") {
     const b = await body(req), n = getNode(b.id);
     if (running.has(n.id)) return json(res, 409, { ...view(), error: `Node ${n.id} is generating; stop it before going back to an earlier version` });
@@ -144,12 +158,16 @@ const server = createServer(async (req, res) => { try {
     // The version being replaced stays where its bytes already are. Because a run
     // publishes rather than overwrites, that is enough: the file it points at is not
     // going anywhere, so there is nothing to copy and nothing to roll back.
-    const back = n.artifact ? { ...(list[index]), id: ordinal, artifact: n.artifact, file: adoptLegacy(workdir, n.id, n.artifact), sources: n.sources || [] } : null;
+    const back = n.artifact ? { ...(list[index]), id: ordinal, artifact: n.artifact, file: adoptLegacy(workdir, n.id, n.artifact), sources: n.sources || [], prompt: n.promptUsed ?? null } : null;
     if (back?.file) list.splice(index, 1, back); else list.splice(index, 1);
-    nodes[n.id] = nodeRecord(n.id, { ...n, artifact: chosen.file, sources: chosen.sources || [], versions: list, status: "idle", error: null }); save(); emit({ kind: "restored", id: n.id, version: chosen.id });
+    // `chosen.prompt` is null for a version kept before prompts were recorded. Leave
+    // the box alone in that case: inventing the current prompt as the old film's
+    // history would be the same lie in the other direction.
+    const instruction = typeof chosen.prompt === "string" ? { prompt: chosen.prompt, promptUsed: chosen.prompt } : {};
+    nodes[n.id] = nodeRecord(n.id, { ...n, ...instruction, artifact: chosen.file, sources: chosen.sources || [], versions: list, status: "idle", error: null }); save(); emit({ kind: "restored", id: n.id, version: chosen.id });
     return json(res, 200, view());
   }
-  if (url.pathname === "/api/clone" && req.method === "POST") { const b = await body(req), source = getNode(b.id), id = nextId(); nodes[id] = nodeRecord(id, { ...source, x: source.x + 40, y: source.y + 40, inputs: [...source.inputs], artifact: null, script: null, status: null, error: null }); save(); return json(res, 200, view()); }
+  if (url.pathname === "/api/clone" && req.method === "POST") { const b = await body(req), source = getNode(b.id), id = nextId(); nodes[id] = nodeRecord(id, { ...source, x: source.x + 40, y: source.y + 40, inputs: [...source.inputs], artifact: null, script: null, promptUsed: null, status: null, error: null }); save(); return json(res, 200, view()); }
   if (url.pathname === "/api/delete" && req.method === "POST") { const b = await body(req); delete nodes[b.id]; for (const n of Object.values(nodes)) n.inputs = n.inputs.filter(id => id !== Number(b.id)); if (existsSync(join(workdir, String(b.id)))) rmSync(join(workdir, String(b.id)), { recursive: true, force: true }); save(); return json(res, 200, view()); }
   if (url.pathname === "/api/layout" && req.method === "POST") { Object.entries(nodes).forEach(([id, n], i) => { n.x = i % 4 * 340 + 40; n.y = Math.floor(i / 4) * 280 + 40; }); save(); return json(res, 200, view()); }
   if (url.pathname === "/api/generate" && req.method === "POST") {
@@ -179,7 +197,10 @@ const server = createServer(async (req, res) => { try {
     // The artifact on the card becomes the alternative once this run succeeds. An
     // older workspace keeps its artifact at the top of the node directory, which a
     // new run may write over, so it is adopted into versions/ on first use.
-    const kept = n.artifact ? { id: ordinal, artifact: n.artifact, file: adoptLegacy(workdir, n.id, n.artifact), sources: n.sources || [] } : null;
+    // `n.promptUsed`, not `n.prompt`: the box may already hold words for the next
+    // take, and the film being kept was asked for something else. A version that
+    // recorded the box would claim the wrong instruction for its own bytes.
+    const kept = n.artifact ? { id: ordinal, artifact: n.artifact, file: adoptLegacy(workdir, n.id, n.artifact), sources: n.sources || [], prompt: n.promptUsed ?? null } : null;
     // Freezing the copies is this run's own bookkeeping, so its number must not be
     // reused - but publishing picks its own free name, above.
     // The card keeps pointing at the published artifact while the run works; only a
@@ -213,7 +234,10 @@ const server = createServer(async (req, res) => { try {
       // film while a second Generate was still refused with "already generating" -
       // publishing takes a copy, so that window got wide enough to hit every time.
       running.delete(n.id);
-      nodes[n.id] = nodeRecord(n.id, { ...nodes[n.id], ...result, artifact: published || result.artifact, sources, versions: previous, status: "idle", error: null }); save(); emit({ kind: "complete", id: n.id });
+      // What the person asked for *this* artifact, frozen at start exactly like the
+      // material: `prompt` stays theirs to edit for the next take, `promptUsed`
+      // answers "what is on screen and what was it asked to be".
+      nodes[n.id] = nodeRecord(n.id, { ...nodes[n.id], ...result, artifact: published || result.artifact, sources, promptUsed: run.prompt || "", versions: previous, status: "idle", error: null }); save(); emit({ kind: "complete", id: n.id });
     }).catch(error => {
       const status = /stopped/i.test(error.message) ? "cancelled" : "error";
       // Nothing the failed run wrote was ever published, so the artifact, its

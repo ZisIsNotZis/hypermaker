@@ -4,6 +4,8 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { freePort, startServer, stopAll, stopServer, waitReady } from "./server.mjs";
+import { parseWorkspace } from "../server/workspace.mjs";
+import { browserPath, launchBrowser } from "./browser.mjs";
 
 // The need: a person changes the material upstream, presses Generate again, and
 // wants to compare the new result with the one they already approved - not lose it.
@@ -47,15 +49,20 @@ if (out) writeFileSync(out, JSON.stringify({ prompt: "p", script: null, artifact
 writeFileSync(bin, `#!/bin/sh\nexec node ${JSON.stringify(join(base, "agent.mjs"))} "$@"\n`);
 chmodSync(bin, 0o755);
 
-let app, port, workdir;
+const missingBrowser = existsSync(browserPath()) ? null
+  : `no Chromium at ${browserPath()}: run \`npx playwright install chromium\` or set HYPERMAKER_CHROME`;
+const canvasTest = (name, fn) => test(name, missingBrowser ? { skip: missingBrowser } : {}, fn);
+
+let app, port, workdir, browser;
 before(async () => {
   port = await freePort();
   workdir = join(base, "ws");
   app = startServer({ cwd: root, port, env: { CODEX_BIN: bin, HYPERMAKER_WORKDIR: workdir, HYPERMAKER_RESET_WORKSPACE: "1" } });
   app.stderr.on("data", chunk => process.stderr.write(chunk));
   await waitReady(port);
+  if (!missingBrowser) browser = await launchBrowser();
 });
-after(() => { stopServer(app); stopAll(); });
+after(async () => { await browser?.close(); stopServer(app); stopAll(); });
 
 const call = (method, path, payload) => fetch(`http://127.0.0.1:${port}${path}`, { method, headers: { "content-type": "application/json" }, body: JSON.stringify(payload) }).then(r => r.json());
 const workspace = () => fetch(`http://127.0.0.1:${port}/api/workspace`).then(r => r.json());
@@ -229,6 +236,179 @@ test("kept versions survive a restart, and a card that is generating refuses to 
 // broken to anyone whose output reproduces exactly. So the rule is "was this file
 // written", not "did its bytes change"; this test fails if the check ever drifts
 // back to comparing content.
+// The instruction is provenance too. Two takes of one card differ by what they were
+// asked for, and the canvas used to keep only the bytes: going back to an earlier
+// film left the prompt box describing the newer one, so the card showed one thing and
+// claimed another. Worse, the record it kept for the replaced version was read from
+// the box at the *start* of the next run, so simply editing the text and pressing
+// Generate rewrote the history of the film already on screen.
+//
+// These checks use their own server and their own stand-in agent, whose output is the
+// instruction it was given: then "which prompt made these bytes" is readable from the
+// files, not trusted from the metadata being tested.
+test("a kept version carries the prompt that made it, and going back brings it too", async () => {
+  const promptAgent = join(base, "prompt-agent.mjs"), promptBin = join(base, "prompt-codex");
+  writeFileSync(promptAgent, `
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+const dir = process.env.HYPERMAKER_NODE_DIR;
+mkdirSync(dir, { recursive: true });
+const asked = readFileSync(join(dir, "prompt.txt"), "utf8").split("# USER PROMPT").pop().trim();
+writeFileSync(join(dir, "take.txt"), "asked for: " + asked);
+const out = process.argv[process.argv.indexOf("--output-last-message") + 1];
+if (out) writeFileSync(out, JSON.stringify({ prompt: asked, script: null, artifact: "take.txt", type: "text", method: "llm", error: null }));
+`);
+  writeFileSync(promptBin, `#!/bin/sh\nexec node ${JSON.stringify(promptAgent)} "$@"\n`);
+  chmodSync(promptBin, 0o755);
+
+  const promptPort = await freePort(), promptWorkdir = join(base, "prompt-ws");
+  const prompt = startServer({ cwd: root, port: promptPort, env: { CODEX_BIN: promptBin, HYPERMAKER_WORKDIR: promptWorkdir, HYPERMAKER_RESET_WORKSPACE: "1" } });
+  prompt.stderr.on("data", c => process.stderr.write(c));
+  await waitReady(promptPort);
+  const api = (method, path, payload) => fetch(`http://127.0.0.1:${promptPort}${path}`, { method, headers: { "content-type": "application/json" }, body: JSON.stringify(payload) }).then(r => r.json());
+  const ws = () => fetch(`http://127.0.0.1:${promptPort}/api/workspace`).then(r => r.json());
+  const wait = async id => { for (let i = 0; i < 300; i++) { const n = (await ws()).nodes[id]; if (n.status !== "running") return n; await new Promise(r => setTimeout(r, 100)); } throw new Error("never settled"); };
+  const says = async (id, file) => (await (await fetch(`http://127.0.0.1:${promptPort}/api/file?path=${encodeURIComponent(join(promptWorkdir, String(id), file))}`)).text()).trim();
+
+  try {
+    const card = Number(Object.keys((await api("POST", "/api/node", { x: 0, y: 0, type: "text", method: "llm", prompt: "a film about the sea" })).nodes).at(-1));
+    await api("POST", "/api/generate", { id: card, prompt: "a film about the sea" });
+    const first = await wait(card);
+    assert.equal(first.promptUsed, "a film about the sea", "the card records the instruction behind the artifact it shows");
+
+    // A person starts rewriting the box but does not press Generate yet. The film on
+    // screen was not made from those words, and the card must not start saying it was
+    // - that is how an edit became a false history of an already approved take.
+    await api("PATCH", "/api/node", { id: card, prompt: "a film about the mountains" });
+    const edited = (await ws()).nodes[card];
+    assert.equal(edited.promptUsed, "a film about the sea", "an edit to the box is not a fact about the artifact on screen");
+    assert.equal(await says(card, edited.artifact), "asked for: a film about the sea");
+
+    await api("POST", "/api/generate", { id: card });
+    await wait(card);
+    const second = (await ws()).nodes[card];
+    assert.equal(second.promptUsed, "a film about the mountains");
+    assert.equal(second.versions.length, 1);
+    const kept = second.versions[0];
+    assert.equal(kept.prompt, "a film about the sea", "the version it replaced records the words that made its bytes");
+    assert.notEqual(kept.prompt, second.prompt, "and not the take that replaced it");
+    assert.equal(await says(card, kept.file), "asked for: a film about the sea");
+
+    // Going back has to move the instruction with the bytes, or the card plays the sea
+    // film while the box reads "mountains" and the next Generate silently redoes a
+    // take the person thought they were looking at.
+    const back = (await api("POST", "/api/restore", { id: card, version: kept.id })).nodes[card];
+    assert.equal(await says(card, back.artifact), "asked for: a film about the sea");
+    assert.equal(back.prompt, "a film about the sea", "the box now describes the film on screen");
+    assert.equal(back.promptUsed, "a film about the sea");
+    assert.equal(back.versions[0].prompt, "a film about the mountains", "and the film left behind keeps its own words");
+    assert.equal(await says(card, back.versions[0].file), "asked for: a film about the mountains");
+
+    // A version kept before prompts were recorded must not inherit today's words.
+    const legacy = parseWorkspace(`1:\n  type: text\n  method: llm\n  prompt: today's words\n  artifact: versions/v1-take.txt\n  versions: [{"id":9,"artifact":"versions/v9-take.txt","file":"versions/v9-take.txt","sources":[],"prompt":null}]\n`);
+    assert.equal(legacy[1].versions[0].prompt, null, "an unknown prompt stays unknown instead of being invented");
+  } finally {
+    stopServer(prompt);
+  }
+});
+
+// The canvas is a single script, so one undefined name in one helper is not a small
+// bug: it takes the whole page down, and the page then shows no cards at all. That
+// happened while adding the "asked for" line - `oneLine` was declared inside
+// `versions()` and used by `used()` - and the lexical check in html-syntax.test.mjs
+// could not see it, because the name *is* declared somewhere in the script. Only
+// running the page catches it, so this test runs the page.
+//
+// It also pins the number a take is published under, and it needs a particular kind of
+// agent to do that: one that renders to a fresh path each run, which is what the video
+// method guide tells a real agent to do. Publishing used to number by filename
+// collision, so those runs became `v1-shot-a.png` and `v1-shot-b.png` - two takes of
+// one card, both labelled v1. The rest of this suite's stand-in always writes
+// `film.png`, and for a fixed filename the broken numbering and the right one agree,
+// so a test built on it stays green with the bug in place.
+canvasTest("two takes get different version numbers, and the canvas survives the render", async () => {
+  const freshAgent = join(base, "fresh-agent.mjs"), freshBin = join(base, "fresh-codex");
+  writeFileSync(freshAgent, `
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+const dir = process.env.HYPERMAKER_NODE_DIR;
+mkdirSync(dir, { recursive: true });
+const asked = readFileSync(join(dir, "prompt.txt"), "utf8").split("# USER PROMPT").pop().trim();
+// A fresh path each run, as the video method guide tells a real agent to render.
+const artifact = "shot-" + Date.now() + "-" + Math.random().toString(36).slice(2, 7) + ".png";
+writeFileSync(join(dir, artifact), "made from: " + asked);
+const out = process.argv[process.argv.indexOf("--output-last-message") + 1];
+if (out) writeFileSync(out, JSON.stringify({ prompt: asked, script: null, artifact, type: "image", method: "remotion", error: null }));
+`);
+  writeFileSync(freshBin, `#!/bin/sh\nexec node ${JSON.stringify(freshAgent)} "$@"\n`);
+  chmodSync(freshBin, 0o755);
+
+  const uiPort = await freePort(), uiWorkdir = join(base, "ui-ws");
+  const ui = startServer({ cwd: root, port: uiPort, env: { CODEX_BIN: freshBin, HYPERMAKER_WORKDIR: uiWorkdir, HYPERMAKER_RESET_WORKSPACE: "1" } });
+  ui.stderr.on("data", c => process.stderr.write(c));
+  await waitReady(uiPort);
+  const api = (method, path, payload) => fetch(`http://127.0.0.1:${uiPort}${path}`, { method, headers: { "content-type": "application/json" }, body: JSON.stringify(payload) }).then(r => r.json());
+  const ws = () => fetch(`http://127.0.0.1:${uiPort}/api/workspace`).then(r => r.json());
+  const wait = async id => { for (let i = 0; i < 300; i++) { const n = (await ws()).nodes[id]; if (n.status !== "running") return n; await new Promise(r => setTimeout(r, 100)); } throw new Error("never settled"); };
+  const page = await browser.newPage({ viewport: { width: 1000, height: 760 } });
+  const errors = []; page.on("pageerror", e => errors.push(String(e)));
+
+  try {
+    const card = Number(Object.keys((await api("POST", "/api/node", { x: 60, y: 60, type: "image", method: "remotion", prompt: "first take" })).nodes).at(-1));
+    await page.goto(`http://127.0.0.1:${uiPort}/`);
+    await page.waitForSelector(`.card[data-id="${card}"]`);
+    await page.locator(`.card[data-id="${card}"] [data-generate]`).click();
+    await wait(card);
+    await page.waitForFunction(id => !document.querySelector(`.card[data-id="${id}"] [data-generate]`).disabled, card, { timeout: 15000 });
+    const sel = `.card[data-id="${card}"]`;
+    const read = () => page.evaluate(sel => {
+      const card = document.querySelector(sel);
+      if (!card) return null;
+      return {
+        meta: card.querySelector(".meta").textContent,
+        promptInBox: card.querySelector("[data-prompt]").value,
+        askedFor: card.querySelector(".used")?.textContent ?? null,
+        kept: card.querySelector(".versions")?.textContent ?? null,
+        keptTitle: card.querySelector(".versions button")?.title ?? null,
+      };
+    }, sel);
+    const one = await read();
+    assert.ok(one, "the card is on the page at all: an error in the canvas script leaves an empty viewport");
+    assert.match(one.meta, /v1\b/, `the first take is v1, got ${one.meta}`);
+    assert.equal(one.askedFor, null, "the box and the artifact agree, so there is nothing to warn about");
+
+    // Rewriting the box must not change what the artifact on screen was asked for.
+    await page.fill(`${sel} [data-prompt]`, "second take");
+    await page.locator(`${sel} [data-prompt]`).blur();
+    await page.waitForTimeout(400);
+    const edited = await read();
+    assert.equal(edited.promptInBox, "second take");
+    assert.equal(edited.askedFor, "asked for: first take", "the card still says what the picture on it was made from");
+    assert.match(edited.meta, /v1\b/, "editing the box is not a new version");
+
+    await page.locator(`${sel} [data-generate]`).click();
+    await wait(card);
+    await page.waitForFunction(id => !document.querySelector(`.card[data-id="${id}"] [data-generate]`).disabled, card, { timeout: 15000 });
+    await page.waitForTimeout(400);
+    const two = await read();
+    assert.match(two.meta, /v2\b/, `the second take is v2, got ${two.meta}`);
+    assert.equal(two.kept, "kept v1", "and the first is still one click away");
+    assert.equal(two.keptTitle, "asked for: first take", "the kept version says what made it");
+
+    await page.locator(`${sel} .versions button`).first().click();
+    await page.waitForFunction(sel => document.querySelector(`${sel} .meta`).textContent.includes("v1"), sel, { timeout: 15000 });
+    await page.waitForTimeout(400);
+    const back = await read();
+    assert.equal(back.promptInBox, "first take", "going back puts the words that made it back in the box");
+    assert.equal(back.askedFor, null, "so there is nothing left to warn about");
+    assert.equal(back.keptTitle, "asked for: second take", "and the other take still carries its own");
+    assert.deepEqual(errors, [], `no page errors, got ${errors.join(" | ")}`);
+  } finally {
+    await page.close();
+    stopServer(ui);
+  }
+});
+
 test("a run that really renders again is accepted even when the bytes are identical", async () => {
   const echoAgent = join(base, "echo-agent.mjs");
   const echoBin = join(base, "echo-codex");

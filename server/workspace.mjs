@@ -23,8 +23,17 @@ export function serializeWorkspace(nodes = {}) {
     // `sources` is the same kind of fact: what a finished artifact was built from.
     // Links alone cannot answer it, because an input card can be relinked or
     // deleted later, and then a finished film has no visible provenance.
+    // `promptUsed` is the instruction the artifact on the card was actually made
+    // from, as distinct from `prompt`, which is what the person is asking for next.
+    // Without it the two are the same field, so editing the text before pressing
+    // Generate silently rewrites the record of the film already on screen - and
+    // going back to an earlier version leaves the box describing the newer one.
     const fields = ["x", "y", "inputs", "type", "method", "prompt", "quality", "script", "artifact", "status", "error"];
     const lines = fields.map(field => `  ${field}: ${field === "inputs" ? `[${(node.inputs || []).join(", ")}]` : scalar(node[field])}`);
+    // Written only when there is one: a node that has never finished a run has no
+    // artifact, so it has no instruction behind one, and repeating `null` on every
+    // draft would be noise in a file people are meant to be able to read.
+    if (typeof node.promptUsed === "string") lines.push(`  promptUsed: ${JSON.stringify(node.promptUsed)}`);
     if (Array.isArray(node.sources) && node.sources.length) {
       lines.push(`  sources: ${JSON.stringify(compactSources(node.sources))}`);
     }
@@ -34,7 +43,10 @@ export function serializeWorkspace(nodes = {}) {
     // leaves the older render sitting on disk with nothing on the canvas that
     // points at it.
     if (Array.isArray(node.versions) && node.versions.length) {
-      const compact = node.versions.map(v => ({ id: v.id, artifact: v.artifact ?? null, file: v.file ?? null, sources: compactSources(v.sources) }));
+      // `prompt` is part of a version for the same reason `sources` is: two takes of
+      // one card are told apart by what they were asked for, and a version that
+      // only remembered its bytes could not say which of two prompts made it.
+      const compact = node.versions.map(v => ({ id: v.id, artifact: v.artifact ?? null, file: v.file ?? null, sources: compactSources(v.sources), prompt: v.prompt ?? null }));
       lines.push(`  versions: ${JSON.stringify(compact)}`);
     }
     return `${id}:\n${lines.join("\n")}`;
@@ -48,7 +60,10 @@ export function parseWorkspace(text = "") {
     if (!raw.trim() || raw.trim().startsWith("#")) continue;
     const node = raw.match(/^(\d+):\s*$/);
     if (node) { current = nodes[node[1]] = { inputs: [] }; continue; }
-    const field = raw.match(/^\s{2}([a-z]+):\s*(.*)$/);
+    // Field names are camelCase (`promptUsed`), so this cannot be [a-z]+ only: a
+    // stricter pattern does not fail, it silently drops the line, which is how a
+    // field written to disk came back as undefined.
+    const field = raw.match(/^\s{2}([A-Za-z][A-Za-z0-9]*):\s*(.*)$/);
     if (!field || !current) continue;
     current[field[1]] = field[1] === "inputs" ? (field[2].match(/\d+/g) || []).map(Number) : parseScalar(field[2]);
   }
@@ -67,7 +82,7 @@ export function writeWorkspace(workdir, nodes) {
   renameSync(temp, target);
 }
 export function nodeRecord(id, node) {
-  const record = { id: Number(id), x: node.x ?? 0, y: node.y ?? 0, inputs: (node.inputs || []).map(Number), type: node.type, method: node.method ?? null, prompt: node.prompt || "", quality: node.quality || "standard", script: node.script ?? null, artifact: node.artifact ?? null, status: node.status ?? null, error: node.error ?? null, sources: Array.isArray(node.sources) ? node.sources : null, versions: Array.isArray(node.versions) && node.versions.length ? node.versions : null };
+  const record = { id: Number(id), x: node.x ?? 0, y: node.y ?? 0, inputs: (node.inputs || []).map(Number), type: node.type, method: node.method ?? null, prompt: node.prompt || "", promptUsed: typeof node.promptUsed === "string" ? node.promptUsed : null, quality: node.quality || "standard", script: node.script ?? null, artifact: node.artifact ?? null, status: node.status ?? null, error: node.error ?? null, sources: Array.isArray(node.sources) ? node.sources : null, versions: Array.isArray(node.versions) && node.versions.length ? node.versions : null };
   return record;
 }
 export function workspacePath(workdir, id, filename) {

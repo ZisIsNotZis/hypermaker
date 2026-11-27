@@ -1,6 +1,6 @@
 **English** | [简体中文](README.zh-CN.md)
 
-> **Status: canvas usable, generation path verified, versions kept (0.1.0, 2026-11-27).** `npm test` passes 45/45 when a usable Chromium is available; six pin that a re-run cannot cost you the version you already approved (a failed attempt keeps the old film and its provenance, a second version stays playable with its own material, a material swapped mid-render changes nothing, kept versions survive a restart, a running card refuses to be rewound, and a run that hands back an old file fails while a genuine re-render is still accepted even when its bytes match); two cases render for real through Remotion (a PNG and an h264 MP4), one renders a real WAV and checks the player can report its length, three pin how an artifact records the materials it was made from, two pin how its audio is measured, seven cover the run lifecycle, and two drive Stop and a failed run in a real browser. The ordinary user path — create, type, move, overlap and raise, link by dragging one card onto another's title bar, right-click unlink, delete with confirmation, reopen — was exercised end to end in a real browser. One **real Codex CLI run** was also taken: the agent wrote and ran a script and returned a text artifact the canvas previewed. What is simulated and what is real is spelled out in [**Verification limits**](#verification-limits).
+> **Status: canvas usable, generation path verified, versions kept (0.1.0, 2026-11-27).** `npm test` passes 48/48 when a usable Chromium is available; six pin that a re-run cannot cost you the version you already approved (a failed attempt keeps the old film and its provenance, a second version stays playable with its own material, a material swapped mid-render changes nothing, kept versions survive a restart, a running card refuses to be rewound, and a run that hands back an old file fails while a genuine re-render is still accepted even when its bytes match), one pins that a kept version carries the prompt that made it and that going back restores it, and one drives a real browser through two takes — versions are numbered v1, v2, editing the prompt does not change what the artifact on screen was asked for, and going back moves the picture and the words together; two cases render for real through Remotion (a PNG and an h264 MP4), one renders a real WAV and checks the player can report its length, three pin how an artifact records the materials it was made from, two pin how its audio is measured, seven cover the run lifecycle, and two drive Stop and a failed run in a real browser. The ordinary user path — create, type, move, overlap and raise, link by dragging one card onto another's title bar, right-click unlink, delete with confirmation, reopen — was exercised end to end in a real browser. One **real Codex CLI run** was also taken: the agent wrote and ran a script and returned a text artifact the canvas previewed. What is simulated and what is real is spelled out in [**Verification limits**](#verification-limits).
 
 <div align="center">
   <img src="docs/logo.svg" alt="Hypermaker logo" width="112" />
@@ -142,6 +142,22 @@ quietly return.
   before the run, and the returned artifact must no longer match. "Was this written" becomes
   a property of the file at any speed, and a deterministic render that produces identical
   bytes is still a real second result - both directions are pinned.
+- **The instruction is provenance too.** A version kept its bytes and its materials but not
+the prompt that made it, so going back to an earlier idea left the box holding the newer
+one - show one take, describe another, and the next Generate redoes the take you thought
+you were looking at. A card now has both `prompt` (what you want next, yours to edit) and
+`promptUsed` (what the artifact on screen was made from); each kept version carries its own,
+and going back restores it. Editing the box no longer rewrites the history of the approved
+take - that record used to be read from the box when the next run started. While the box
+and the artifact disagree the card says `asked for: …`, and each version's tooltip names
+its prompt. A version kept before prompts were recorded has none and stays unknown rather
+than being filled in with today's words.
+- **Takes are numbered by the card, not by filename.** Publishing numbered a version by
+  whether that filename already existed, so an agent that renders to a fresh path each run -
+  which the video guide asks it to do - produced `v1-shot-a.mp4` and `v1-shot-b.mp4`, two
+  takes of one card both labelled `v1`. The number is now the card's publish ordinal. The
+  browser test that pins this had to be given an agent that renames its output: with one
+  that always writes the same file, the broken rule and the right one agree.
 - **Provenance** ("made from #1 image poster.png - #3 audio tone.wav") is a persisted
   snapshot, not a rendering of the current links, because links are the wrong source of
   truth in three ways. Each rule is pinned by a test in `test/sources.test.mjs` and each was
