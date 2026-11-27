@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.1.0 — generation lifecycle and a real Codex run, 2026-11-27
+
+A person can now stop a run, read why a run failed, and trust both after a
+restart. One real Codex CLI run was taken through the app.
+
+- **Stop.** A running card offers a Stop button, and `POST /api/cancel` ends the
+  agent *and its process group* (agents spawn shells and renderers). Previously
+  the only way out of a long run was to wait or restart the server.
+- **One run per card.** A second Generate on a running card returns 409 instead
+  of spawning a second agent into the same node directory.
+- **Outcomes are stored.** `status` and `error` are persisted in `workspace.yml`.
+  A failure or Stop now looks the same after a restart; before, the error lived
+  only in memory, so a failed card reopened as a clean draft. A run still marked
+  `running` when the workspace loads is reported as interrupted.
+- **Visible reason.** The card shows the failure, including the agent's own last
+  error message, rather than only `exited with code 1`. A missing CLI says to
+  install Codex or set `CODEX_BIN` instead of `spawn codex ENOENT`. A card built
+  on a fresh page load used to omit the error entirely; it is rendered in both
+  paths now.
+- Ctrl-C on the server cancels live agents so nothing keeps writing into a node
+  directory after the server is gone.
+
+Evidence and tests:
+
+- `test/lifecycle.test.mjs` (6 cases) and `test/stop-ui.test.mjs` (2 browser
+  cases) cover the above. Each assertion was checked by breaking the behaviour it
+  protects — removing the 409, dropping the stored fields, removing the
+  interrupted-run rule, and replacing the group kill with a child kill — and
+  watching it go red. The first version of the Stop test passed vacuously
+  because it cancelled before the agent had started; it now waits for the agent
+  to actually be running, which is what exposed the real leak.
+- Real CLI: one `codex exec` run (37 s) wrote and ran a script and returned a
+  plain-text artifact the canvas previewed; Stop and a rejected model were also
+  exercised against the real binary, and the rejected card showed the CLI's own
+  message verbatim.
+- `npm test` is 30/30 with a real Chromium (was 20/20 at the start of this round).
+
 ## 0.1.0 — canvas follow-up, 2026-11-26
 
 User-visible canvas fixes, each found by walking the ordinary path in a real browser:

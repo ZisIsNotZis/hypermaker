@@ -30,6 +30,6 @@ test("prompt uses required sections and direct input metadata", async () => {
 
 test("workspace serialization preserves integer graph records", async () => {
   const { parseWorkspace, serializeWorkspace } = await import("../server/workspace.mjs");
-  const value = { 2: { x: 1, y: 2, inputs: [1], type: "text", method: "llm", prompt: "x", quality: "demo", script: null, artifact: null } };
+  const value = { 2: { x: 1, y: 2, inputs: [1], type: "text", method: "llm", prompt: "x", quality: "demo", script: null, artifact: null, status: null, error: null } };
   assert.deepEqual(parseWorkspace(serializeWorkspace(value)), value);
 });

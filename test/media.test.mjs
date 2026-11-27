@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { spawn } from "node:child_process";
 import { browserPath, launchBrowser } from "./browser.mjs";
+import { freePort, startServer, stopAll, stopServer, waitReady } from "./server.mjs";
 
 // Media generation is not faked here: test/fake-remotion-codex.mjs bundles and
 // renders with Remotion for real, so a passing run proves the harness, the prompt
@@ -22,19 +23,20 @@ const skip = existsSync(chrome) ? null
   : `no browser for Remotion or the canvas (set HYPERMAKER_CHROME); looked at ${chrome}`;
 
 const apps = [];
-let browser;
-async function startApp(port, env) {
-  const app = spawn("node", ["server/index.mjs"], { cwd: root, env: { ...process.env, PORT: String(port), CODEX_BIN: bin, HYPERMAKER_WORKDIR: join(base, `ws-${port}`), HYPERMAKER_RESET_WORKSPACE: "1", ...env } });
+let browser, stillPort, videoPort;
+async function startApp(env) {
+  const port = await freePort();
+  const app = startServer({ cwd: root, port, env: { CODEX_BIN: bin, HYPERMAKER_WORKDIR: join(base, `ws-${port}`), HYPERMAKER_RESET_WORKSPACE: "1", ...env } });
   app.stderr.on("data", chunk => process.stderr.write(chunk));
   apps.push(app);
-  for (let i = 0; i < 40; i++) { try { if ((await fetch(`http://127.0.0.1:${port}/api/registry`)).ok) return app; } catch {} await new Promise(r => setTimeout(r, 100)); }
-  throw new Error(`media fixture server on port ${port} did not start`);
+  await waitReady(port);
+  return port;
 }
 // Pin the switch on both sides: the fixture branches on REMOTION_TEST_VIDEO, so a
 // shell that already exports it would otherwise turn the image case into a video
 // render and fail on the PNG assertion.
-before(async () => { if (skip) return; await startApp(8961, { REMOTION_TEST_VIDEO: "0" }); await startApp(8962, { REMOTION_TEST_VIDEO: "1" }); browser = await launchBrowser(); });
-after(async () => { await browser?.close(); for (const app of apps) app.kill(); });
+before(async () => { if (skip) return; stillPort = await startApp({ REMOTION_TEST_VIDEO: "0" }); videoPort = await startApp({ REMOTION_TEST_VIDEO: "1" }); browser = await launchBrowser(); });
+after(async () => { await browser?.close(); for (const app of apps) stopServer(app); stopAll(); });
 
 const post = (port, path, body) => fetch(`http://127.0.0.1:${port}${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }).then(r => r.json());
 const workspace = port => fetch(`http://127.0.0.1:${port}/api/workspace`).then(r => r.json());
@@ -74,7 +76,7 @@ async function generate(port, spec) {
 
 test("an image node renders a real PNG through Remotion and previews it", async t => {
   if (skip) return t.skip(skip);
-  const { dir, id, node, page, errors } = await generate(8961, { type: "image", method: "remotion" });
+  const { dir, id, node, page, errors } = await generate(stillPort, { type: "image", method: "remotion" });
   assert.equal(node.artifact, "remotion-square.png");
 
   // The artifact on disk is a real PNG, not a text file with a PNG name.
@@ -97,7 +99,7 @@ test("an image node renders a real PNG through Remotion and previews it", async 
 
 test("a video node renders a real MP4 through Remotion and previews it", async t => {
   if (skip) return t.skip(skip);
-  const { dir, id, node, page, errors } = await generate(8962, { type: "video", method: "remotion" });
+  const { dir, id, node, page, errors } = await generate(videoPort, { type: "video", method: "remotion" });
   assert.equal(node.artifact, "remotion-square.mp4");
 
   // A video is not "an mp4 name": the file must be an ISO base media container

@@ -9,6 +9,8 @@ test-results
 __pycache__/
 node_modules/
 .pi/
+# Harness state is never part of the project; it was once swept in by `git add -A`.
+.praxis2/
 .tmp/
 worktrees/
 .worktrees/

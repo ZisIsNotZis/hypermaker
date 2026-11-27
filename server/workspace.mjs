@@ -11,7 +11,10 @@ const parseScalar = value => {
 
 export function serializeWorkspace(nodes = {}) {
   return Object.entries(nodes).sort(([a], [b]) => Number(a) - Number(b)).map(([id, node]) => {
-    const fields = ["x", "y", "inputs", "type", "method", "prompt", "quality", "script", "artifact"];
+    // `status` and `error` are persisted on purpose: a failed or stopped run has to
+    // look the same after a restart as it did before one, and a run cut off by a
+    // crash must not come back as a quiet draft.
+    const fields = ["x", "y", "inputs", "type", "method", "prompt", "quality", "script", "artifact", "status", "error"];
     return `${id}:\n${fields.map(field => `  ${field}: ${field === "inputs" ? `[${(node.inputs || []).join(", ")}]` : scalar(node[field])}`).join("\n")}`;
   }).join("\n") + (Object.keys(nodes).length ? "\n" : "");
 }
@@ -43,7 +46,7 @@ export function writeWorkspace(workdir, nodes) {
 }
 
 export function nodeRecord(id, node) {
-  return { id: Number(id), x: node.x ?? 0, y: node.y ?? 0, inputs: (node.inputs || []).map(Number), type: node.type, method: node.method ?? null, prompt: node.prompt || "", quality: node.quality || "standard", script: node.script ?? null, artifact: node.artifact ?? null };
+  return { id: Number(id), x: node.x ?? 0, y: node.y ?? 0, inputs: (node.inputs || []).map(Number), type: node.type, method: node.method ?? null, prompt: node.prompt || "", quality: node.quality || "standard", script: node.script ?? null, artifact: node.artifact ?? null, status: node.status ?? null, error: node.error ?? null };
 }
 
 export function workspacePath(workdir, id, filename) {

@@ -6,8 +6,16 @@ import { tmpdir } from "node:os";
 import { parseWorkspace, readWorkspace, serializeWorkspace, writeWorkspace, workspacePath } from "../server/workspace.mjs";
 
 test("workspace round trips exact node fields and integer input IDs", () => {
-  const nodes = { 2: { x: 3, y: 4, inputs: [1], type: "text", method: "llm", prompt: "say hi", quality: "demo", script: null, artifact: "hello.txt" } };
+  const nodes = { 2: { x: 3, y: 4, inputs: [1], type: "text", method: "llm", prompt: "say hi", quality: "demo", script: null, artifact: "hello.txt", status: null, error: null } };
   assert.deepEqual(parseWorkspace(serializeWorkspace(nodes)), nodes);
+});
+
+test("a run outcome survives a round trip, so a restart cannot hide a failure", () => {
+  const nodes = { 1: { x: 0, y: 0, inputs: [], type: "text", method: "llm", prompt: "p", quality: "standard", script: null, artifact: "old.txt", status: "error", error: "Codex exited with code 3" } };
+  const back = parseWorkspace(serializeWorkspace(nodes));
+  assert.equal(back[1].status, "error");
+  assert.equal(back[1].error, "Codex exited with code 3");
+  assert.equal(back[1].artifact, "old.txt", "the earlier artifact is kept alongside the failure");
 });
 
 test("workspace reads empty and writes atomically", () => {

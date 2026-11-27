@@ -16,10 +16,9 @@
   <img src="docs/screenshots/canvas.svg" alt="Hypermaker 画布，三张相连的产物卡片" width="94%" />
 </p>
 
-> **状态：画布已复核（0.1.0，2026-11-26）。** 配可用 Chromium 时 `npm test` 为 20/20（含 10 条浏览器用例，其中两条用 Remotion 真渲染：一张 PNG、一个 h264 MP4）；普通使用者路径（新建、输入、移动、重叠后抬升、拖到另一张卡标题栏上连线、右键断线、删除确认、重新打开）已在真实浏览器里逐步走通。
+> **状态：画布可用，生成链路已验证（0.1.0，2026-11-27）。** 配可用 Chromium 时 `npm test` 为 30/30；其中两条用 Remotion 真渲染（一张 PNG、一个 h264 MP4），七条覆盖生成生命周期，两条在真实浏览器里驱动 Stop 和一次失败。普通使用者路径（新建、输入、移动、重叠后抬升、拖到另一张卡标题栏上连线、右键断线、删除确认、重新打开）已在真实浏览器里逐步走通。此外还跑通了一次**真实 Codex CLI** 生成：代理自己写脚本、跑脚本，交回的文本产物被画布正常预览。哪些是模拟、哪些是真的，见下方**验证边界**。
 >
-> 下方原始说明保留：已收尾的里程碑。 这个原型已经达成实验目标；除非项目的
-> 输入或目标发生变化，否则不再计划开发。见 [`docs/project-status.md`](docs/project-status.md)。
+> **状态：本地画布里程碑（0.1.0）。** 这个原型已经达成实验目标；除非项目的输入或目标发生变化，否则不再计划开发。[`docs/project-status.md`](docs/project-status.md) 里有“真实/模拟”对照表和首次接入的体验。
 
 ## 为什么要 Hypermaker？
 
@@ -51,7 +50,7 @@ npm run dev
 
 打开 <http://127.0.0.1:8787>。
 
-在空白画布上双击即可新建节点：选好类型、方法和质量档位，写下提示词，点 **Generate**。把一张卡片拖到另一张卡片上就建立输入关系，右键连线可以取消。每个生成过的节点都会在 `.hypermaker/<id>/` 下拥有自己的目录。
+在空白画布上双击即可新建节点：选好类型、方法和质量档位，写下提示词，点 **Generate**。代理工作期间卡片显示 `running`，Generate 变成 *Generating…* 并出现 **Stop**；按下 Stop 会结束代理及其启动的整个进程组，卡片标为 `cancelled` 并保留上一份产物。失败时原因直接写在卡片上。把一张卡片拖到另一张卡片上就建立输入关系，右键连线可以取消。每个生成过的节点都会在 `.hypermaker/<id>/` 下拥有自己的目录。
 
 `vendor/` 里的子模块（HyperFrames 与 Remotion 的 skill 集合）正是 `.agents/skills/` 里那些符号链接指向的东西，所以要带上 `--recurse-submodules` 克隆，代理的 skill 才能解析到。
 
@@ -72,7 +71,8 @@ npm run dev
 - 用本地 `tts.cpp` 或 `bark.cpp` 方法生成 WAV/MP3/OGG 语音。
 - 选择质量档位——`sketch`、`demo`、`standard`、`artistic`、`realistic`——它决定代理检查与返工的力度。
 - 把本地已有文件导入成常量节点（没有方法、不能 Generate），文件会复制进该节点目录。
-- 多个生成任务可并发进行；每张卡片通过 SSE 显示自己的 `draft` / `running` / `idle` / `error` 状态。
+- 多个生成任务可并发进行，每个卡片同时只跑一个；每张卡片通过 SSE 显示自己的 `draft` / `running` / `idle` / `cancelled` / `error` 状态。运行中的卡片会出现 **Stop**，按下它会连带结束代理启动的整个进程树；同一张卡再点 Generate 会被拒绝，不会偷偷起第二个代理。
+- 停止或失败的原因直接写在卡片上，包括代理自己的最后一条错误。运行结果会落盘，重开页面或重启服务都不会把一次失败变成安静的草稿。
 - 每次运行后都能在磁盘上看到完整的提示词、脚本、产物、`codex.jsonl` 记录和该节点自己的 `AGENTS.md`。
 - 在卡片里直接预览文本、图片、音频和视频，下载产物，确认后删除节点。
 - 处理互相重叠的卡片：最后动过的那张画在最前，点击被压住卡片露出的边缘就能把它抬到最前，之后它的控件照常可用。
@@ -155,7 +155,7 @@ git diff --check
 
 - 以整数 id 为键的节点图，单个 `workspace.yml` 持久化，原子写入，节点内路径约束。
 - 文件系统注册表：四种输出类型、五个方法（`llm`、`remotion`、`hyperframe`、`tts.cpp`、`bark.cpp`）。
-- 通过 Codex CLI 并发异步生成，按节点经 SSE 汇报状态，产物与脚本经过校验。
+- 通过 Codex CLI 并发异步生成，每节点同时只跑一个；按节点经 SSE 汇报状态，可真正 Stop，运行结果落盘，产物与脚本经过校验。
 - 画布：新建、拖动、连线、取消连线、平移、缩放、预览、下载、确认删除（导入目前只有 HTTP 接口 `POST /api/import`，画布上没有按钮）。
 - 确定性测试，以及一套跑在假 Codex 上的 Playwright 浏览器测试。
 
@@ -171,12 +171,14 @@ git diff --check
 
 以下都是本地、离线运行能拿到的证据，没有用到付费模型或真实凭据。
 
-- **文本**：对着 `test/fake-codex.mjs` 跑通全流程，夹具写出的产物与真实代理同形。
+- **文本**：对着 `test/fake-codex.mjs` 跑通全流程，夹具写出的产物与真实代理同形。另有一次**真实 Codex CLI** 运行（2026-11-27，`codex-cli 0.172.0`，ChatGPT 登录）：代理写了 `generate.mjs`、跑出 `.txt`，画布正常预览（37 秒，约 4.8 万输入 token）。这证明适配器与真实二进制的 `exec --json --output-last-message …` 契约一致，不证明输出质量。
 - **图片**：对着 `test/fake-remotion-codex.mjs` 跑通全流程；这个夹具真的 bundle 并用 Remotion 渲染，产物被验证为真 PNG。假的只是“代理”，渲染是真的。
 - **视频**：同一个夹具在 `REMOTION_TEST_VIDEO=1` 下真的走完 bundle、select、`renderMedia`（h264），用例断言 `ftyp`/`avc1`/`moov` 容器结构，以及画布里的 `<video>` 能解码出 320x180、时长非零。这证不了的是：一个更像真实作品的合成（更长时长、真正选过编码参数）能否照预期渲出来——链路是真的，创作判断是夹具给的。
 - **音频**（`tts.cpp`、`bark.cpp`）仍没有真实生成测试：方法说明在，但还没有一次 TTS 运行被当作证据，请把这条路径视为未验证。
+- 首次接入会碰到的两个边界：`vendor/` 是两个子模块，不带 `--recurse-submodules` 克隆时 `.agents/skills` 的链接会断，画布照常能用但代理拿不到 Remotion/HyperFrames 的 skill 知识；顶栏默认模型 id（`gpt-5.6-luna`）是本机账号可用的，换账号可能需要换 id，换了不支持的时候卡片上会直接写出 CLI 的报错。
 - **`hyperframe`** 的图片/视频与质量档位是交给代理的指导，没有对着真实模型量过。
-- 真实 Codex CLI 的运行是本地夹具唯一证不了的事：`test/fake-codex.mjs` 复现的是契约（stdout 与 `--output-last-message` 里的最终产物 JSON），不是代理的判断力。
+- **生成生命周期**由 `test/lifecycle.test.mjs` 与 `test/stop-ui.test.mjs` 覆盖：Stop 结束整个进程组（用会持续写标记的孙进程验证）、失败与停止结果落盘且重启后仍在、服务中断的运行会报“被打断”、缺少 CLI 时给出指向 `CODEX_BIN` 的可操作提示。每一条都靠“把对应行为改坏、看测试变红”核对过。
+- `test/fake-codex.mjs` 与 `test/fake-agent.mjs` 复现的是契约（最终产物 JSON、退出码、错误事件），不是代理的判断力。Stop 和一次被拒的模型也通过真实 CLI 跑过，被拒的卡片上显示的就是 CLI 自己的报错。
 
 ## 许可证
 

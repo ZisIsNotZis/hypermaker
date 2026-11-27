@@ -8,7 +8,7 @@ HyperMaker is a local-first node canvas. Codex turns directly connected artifact
 
 ## Workspace
 
-One active workspace is open at a time. Default workdir is `.hypermaker`; opening another directory switches to it. `<workdir>/workspace.yml` is the only graph persistence. Node IDs are integers; inputs are ordered integer IDs. Input display names always come from source artifact filename. Node files live in `<workdir>/<id>/`; filenames are relative to that node directory.
+One active workspace is open at a time. Default workdir is `.hypermaker`; opening another directory switches to it. `<workdir>/workspace.yml` is the only graph persistence, and it includes each node's last run status and error so a failure is not forgotten on restart. Node IDs are integers; inputs are ordered integer IDs. Input display names always come from source artifact filename. Node files live in `<workdir>/<id>/`; filenames are relative to that node directory.
 
 Draft nodes have no directory until Generate. Imported external files are copied into their new node directory. Imported files are constant nodes: no method and no Generate. Generated nodes have optional script, artifact, `AGENTS.md`, and raw `codex.jsonl`. No manifest, recursive import discovery, versioning, copy-on-link, or simultaneous workspaces.
 
@@ -18,7 +18,9 @@ Double-click empty canvas, or press **+ Card**, to create a generation node. Car
 
 ## Generation
 
-One Generate button produces one exact artifact. Generation is asynchronous and concurrent. Start persists workspace and creates node directory; completion persists returned filenames and refreshes only that node. Agent returns only `{script?, artifact}`. Harness validates node-local paths and artifact type. Agent runs with repository root cwd so `.agents` loads, writes only current node directory.
+One Generate button produces one exact artifact, and one card has at most one run at a time: a second Generate while a card is running is refused, not queued. Generation is asynchronous and concurrent across cards. Start persists workspace and creates node directory; completion persists returned filenames and refreshes only that node. Agent returns only `{script?, artifact}`. Harness validates node-local paths and artifact type. Agent runs with repository root cwd so `.agents` loads, writes only current node directory.
+
+A running card shows its state and offers Stop. Stop ends the agent and every process it started, then leaves the card `cancelled` with the previous artifact intact. A failed run leaves the previous artifact intact too and shows its reason on the card; the reason is stored, so it is still there after reopening the page or restarting the server. A run that was cut off by the server stopping is shown as interrupted, never as a draft that never started. A missing agent is reported as an install-or-configure instruction.
 
 Prompt sections, exact order:
 

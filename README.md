@@ -1,6 +1,6 @@
 **English** | [简体中文](README.zh-CN.md)
 
-> **Status: canvas re-verified (0.1.0, 2026-11-26).** `npm test` passes 20/20 when a usable Chromium is available (10 browser cases; two of them render for real through Remotion, one a PNG and one an MP4). The ordinary user path — create, type, move, overlap and raise, link by dragging one card onto another's title bar, right-click unlink, delete with confirmation, reopen — was exercised end to end in a real browser.
+> **Status: canvas usable, generation path verified (0.1.0, 2026-11-27).** `npm test` passes 30/30 when a usable Chromium is available; two cases render for real through Remotion (a PNG and an h264 MP4), seven cover the run lifecycle, and two drive Stop and a failed run in a real browser. The ordinary user path — create, type, move, overlap and raise, link by dragging one card onto another's title bar, right-click unlink, delete with confirmation, reopen — was exercised end to end in a real browser. One **real Codex CLI run** was also taken: the agent wrote and ran a script and returned a text artifact the canvas previewed. What is simulated and what is real is spelled out in [**Verification limits**](#verification-limits).
 
 <div align="center">
   <img src="docs/logo.svg" alt="Hypermaker logo" width="112" />
@@ -18,9 +18,10 @@
   <img src="docs/screenshots/canvas.svg" alt="Hypermaker canvas with three connected artifact cards" width="94%" />
 </p>
 
-> **Status: closed milestone (0.1.0).** The prototype reached its experimental
-> goal; no further development is planned unless the project's inputs or goals
-> change. See [`docs/project-status.md`](docs/project-status.md).
+> **Status: local-canvas milestone (0.1.0).** The prototype reached its
+> experimental goal; no further development is planned unless the project's
+> inputs or goals change. [`docs/project-status.md`](docs/project-status.md) has the
+> real-vs-simulated table and what a first run is like.
 
 ## Why Hypermaker?
 
@@ -52,7 +53,7 @@ npm run dev
 
 Open <http://127.0.0.1:8787>.
 
-Double-click empty canvas to create a node. Choose its type, method and quality, write a prompt, and press **Generate**. Drag one card onto another to make it an input; right-click the link to remove it. Every generated node gets its own directory under `.hypermaker/<id>/`.
+Double-click empty canvas to create a node. Choose its type, method and quality, write a prompt, and press **Generate**. While the agent works the card reads `running`, Generate becomes *Generating…*, and **Stop** appears; Stop ends the agent and everything it spawned, marks the card `cancelled`, and keeps the previous artifact. A failure puts its reason on the card. Drag one card onto another to make it an input; right-click the link to remove it. Every generated node gets its own directory under `.hypermaker/<id>/`.
 
 The submodules in `vendor/` (the HyperFrames and Remotion skill sets) are what `.agents/skills/` symlinks into, so the `--recurse-submodules` clone is what makes agent skills resolve.
 
@@ -73,7 +74,8 @@ Server environment variables:
 - Generate WAV/MP3/OGG speech with the local `tts.cpp` or `bark.cpp` methods.
 - Pick a quality preset — `sketch`, `demo`, `standard`, `artistic`, `realistic` — which changes how much inspection and repair the agent does.
 - Import an existing local file as a constant node (no method, no Generate); the file is copied into its node directory. Import is HTTP-only today (`POST /api/import`), like clone and relayout below.
-- Run several generations concurrently; each card shows its own `draft` / `running` / `idle` / `error` state over SSE.
+- Run several generations concurrently, one per card; each card shows its own `draft` / `running` / `idle` / `cancelled` / `error` state over SSE. While a card is running it offers **Stop**, which ends the agent and everything it started; a second Generate on the same card is refused rather than starting a second agent.
+- Read the reason a run stopped or failed on the card itself, including the agent's own last error message. The outcome is stored, so reopening the page or restarting the server does not turn a failure into a quiet draft.
 - Inspect the exact prompt, script, artifact, `codex.jsonl` transcript and node-local `AGENTS.md` on disk after every run.
 - Preview text, image, audio and video natively in the card, download the artifact, and delete a node (with confirmation) from the canvas.
 - Work on overlapping cards: the card you touched last is drawn in front, and clicking a covered card's exposed edge brings it forward, so its controls stay reachable.
@@ -87,12 +89,13 @@ The registry is filesystem-driven. A new output type is a directory under `types
 
 Everything below is what a local, offline run can show. None of it uses a paid model or a real credential.
 
-- **Text** generation is exercised end to end against `test/fake-codex.mjs`, which writes the artifact a real agent would.
+- **Text** generation is exercised end to end against `test/fake-codex.mjs`, which writes the artifact a real agent would. Separately, one **real Codex CLI run** was taken on 2026-11-27 (`codex-cli 0.172.0`, ChatGPT auth): the agent wrote `generate.mjs`, ran it, and returned a plain-text artifact the canvas previewed (37 s, ~48k input tokens). That proves the adapter matches the real binary's `exec --json --output-last-message …` contract; it says nothing about output quality.
 - **Image** generation is exercised end to end against `test/fake-remotion-codex.mjs`, which really bundles and renders with Remotion; the artifact is checked to be a real PNG. The "agent" is fake, the render is not.
 - **Video** generation is exercised end to end against the same fixture with `REMOTION_TEST_VIDEO=1`: Remotion bundles, selects, and calls `renderMedia` with h264, and the test asserts an `ftyp`/`avc1`/`moov` container plus a preview `<video>` that decodes 320x180 with a non-zero duration. What this does not prove is that a realistic composition (more than two frames, a real duration, a chosen codec) renders as intended — the harness path is real, the creative choice is the fixture's.
 - **Audio** (`tts.cpp`, `bark.cpp`) still has no real-generation test. The method guides exist, but no TTS run has been taken as evidence here, so treat that path as unproven.
 - **`hyperframe`** image/video and the quality presets are passed to the agent as guidance; they were not measured against a real model.
-- A real Codex CLI run is the one thing a local fixture cannot prove. `test/fake-codex.mjs` reproduces the contract (final artifact JSON on stdout and in `--output-last-message`), not the agent's judgment.
+- **The run lifecycle** is covered by `test/lifecycle.test.mjs` and `test/stop-ui.test.mjs`: Stop kills the whole process group (checked against an agent that leaves a writing grandchild), a failure or a Stop is persisted and survives a restart, a run cut off with the server is reported as interrupted, and a missing CLI produces an instruction naming `CODEX_BIN`. Each of those was verified by breaking the behaviour and watching the test go red.
+- `test/fake-codex.mjs` and `test/fake-agent.mjs` reproduce the contract (final artifact JSON, exit codes, error events), not the agent's judgment. Stop and a deliberately rejected model were additionally exercised through the real CLI; the rejected card carried the CLI's own message.
 
 ## The mental model
 
@@ -133,13 +136,13 @@ Project source of truth: [`docs/design.md`](docs/design.md) for product behavior
 
 ```bash
 npm install          # Node.js 20+, installs Playwright and the Remotion packages
-npm test             # unit + canvas-script + browser tests on fake Codex
+npm test             # unit + canvas-script + browser + lifecycle tests on fake agents
 npm run test:e2e     # canvas tests only; needs a Chromium Playwright can launch
 node --check server/index.mjs
 git diff --check
 ```
 
-`npm test` uses `test/fake-codex.mjs` and its siblings, so it needs no model access. In the tests, set `HYPERMAKER_RESET_WORKSPACE=1` to start from an empty graph.
+`npm test` uses `test/fake-codex.mjs`, `test/fake-agent.mjs` and their siblings, so it needs no model access and no credentials. In the tests, set `HYPERMAKER_RESET_WORKSPACE=1` to start from an empty graph.
 
 The browser tests launch Chromium through `test/browser.mjs`. If `npx playwright install` is not an option, point the helper at a Chromium you already have:
 
@@ -167,7 +170,7 @@ git diff --check
 
 - Integer-id node graph persisted as one `workspace.yml`, atomic writes, node-local paths.
 - Filesystem registry with four output types and five methods (`llm`, `remotion`, `hyperframe`, `tts.cpp`, `bark.cpp`).
-- Concurrent async generation through the Codex CLI, with per-node status over SSE and validated artifact/script output.
+- Concurrent async generation through the Codex CLI, one run per node, with per-node status over SSE, a real Stop, persisted outcomes and validated artifact/script output.
 - Canvas: create, drag, link, unlink, pan, zoom, preview, download, delete-with-confirmation, import.
 - Deterministic tests plus a Playwright browser suite running against fake Codex binaries.
 

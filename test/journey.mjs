@@ -3,17 +3,18 @@
 import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { spawn } from "node:child_process";
 import { launchBrowser } from "./browser.mjs";
+import { freePort, startServer, stopAll, stopServer, waitReady } from "./server.mjs";
 
-const root = process.cwd(), port = 8971, base = mkdtempSync(join(tmpdir(), "hypermaker-journey-")), bin = join(base, "codex");
+const root = process.cwd(), base = mkdtempSync(join(tmpdir(), "hypermaker-journey-")), bin = join(base, "codex");
 // Screenshots are evidence, not source: default under the ignored .tmp/ and let the
 // caller choose a folder with HYPERMAKER_SHOTS.
 const shots = process.env.HYPERMAKER_SHOTS || join(root, ".tmp", "journey");
 mkdirSync(shots, { recursive: true });
 writeFileSync(bin, `#!/bin/sh\nexec node ${JSON.stringify(join(root, "test/fake-codex.mjs"))} "$@"\n`); chmodSync(bin, 0o755);
-const app = spawn("node", ["server/index.mjs"], { cwd: root, env: { ...process.env, PORT: String(port), CODEX_BIN: bin, HYPERMAKER_WORKDIR: join(base, "ws"), HYPERMAKER_RESET_WORKSPACE: "1" } });
-await new Promise(r => setTimeout(r, 900));
+const port = await freePort();
+const app = startServer({ cwd: root, port, env: { CODEX_BIN: bin, HYPERMAKER_WORKDIR: join(base, "ws"), HYPERMAKER_RESET_WORKSPACE: "1", FAKE_CODEX_DELAY: "2500" } });
+await waitReady(port);
 const browser = await launchBrowser();
 const steps = [];
 const note = (name, detail) => steps.push({ step: name, ...detail });
@@ -100,6 +101,24 @@ try {
   note("Generate produces an artifact and a preview", { artifact: (await ws()).nodes[a].artifact, preview: (await page.locator(`.card[data-id="${a}"] .preview`).textContent()).slice(0, 60) });
   await shot("07-generated");
 
+  // 7b. A run a person starts and stops. FAKE_CODEX_DELAY keeps this agent busy
+  // long enough for Stop to be a real target; the card must say what happened
+  // and must not lose the artifact it already had.
+  const beforeStop = (await ws()).nodes[a].artifact;
+  await page.locator(`.card[data-id="${a}"] [data-generate]`).click();
+  await page.waitForFunction(() => { const b = document.querySelector("[data-cancel]"); return b && !b.hidden; }, null, { timeout: 5000 });
+  const stopShown = await page.locator(`.card[data-id="${a}"] [data-cancel]`).isVisible();
+  await page.locator(`.card[data-id="${a}"] [data-cancel]`).click({ timeout: 5000 });
+  await page.waitForFunction(async id => { const r = await (await fetch("/api/workspace")).json(); return r.nodes[id]?.status !== "running"; }, a, { timeout: 6000 });
+  const afterStop = (await ws()).nodes[a];
+  note("Stop ends a run and says so", { stopShown, status: afterStop.status, error: afterStop.error, artifact: afterStop.artifact, keptEarlierArtifact: !!beforeStop && afterStop.artifact === beforeStop });
+  await shot("07b-stopped");
+  // A stopped card can run again, so the journey ends on a real artifact.
+  await page.waitForFunction(id => { const b = document.querySelector(`.card[data-id="${id}"] [data-generate]`); return b && !b.disabled; }, a, { timeout: 5000 }).catch(() => {});
+  await page.locator(`.card[data-id="${a}"] [data-generate]`).click();
+  for (let i = 0; i < 80; i++) { const n = (await ws()).nodes[a]; if (n?.status === "idle" && n?.artifact) break; await new Promise(r => setTimeout(r, 100)); }
+  note("the stopped card can be generated again", { status: (await ws()).nodes[a].status, artifact: (await ws()).nodes[a].artifact });
+
   // 8. Reopen in a new window: cards, prompt, artifact and link state survive.
   const reopened = await browser.newPage({ viewport: { width: 1200, height: 800 } });
   const reopenedErrors = []; reopened.on("pageerror", e => reopenedErrors.push(e.stack || String(e)));
@@ -120,5 +139,5 @@ try {
   await reopened.close(); await page.close();
 } finally {
   console.log(JSON.stringify({ steps, shots }, null, 1));
-  await browser.close(); app.kill();
+  await browser.close(); stopServer(app); stopAll();
 }

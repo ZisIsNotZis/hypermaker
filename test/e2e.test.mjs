@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { browserPath, launchBrowser } from "./browser.mjs";
+import { freePort, startServer, stopAll, stopServer, waitReady } from "./server.mjs";
 
 // Without a Chromium every canvas test would fail eight times with the same
 // Playwright banner. Skip them with one readable reason instead; the unit and
@@ -14,7 +15,8 @@ const missingBrowser = existsSync(browserPath()) ? null
   : `no Chromium at ${browserPath()}: run \`npx playwright install chromium\` or set HYPERMAKER_CHROME`;
 const canvasTest = (name, fn) => test(name, missingBrowser ? { skip: missingBrowser } : {}, fn);
 
-const root = process.cwd(), port = 8951, base = mkdtempSync(join(tmpdir(), "hypermaker-e2e-")), bin = join(base, "codex");
+const root = process.cwd(), base = mkdtempSync(join(tmpdir(), "hypermaker-e2e-")), bin = join(base, "codex");
+let port;
 writeFileSync(bin, `#!/bin/sh\nexec node ${JSON.stringify(join(root, "test/fake-codex.mjs"))} "$@"\n`); chmodSync(bin, 0o755);
 let app, browser;
 
@@ -22,12 +24,13 @@ before(async () => {
   // When every test in this file is skipped there is nothing to launch; spinning
   // up a browser anyway printed a full error banner next to the one skip reason.
   if (missingBrowser) return;
-  app = spawn("node", ["server/index.mjs"], { cwd: root, env: { ...process.env, PORT: String(port), CODEX_BIN: bin, HYPERMAKER_WORKDIR: join(base, "workspace"), HYPERMAKER_RESET_WORKSPACE: "1" } });
+  port = await freePort();
+  app = startServer({ cwd: root, port, env: { CODEX_BIN: bin, HYPERMAKER_WORKDIR: join(base, "workspace"), HYPERMAKER_RESET_WORKSPACE: "1" } });
   app.stderr.on("data", chunk => process.stderr.write(chunk));
-  for (let i = 0; i < 40; i++) { try { if ((await fetch(`http://127.0.0.1:${port}/api/registry`)).ok) break; } catch {} await new Promise(r => setTimeout(r, 100)); }
+  await waitReady(port);
   browser = await launchBrowser();
 });
-after(async () => { await browser?.close(); app?.kill(); });
+after(async () => { await browser?.close(); stopServer(app); stopAll(); });
 
 const post = (path, body) => fetch(`http://127.0.0.1:${port}${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }).then(r => r.json());
 const workspace = () => fetch(`http://127.0.0.1:${port}/api/workspace`).then(r => r.json());
