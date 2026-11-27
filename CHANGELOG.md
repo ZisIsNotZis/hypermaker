@@ -1,5 +1,46 @@
 # Changelog
 
+## Unreleased — the film check hears the whole narration, and an old take keeps its old measurement, 2026-11-28
+
+**A correct film was refused at the entry, and then a wrong one was accepted. Both were in the same
+check, and both were found by walking the product rather than by reading it.**
+
+`verifyFilm` decided whether a film carried its narration by correlating one 0.25 s window taken
+from the *middle* of the take at every candidate delay. The first film made from a blank canvas (two
+lines, spoken at 135 wpm) was refused with `the film's soundtrack is not the narration it was given
+(best agreement 0.44), so it is playing something else` - and nothing was wrong with it. The
+script's first sentence ends near the halfway mark, so the window held a pause, where both signals
+are almost zero and every lag scores noise. Where a pause falls is a property of the script, not of
+the audio being wrong; every test before this used one short sentence, whose middle is speech.
+
+The first fix picked the *loudest* windows instead, which repaired that case and opened a worse
+hole, which a supervisor measured on an accepted 5.57 s film: keep the first 3.23 s of the narration,
+replace the rest with silence, and the film still passed at 0.999 - because every window the check
+sampled happened to be one of the kept ones. A check that samples the parts most likely to be right
+cannot fail.
+
+**The check now measures every part of the narration.** The encoder's delay is found from the loud
+windows (silence cannot align anything), then each tenth of a second the narration speaks is
+compared at that alignment, with the delay refined slightly per window. A window where the narration
+itself is quiet is a written pause and is not required to match; a window where it speaks must agree.
+The card reports the *worst* window and how much of the take it covers (`worst window 0.993 of 58 of
+60 windows`), so a good middle can no longer speak for a bad end. Refusals name the time: `from
+3.20s the film plays nothing where its narration is speaking`. A wrong recording is reported as a
+different recording rather than as this take with a piece missing, so a person does not go looking
+for a cut that was never made. Measured on one real 12 s render: correctness and five changes to it,
+each refused and located - silence tail from 3.23 s, a 0.6 s hole mid-take, another take's voice, a
+truncated picture, an all-zero track (`test/film-alignment.test.mjs`). The whole-narration check
+costs about 0.35 s, so a creator never waits on it.
+
+**An older take keeps its older measurement.** Strengthening the check also relabelled films made
+before it: their record holds a correlation and no window count, and the card started presenting
+that number as a `worst window` beside a promise that every tenth of a second had been checked - a
+claim nobody made when the film was accepted. A supervisor opened an accepted 5.65 s film and caught
+it. Now the label comes from the record: an old take reads `matched 0.999 (one sampled window; a new
+cut is checked over every tenth of a second)`, a new one reads the worst window and its coverage,
+and opening a workspace stays a read - the published film is byte-identical afterwards
+(`test/film-record-age.test.mjs`).
+
 ## Unreleased — a blank canvas makes a playable film with no model and no account, 2026-11-28
 
 Every method in the registry handed its work to Codex, so the first step of every chain - a text

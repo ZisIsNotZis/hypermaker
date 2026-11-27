@@ -316,6 +316,7 @@ test("the film check refuses silence, a truncated film, and another take's voice
   const stranger = verifyFilm({ file: remux(join(dir, "wrong.mp4"), other), soundtrackFile: narration, projectRoot: root });
   assert.equal(stranger.ok, false, "a film carrying another take's narration was accepted");
   assert.match(stranger.problems.join(" "), /not the narration it was given/, `the refusal should say the sound is not this take's: ${stranger.problems.join("; ")}`);
+  assert.doesNotMatch(stranger.problems.join(" "), /too short|cut off|stops at/, `a different recording must not be described as this take with a piece missing: ${stranger.problems.join("; ")}`);
 
   // 4. No audio stream at all: strip it and keep the picture.
   const mute = join(dir, "mute.mp4");

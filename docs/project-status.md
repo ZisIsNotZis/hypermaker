@@ -47,7 +47,7 @@ pass" means "generation works". Both are true, but for different reasons.
 | Path | Exercised by | Simulated part | Real part |
 | --- | --- | --- | --- |
 | Text artifact | `test/e2e.test.mjs`, one real run | the agent's words | CLI spawn, prompt assembly, node directory, artifact validation, canvas preview |
-| A first film, no model | `test/first-cut.test.mjs`, real browser walks | — | the server writes the words, runs `voice/render.mjs` at the pace set on the card, renders a real 1280x720 h264/AAC MP4 by Remotion, and checks it: a video stream, a duration at least as long as the narration, a peak that is not silence, and an embedded track correlated with *that* narration. Negative controls built from a real render change one thing each - silence, truncation, another take's voice, no audio stream - and are refused with their own sentence |
+| A first film, no model | `test/first-cut.test.mjs`, real browser walks | — | the server writes the words, runs `voice/render.mjs` at the pace set on the card, renders a real 1280x720 h264/AAC MP4 by Remotion, and checks it: a video stream, a duration at least as long as the narration, a peak that is not silence, and an embedded track correlated with *that* narration. Negative controls built from a real render change one thing each - silence, truncation, another take's voice, no audio stream - and each is refused with its own sentence. The narration check covers *every* tenth of a second the narration speaks rather than a sample of it (`test/film-alignment.test.mjs`): the film's audio is aligned on the narration's loudest passages, every window is compared, windows where the narration is itself a pause are skipped, and the number on the card is the *worst* window out of how many were compared. Two defects were found by walking the entry rather than by reading it. A fixed 0.25 s window from the middle of the take refused a correct film whose first sentence ended near halfway - a pause there scores as noise, measured 0.44. Fixing that by probing only loud windows opened a worse hole, measured by a supervisor: keeping the first 3.23 s of a 5.57 s narration and silencing the rest still passed at 0.999. Both are now refused and located (`from 3.20s the film plays nothing where its narration is speaking`), and both are negative controls on the same real render. A wrong recording is now reported as a different recording rather than as this take with a piece missing. The whole-narration check on a 12 s film costs about 0.35 s. An older take is never relabelled: its record has a correlation and no window count, so its card says `matched 0.999 (one sampled window; a new cut is checked over every tenth of a second)` and the tooltip names the earlier check, while a new take says `worst window 0.993 of 58 of 60 windows`. A supervisor opened an accepted 5.65 s film and caught the opposite - the strengthened wording applied to a take measured the weaker way - which is now pinned by `test/film-record-age.test.mjs`: an old workspace opens, shows its own measurement, and its published file stays byte-identical |
 | A film's published record | `test/first-cut.test.mjs` | — | the file published beside a film is the composition that rendered it, not a note about it; a supervisor re-rendered from it and the frozen WAV in a clean directory and got a byte-identical MP4. The first version published comments instead, which is the same defect the narration timeline exists to prevent |
 | A pace before the first take | `test/first-cut.test.mjs`, `test/repace-ui.test.mjs` | — | the box exists on a `readaloud` card before any take, the number typed goes with the press, and the card records both the source of the words and the pace asked for (`the words from #2 - read at 110 words a minute`); asked 110, the first take reads 110.9 |
 | Image (PNG) | `test/media.test.mjs` | the agent's creative choice | Remotion bundling and `renderStill`, a real PNG, the decoded `<img>` |
@@ -118,7 +118,7 @@ Two honest gaps a first-time user will meet:
 
 - Product source of truth: [`design.md`](design.md).
 - Implementation source of truth: [`impl.md`](impl.md).
-- `npm test`: **185 cases** across 41 files — 4 registry/prompt (`core`), 4 method
+- `npm test`: **187 cases** across 43 files — 4 registry/prompt (`core`), 4 method
   availability/refusal, 6 workspace round trips, 4 canvas-script checks (a fourth now
   pins that a helper used only inside a nested template interpolation is still seen),
   8 browser canvas cases (`e2e`), 2 media renders, 1 audio render, 1 film, 3 provenance,
@@ -129,12 +129,21 @@ Two honest gaps a first-time user will meet:
   earlier take kept, a no-op press making no take, the refusals, and Stop keeping the
   approved bytes), **3 re-read canvas** (`repace-ui`: the control and its comparison,
   a linked film that is not re-cut, no control on a card that cannot use it), and 7
-  documentation checks, and **7 first-film** (`first-cut`: the whole chain from an empty
+  documentation checks, **7 first-film** (`first-cut`: the whole chain from an empty
   workspace with a probe agent that must never be called, the published record being the
   source that rendered the film, three refusals that publish nothing, four film-check
   negative controls built from a real render, the pace box before the first take, a
   server-read take re-read without re-cutting the film made from it, and Stop during a
-  render keeping the approved film, its sources and its measurements). Without a browser the
+  render keeping the approved film, its sources and its measurements), and **1 whole-narration**
+  (`film-alignment`: one real render, the good film passing with the worst window out of every
+  window compared, and five changes to it each refused and located - a silence tail from 3.23 s,
+  a 0.6 s hole mid-take, another take's voice, a truncated picture, and an all-zero track; the
+  same test asserts the check stays under 5 s so a person never waits on it), and **1 record age**
+  (`film-record-age`: a workspace written before this change, holding a film measured the old way,
+  opens and its card says `matched 0.999 (one sampled window; a new cut is checked over every tenth
+  of a second)` - the label comes from the record rather than from the build showing it, so an
+  accepted old take is not handed a claim nobody made about it; the published file is asserted
+  byte-identical afterwards, because opening a workspace is a read). Without a browser the
   canvas cases skip and say which browser they looked for; one case that makes a directory
   read-only skips - naming the directory - on a filesystem that ignores `chmod` (WSL's
   DrvFs), so a skip there is an environment limit and not a pass.
