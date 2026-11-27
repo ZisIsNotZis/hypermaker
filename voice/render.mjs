@@ -57,7 +57,7 @@ if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith
   const out = arg("out");
   const text = arg("text") ?? (arg("file") ? readFileSync(arg("file"), "utf8") : null);
   if (!out || text == null) {
-    console.error("usage: node voice/render.mjs --text \"...\" --out narration.wav [--timeline out.json] [--rate 1.1] [--pitch 112]\n       node voice/render.mjs --file script.txt --out narration.wav\n       node voice/render.mjs --check narration.wav --words \"...\"");
+    console.error("usage: node voice/render.mjs --text \"...\" --out narration.wav [--timeline out.json] [--rate 1.1] [--pitch 112] [--readings rules-1|cmudict-1]\n       node voice/render.mjs --file script.txt --out narration.wav\n       node voice/render.mjs --check narration.wav --words \"...\"\n\n--readings picks the table that decides how each word is read; the take records it, because\nthe same words read by a different table are a different recording. It defaults to this\nbuild's table, and naming one it does not have is an error rather than a fallback.");
     process.exit(1);
   }
   // One phrase per line, blank lines skipped: that is the shape an agent writes a script in,
@@ -69,7 +69,7 @@ if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith
     process.exit(2);
   }
   let rendered;
-  try { rendered = renderParagraph(phrases, { rate: Number(arg("rate")) || 1, pitch: Number(arg("pitch")) || 112 }); }
+  try { rendered = renderParagraph(phrases, { rate: Number(arg("rate")) || 1, pitch: Number(arg("pitch")) || 112, readings: arg("readings") || undefined }); }
   catch (error) { console.error(error.message); process.exit(2); }
   mkdirSync(dirname(out), { recursive: true });
   writeFileSync(out, toWav(rendered.samples, rendered.rate));

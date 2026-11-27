@@ -10,10 +10,14 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { renderParagraph, toWav } from "../voice/synth.mjs";
 import { appearsInOrder, bindTake, correlation, wordsOf } from "../voice/bind.mjs";
+import { pronounce } from "../voice/lexicon.mjs";
 import { verifyNarration } from "../server/narration.mjs";
 
+const root = process.cwd();
 const base = mkdtempSync(join(tmpdir(), "hypermaker-bind-"));
 const A = "Open the blue door.\nClose the red gate.";
 const B = "Open the red gate.\nClose the blue door.";
@@ -248,4 +252,169 @@ test("the card records which card it read, and a take that read nothing is refus
   writeFileSync(join(legacy.dir, "timeline.json"), JSON.stringify(oldTimeline));
   const old = verifyNarration({ attemptDir: legacy.dir, artifact: "narration.wav", material: A });
   assert.equal(old.ok, true, `a take from before the timeline recorded its settings was refused: ${old.problems.join("; ")}`);
+});
+
+// The reviewer's finding, reproduced exactly as it was reported. A take made by the build
+// before the dictionary existed was refused by the build that added it:
+//
+//   phrase 1 ("Science can change the way a machine works.") is 3.71s of speech,
+//   but the timeline says it takes 3.52s
+//
+// The audio was honest. It was the rule engine's reading of those words ("S-S-IY-N-S" for
+// `science`), and the checker re-rendered with today's dictionary and got a longer file. So
+// an improvement in how the voice pronounces made every older recording look like a lie about
+// its own script - the loudest possible false accusation, on the one card a person is most
+// likely to have kept. The reading table is a versioned render setting now, and the cases a
+// reader can confuse are pinned apart here.
+const OLD_TAKE = "Science can change the way a machine works.";
+
+test("a take made by an older reading table still verifies, and a different recording still does not", () => {
+  // Rendered the way the pre-dictionary build rendered it, through the frozen `rules-1` set.
+  const old = take("readings-old", OLD_TAKE, { readings: "rules-1" });
+  assert.equal(old.timeline.voice.readings, "rules-1", "the take records which table made its bytes");
+  // The two tables really do produce different audio for this sentence - the premise of the
+  // whole test. If a future lexicon made them agree, this would fail rather than pass quietly.
+  const today = renderParagraph([{ text: OLD_TAKE }], { readings: "cmudict-1" });
+  assert.notEqual(old.rendered.samples.length, today.samples.length, "the two reading tables render this sentence to different lengths, which is why the old check refused it");
+
+  // The honest take verifies, and the evidence says which table made it.
+  const verified = verifyNarration({ attemptDir: old.dir, artifact: "narration.wav", material: OLD_TAKE });
+  assert.equal(verified.ok, true, `a take from an older reading table was refused: ${verified.problems.join("; ")}`);
+  assert.equal(verified.evidence.take.voice.matched.readings, "rules-1", "the evidence names the table the audio was made with");
+
+  // And its timeline still verifies with no `readings` field at all, which is what every
+  // workspace written before this change looks like. The take must not be refused just
+  // because its record predates the field that explains it.
+  const bare = { ...old.timeline, voice: { rate: old.timeline.voice.rate, pitch: old.timeline.voice.pitch } };
+  const unlabelled = bindTake({ file: old.wav, timeline: bare });
+  assert.equal(unlabelled.ok, true, `an unlabelled take from an older table was refused: ${unlabelled.problems.join("; ")}`);
+  assert.equal(unlabelled.voice.matched.readings, "rules-1", "the check works out which table reproduces the audio and says so");
+
+  // The boundary that makes the fix safe. A *different* recording cannot be admitted by any
+  // table: the words, their order and the file have to stay the same. This is the reviewer's
+  // first finding (take A's audio under take B's timeline) re-asked with the new escape hatch
+  // open, and it must still be refused.
+  const other = take("readings-other", "Close the red gate and open the blue door.");
+  const foreign = bindTake({ file: other.wav, timeline: old.timeline });
+  assert.equal(foreign.ok, false, "another take's audio was accepted because some reading table was allowed to match");
+  assert.match(foreign.problems.join(" "), /not what is in the file there|not the sound|do not fill that stretch/, "and the refusal still says the audio is not this script");
+
+  // Same sentence, same table, but the timeline misstates the table: it says `cmudict-1` and
+  // the audio is `rules-1`. That is not a lie about the words, so it verifies - and the
+  // evidence reports both the claim and the truth, so a reader is never told the record was
+  // right when the audio says otherwise.
+  const mismatch = { ...old.timeline, voice: { ...old.timeline.voice, readings: "cmudict-1" } };
+  const relabelled = bindTake({ file: old.wav, timeline: mismatch });
+  assert.equal(relabelled.ok, true, `an honest take was refused for a mislabelled table: ${relabelled.problems.join("; ")}`);
+  assert.equal(relabelled.voice.recorded.readings, "cmudict-1", "the record's claim is kept, not overwritten");
+  assert.equal(relabelled.voice.matched.readings, "rules-1", "and what the audio actually is is reported beside it");
+});
+
+test("a reading table is named, so a take cannot be rendered with one the build does not have", () => {
+  // A record naming an unknown table is a typo or a newer build's audio. Either way it must
+  // not fall back silently to whatever this build happens to default to - that would make the
+  // one field that explains the audio into a field that is ignored.
+  assert.throws(() => renderParagraph([{ text: "The sea at night is never still." }], { readings: "cmudict-2" }), /unknown reading set/, "an unknown table must be refused where it is used, not defaulted");
+  // A timeline naming an unknown table is still checked, against the tables this build has:
+  // refusing to look would strand an old workspace, and accepting without looking would be
+  // the old defect. The audio decides.
+  const t = take("readings-unknown", OLD_TAKE, { readings: "rules-1" });
+  const claim = { ...t.timeline, voice: { ...t.timeline.voice, readings: "cmudict-9" } };
+  const r = bindTake({ file: t.wav, timeline: claim });
+  assert.equal(r.ok, true, `a good take was refused because its record named a table this build does not have: ${r.problems.join("; ")}`);
+  assert.equal(r.voice.matched.readings, "rules-1", "and it reports the table that actually reproduces the sound");
+});
+
+test("the frozen rule table is the engine that actually shipped, not a lookalike", () => {
+  // `rules-1` exists so that audio published before the dictionary still verifies. That only
+  // works if it is the *old engine*, exactly - a table that is merely similar would reproduce
+  // yesterday's take closely and then fail the frame check, which is worse than not having it:
+  // it would look like the audio was wrong. So the values are pinned, not described.
+  //
+  // Where they come from: 10e1da6 is the last commit whose `voice/lexicon.mjs` had no
+  // dictionary at all. I re-rendered the reviewer's own file through that commit's code and
+  // got 77,635 samples with whole-file correlation 1.0000 and worst frame 1.000, which is the
+  // same sample count `rules-1` produces today. A change to these numbers means this table
+  // stopped being history and became a guess.
+  const old = renderParagraph([{ text: OLD_TAKE }], { readings: "rules-1" });
+  assert.equal(old.samples.length, 77635, "rules-1 must render the reviewer's sentence to exactly the bytes that were published");
+  // Stronger than a length: the whole file, hashed. Re-rendering the reviewer's own take with
+  // `node voice/render.mjs --readings rules-1` produced a WAV whose SHA-256 is identical to
+  // the one their build published, so this is not "a similar length" - it is the same
+  // recording. If the synthesizer or the frozen table ever drifts, this is what notices.
+  assert.equal(
+    createHash("sha256").update(toWav(old.samples, old.rate)).digest("hex"),
+    "364a37535767644d539e39ae36e10f2b9bdc5c69506ce20e4abd3247bc48a6c4",
+    "rules-1 must reproduce the published take byte for byte, not merely to the same duration"
+  );
+  const now = renderParagraph([{ text: OLD_TAKE }], { readings: "cmudict-1" });
+  assert.equal(now.samples.length, 81890, "and the dictionary's reading is a different recording, which is why the record has to name its table");
+
+  // The differences are the ones that matter - words read as *different words*, not a stylistic
+  // shift. Pinned by phonemes so a subtle drift in the rules is caught, not just a length change.
+  const pairs = {
+    science: ["S S IY N S", "S AY AH N S"],
+    change: ["CH AE NG", "CH EY N JH"],
+    machine: ["M AE CH AY N", "M AH SH IY N"],
+    colour: ["K AA L AW R", "K AH L ER"],
+    every: ["EH V R IY", "EH V ER IY"]
+  };
+  for (const [word, [was, is]] of Object.entries(pairs)) {
+    assert.equal(pronounce(word, "rules-1").join(" "), was, `rules-1 is the historical reading of "${word}"`);
+    assert.equal(pronounce(word, "cmudict-1").join(" "), is, `cmudict-1 is the dictionary's reading of "${word}"`);
+  }
+  // A digit is not a pronunciation question, so both tables must agree on it: if one table
+  // refused numbers, an old take with "2" in it would fail for an unrelated reason.
+  assert.deepEqual(pronounce("2", "rules-1"), pronounce("2", "cmudict-1"), "both tables read digits the same way");
+});
+
+test("a stored take can be re-verified from the command line, which is how an old workspace is checked after an upgrade", () => {
+  // Publishing checks a take once. Reopening a workspace serves the bytes without checking
+  // them again, which is right - a take you approved should still play tomorrow. The gap that
+  // leaves is the one a reviewer asked about: after the voice improves, how does a person find
+  // out whether a card they already have is still honest? This command is the answer, and it
+  // is checked here rather than only from a terminal so it cannot rot into a script nobody ran.
+  const cli = (...args) => {
+    try { return { code: 0, out: execFileSync(process.execPath, [join(root, "voice/verify-take.mjs"), ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }) }; }
+    catch (error) { return { code: error.status, out: `${error.stdout || ""}${error.stderr || ""}` }; }
+  };
+
+  // An honest take from the older table: verifies, and says so in a sentence a person can act
+  // on, naming the table rather than making them read a correlation.
+  const old = take("verify-cli-old", OLD_TAKE, { readings: "rules-1" });
+  const ok = cli(old.dir);
+  assert.equal(ok.code, 0, `an honest stored take did not verify: ${ok.out}`);
+  assert.match(ok.out, /verifies:/, "the command says the result in a word, not only a number");
+  assert.match(ok.out, /worst-frame agreement with the words: 1\.000/, "and reports the measurement behind it");
+  assert.match(ok.out, /reading table: rules-1/, "and says which reading table made the audio");
+
+  // A take naming a table it was not made with: still honest, and the message must not read
+  // like a rejection, because the words and the sound really do match.
+  const mislabelled = take("verify-cli-label", OLD_TAKE, { readings: "cmudict-1" });
+  const shuffled = { ...mislabelled.timeline, voice: { ...mislabelled.timeline.voice, readings: "rules-1" } };
+  writeFileSync(join(mislabelled.dir, "timeline.json"), JSON.stringify(shuffled));
+  const relabelled = cli(mislabelled.dir);
+  assert.equal(relabelled.code, 0, `an honest take was failed for a mislabelled table: ${relabelled.out}`);
+  assert.match(relabelled.out, /only the label is off/, "and the message says the label is the problem, not the words");
+
+  // The case the check exists for: one take's audio under another take's script. It must fail,
+  // and the exit code has to say so, so this can be used in a script.
+  const other = take("verify-cli-other", "Close the red gate and open the blue door.");
+  const stolen = join(base, "verify-cli-stolen");
+  mkdirSync(stolen, { recursive: true });
+  writeFileSync(join(stolen, "narration.wav"), readFileSync(other.wav));
+  writeFileSync(join(stolen, "timeline.json"), JSON.stringify(old.timeline));
+  const wrong = cli(stolen);
+  assert.equal(wrong.code, 3, `a foreign recording was not rejected: ${wrong.out}`);
+  assert.match(wrong.out, /DOES NOT VERIFY/, "and it says so before the detail");
+  assert.match(wrong.out, /not what is in the file there|not the sound|do not fill that stretch/, "and names the moment that disagrees");
+
+  // A take with no timeline cannot be checked, and the command must say which file is missing
+  // rather than reporting the audio as bad.
+  const bare = join(base, "verify-cli-bare");
+  mkdirSync(bare, { recursive: true });
+  writeFileSync(join(bare, "narration.wav"), readFileSync(old.wav));
+  const missing = cli(bare);
+  assert.equal(missing.code, 1, "a missing timeline is a usage error, not a bad recording");
+  assert.match(missing.out, /no timeline at/, "and it names the file it looked for");
 });

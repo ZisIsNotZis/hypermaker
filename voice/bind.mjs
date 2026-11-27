@@ -42,7 +42,7 @@
 import { readFileSync } from "node:fs";
 import { renderParagraph, RATE } from "./synth.mjs";
 import { wavSamples } from "./wav.mjs";
-import { tokenize } from "./lexicon.mjs";
+import { tokenize, CURRENT_READINGS, READING_SETS } from "./lexicon.mjs";
 
 // The worst frame of a phrase that is still this phrase. An honest take measures 1.000 on
 // every frame; any edited phrase measured below zero on its worst frame.
@@ -141,11 +141,11 @@ export function appearsInOrder(spoken, source) {
 // audio it says so instead of accusing the script. This only chooses the wording; `ok` was
 // already false, so a near-miss in the band never accepts anything.
 function describeMismatch({ index, phrase, mine, slices, rate, start, score, at, voice }) {
-  const base = { rate: Number(voice?.rate) || 1, pitch: Number(voice?.pitch) || 112 };
+  const base = { rate: Number(voice?.rate) || 1, pitch: Number(voice?.pitch) || 112, readings: voice?.readings || CURRENT_READINGS };
   const tried = [];
   for (const dr of [0, -0.0005, 0.0005, -0.001, 0.001, -0.002, 0.002, -0.005, 0.005, -0.01, 0.01, -0.02, 0.02])
     for (const dp of [0, -1, 1, -2, 2])
-      tried.push({ rate: base.rate * (1 + dr), pitch: base.pitch + dp });
+      tried.push({ rate: base.rate * (1 + dr), pitch: base.pitch + dp, readings: base.readings });
   let near = null;
   for (const options of tried) {
     let alt;
@@ -159,7 +159,9 @@ function describeMismatch({ index, phrase, mine, slices, rate, start, score, at,
     const found = `rate ${near.options.rate.toFixed(6)}, pitch ${near.options.pitch}`;
     return `phrase ${index + 1} ("${phrase.text}") is the right words, but not at the settings the timeline records: the audio matches them at ${found}, while the record says ${was}. Nothing is wrong with the script - the file that describes this take rounded or misstated its rate or pitch, so it cannot reproduce its own audio`;
   }
-  return `phrase ${index + 1} ("${phrase.text}") is not the sound this voice makes from those words: at ${(start + at).toFixed(2)}s it scores ${score.toFixed(3)}, where the same words re-rendered score 1.000. The words written for that moment were not the words spoken there`;
+  // Every reading table this build has was already tried by `bindTake` before this wording is
+  // reached, so the sentence can name that fact instead of implying the script is at fault.
+  return `phrase ${index + 1} ("${phrase.text}") is not the sound this voice makes from those words: at ${(start + at).toFixed(2)}s it scores ${score.toFixed(3)}, where the same words re-rendered score 1.000. It does not reproduce under any reading table this build has (${READING_SETS.join(", ")}), so the words written for that moment were not the words spoken there`;
 }
 
 // Re-render a timeline's phrases at one set of settings and compare each, frame by frame,
@@ -240,7 +242,7 @@ const RATE_PRECISION = 0.0005;
 
 // The best agreement this phrase can reach at a rate near the one recorded, and the rate that
 // reaches it. Coarse then fine, so forty renders buy a resolution of a few parts per million.
-function recoverRate({ phrase, slices, rate, recorded, recordedPitch }) {
+function recoverRate({ phrase, slices, rate, recorded, recordedPitch, recordedReadings }) {
   const base = Number(recorded) || 1;
   // The pitch is not in question here - only the rate's written-down precision is - so the
   // recorded pitch is used exactly, and a take whose pitch is also wrong is not recovered by
@@ -249,7 +251,7 @@ function recoverRate({ phrase, slices, rate, recorded, recordedPitch }) {
   const pitch = Number(recordedPitch) || 112;
   const score = r => {
     let mine;
-    try { mine = renderParagraph([{ text: phrase.text }], { rate: r, pitch }); } catch { return -2; }
+    try { mine = renderParagraph([{ text: phrase.text }], { rate: r, pitch, readings: recordedReadings }); } catch { return -2; }
     if (Math.abs(mine.samples.length - slices[0].length) > Math.max(2, slices[0].length * 0.02)) return -2;
     return slices.map(slice => frameAgreement(mine.samples, slice, rate)).reduce((w, f) => (f.score > w.score ? f : w)).score;
   };
@@ -276,8 +278,22 @@ export function bindTake({ file, timeline }) {
   const seconds = Number((samples.length / rate).toFixed(2));
   const worstOf = report => Number((report.reduce((w, p) => (p.correlation < w.correlation ? p : w), report[0])?.correlation ?? 0));
 
+  // A take may be checked by a build that reads words differently from the one that made it.
+  // The record says which table made the audio; the sets it names are all tried below, and a
+  // take is accepted on an exact reproduction by any of them - never on a near miss.
+  const claimed = timeline?.voice?.readings && READING_SETS.includes(timeline.voice.readings)
+    ? timeline.voice.readings
+    : null;
+  // A record with no `readings` field predates the field; this build's own table is the honest
+  // first guess for it, and the others are still tried below because it may have been made by
+  // any build in this line.
+  const tries = claimed
+    ? [claimed, ...READING_SETS.filter(s => s !== claimed)]
+    : [CURRENT_READINGS, ...READING_SETS.filter(s => s !== CURRENT_READINGS)];
+  const voiceWith = readings => ({ ...timeline?.voice, readings });
+
   // First: the take as its record describes it.
-  const recorded = compareAt({ samples, rate, phrases, voice: timeline?.voice });
+  const recorded = compareAt({ samples, rate, phrases, voice: voiceWith(tries[0]) });
 
   // Second: are these words, at a rate the record states imprecisely? This is asked whenever
   // the recorded settings did not reproduce the audio *exactly* - including when they scraped
@@ -293,7 +309,7 @@ export function bindTake({ file, timeline }) {
     const recovered = [];
     let allFine = targets.length > 0;
     for (const target of targets) {
-      const best = recoverRate({ phrase: target.phrase, slices: target.slices, rate, recorded: timeline?.voice?.rate, recordedPitch: timeline?.voice?.pitch });
+      const best = recoverRate({ phrase: target.phrase, slices: target.slices, rate, recorded: timeline?.voice?.rate, recordedPitch: timeline?.voice?.pitch, recordedReadings: tries[0] });
       if (best.score < RECOVERED_TAKE) { allFine = false; break; }
       recovered.push(best.rate);
     }
@@ -303,7 +319,7 @@ export function bindTake({ file, timeline }) {
       recovered.sort((a, b) => a - b);
       const matched = recovered[Math.floor(recovered.length / 2)];
       const pitch = Number(timeline?.voice?.pitch) || 112;
-      const verdict = compareAt({ samples, rate, phrases, voice: { rate: matched, pitch } });
+      const verdict = compareAt({ samples, rate, phrases, voice: { rate: matched, pitch, readings: tries[0] } });
       if (!verdict.problems.length) {
         return {
           ok: true,
@@ -311,16 +327,44 @@ export function bindTake({ file, timeline }) {
           correlation: worstOf(verdict.report),
           phrases: verdict.report,
           seconds,
-          voice: { recorded: { rate: Number(timeline?.voice?.rate) || 1, pitch }, matched: { rate: Number(matched.toFixed(6)), pitch } }
+          voice: { recorded: { rate: Number(timeline?.voice?.rate) || 1, pitch, readings: tries[0] }, matched: { rate: Number(matched.toFixed(6)), pitch, readings: tries[0] } }
         };
       }
     }
   }
-  if (exact) return { ok: true, problems: [], correlation: worstOf(recorded.report), phrases: recorded.report, seconds };
+  if (exact) {
+    // `matched` is reported even when it equals `recorded`, so every accepted take has the
+    // same shape of evidence and a caller never has to guess which branch produced it.
+    const settings = { rate: Number(timeline?.voice?.rate) || 1, pitch: Number(timeline?.voice?.pitch) || 112, readings: tries[0] };
+    return { ok: true, problems: [], correlation: worstOf(recorded.report), phrases: recorded.report, seconds, voice: { recorded: settings, matched: { ...settings } } };
+  }
 
-  // Third: it is not the words. Say which phrase, and - when the audio is those words at a
-  // nearby rate - say that instead of accusing the script, because the operator's next step is
-  // different in the two cases.
+  // Third, and only when the record's own table did not reproduce the audio: a different
+  // reading table that does. This is the case a reviewer hit and I reproduced - a take
+  // published before the dictionary existed was refused by the build that added it, and told
+  // its own honest audio was not the words it had written down.
+  //
+  // It is narrow on purpose. The table only changes how words are *pronounced*: the phrase
+  // texts, their starts, their durations and the file are all still required to be the same
+  // arrangement, so a recording of a different sentence cannot be admitted by any table. The
+  // test suite pins exactly that: take A's audio against take B's timeline is still refused.
+  for (const readings of tries.slice(1)) {
+    const alt = compareAt({ samples, rate, phrases, voice: voiceWith(readings) });
+    if (!alt.problems.length && worstOf(alt.report) >= RECOVERED_TAKE) {
+      return {
+        ok: true,
+        problems: [],
+        correlation: worstOf(alt.report),
+        phrases: alt.report,
+        seconds,
+        voice: { recorded: { rate: Number(timeline?.voice?.rate) || 1, pitch: Number(timeline?.voice?.pitch) || 112, readings: tries[0] }, matched: { rate: Number(timeline?.voice?.rate) || 1, pitch: Number(timeline?.voice?.pitch) || 112, readings } }
+      };
+    }
+  }
+
+  // Fourth: it is not the words, at any settings this build can reproduce. Say which phrase,
+  // and - when the audio is those words at a nearby rate - say that instead of accusing the
+  // script, because the operator's next step is different in the two cases.
   const problems = recorded.problems.map(p => p.kind === "sound" ? describeMismatch({ ...p, rate, voice: timeline?.voice }) : p.message);
   return { ok: false, problems, correlation: worstOf(recorded.report), phrases: recorded.report, seconds };
 }

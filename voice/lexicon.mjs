@@ -194,15 +194,45 @@ const RULES = [
   ["a", "AE"], ["e", "EH"], ["i", "IH"], ["o", "AA"], ["u", "AH"], ["y", "IH"]
 ];
 
-export function pronounce(word) {
+// Which table decides how a word is read. This is a *render setting*, like rate and pitch, and
+// the similarity is not a metaphor: the same script read by `rules-1` and by `cmudict-1` is two
+// different recordings of the same words, and a published take has to say which one it is.
+//
+// The reason is a defect a reviewer found and I reproduced. `bindTake` re-renders a timeline to
+// show that the audio really says those words. When the dictionary replaced the rule engine,
+// every take published by the old build stopped reproducing: its audio was the rules' reading,
+// while the checker re-rendered today's dictionary and got a file 0.19 s longer. An honest take
+// made yesterday was then reported as a lie about its own script. The audio was never wrong -
+// the check was asking today's voice to vouch for yesterday's recording.
+//
+// So the table is named and versioned, and a take records the one that made it. A reading set is
+// frozen once published: `rules-1` is the pre-dictionary engine exactly as it shipped, kept not
+// because it was good (it read `science` as "S-S-IY-N-S") but because audio made by it still
+// has to verify. Changing how a word is read from now on means adding `cmudict-2`, never editing
+// an existing set.
+export const READING_SETS = ["rules-1", "cmudict-1"];
+// What this build renders when nobody says otherwise.
+export const CURRENT_READINGS = "cmudict-1";
+
+export function checkReadings(name) {
+  if (READING_SETS.includes(name)) return name;
+  throw new Error(`unknown reading set "${name}"; this build knows ${READING_SETS.join(", ")}. A take cannot be rendered or checked with a table it does not have`);
+}
+
+// `word` under one named reading set. `cmudict-1` asks the vendored dictionary first (see
+// `chosen`), `rules-1` skips it entirely and is the engine that shipped before the dictionary.
+export function pronounce(word, readings = CURRENT_READINGS) {
+  const set = checkReadings(readings);
   const clean = String(word).toLowerCase().replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, "");
   if (!clean) return [];
   // The dictionary answers nearly every word, and it answers with the word's real
   // pronunciation rather than what its spelling suggests. The hand-written list stays ahead
   // of it only for readings the dictionary's first entry gets wrong for narration (`CHOSEN`),
   // and digits, which it does not list at all.
-  const listed = chosen(clean);
-  if (speakable(listed)) return listed.slice();
+  if (set === "cmudict-1") {
+    const listed = chosen(clean);
+    if (speakable(listed)) return listed.slice();
+  }
   if (EXCEPTIONS.has(clean)) return EXCEPTIONS.get(clean).split(" ");
   if (/^\d+$/.test(clean)) {
     // Multi-digit numbers are read digit by digit rather than refused: no card in this
@@ -233,7 +263,8 @@ export function pronounce(word) {
 
 // Split text into words, keeping sentence punctuation so the voice can put a pause and a
 // falling pitch at the end of a sentence rather than running all of them together.
-export function tokenize(text) {
+export function tokenize(text, readings = CURRENT_READINGS) {
+  checkReadings(readings);
   const words = String(text).split(/\s+/).filter(Boolean);
   const unreadable = [];
   const tokens = words.map(raw => {
@@ -248,7 +279,7 @@ export function tokenize(text) {
     if (!cleaned) { if (/\p{L}/u.test(raw)) unreadable.push(raw); return null; }
     if (!/^[A-Za-z0-9']+$/.test(cleaned)) { unreadable.push(raw); return null; }
     let phonemes;
-    try { phonemes = pronounce(cleaned); } catch { unreadable.push(raw); return null; }
+    try { phonemes = pronounce(cleaned, readings); } catch { unreadable.push(raw); return null; }
     return { word: cleaned, phonemes, punctuation };
   }).filter(Boolean);
   return { tokens, unreadable };
@@ -264,8 +295,8 @@ export function tokenize(text) {
 // render or fails a good one. Counting the vowel phonemes is exact, because they are the
 // same list the synthesizer renders.
 const VOWEL_SET = new Set("IY IH EY EH AE AA AO OW UH UW AH ER AY OY AW".split(" "));
-export function audit(text) {
-  const { tokens, unreadable } = tokenize(text);
+export function audit(text, readings = CURRENT_READINGS) {
+  const { tokens, unreadable } = tokenize(text, readings);
   return {
     words: tokens.length,
     syllables: tokens.reduce((n, t) => n + t.phonemes.filter(p => VOWEL_SET.has(p)).length, 0),

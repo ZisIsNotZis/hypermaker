@@ -1,5 +1,52 @@
 # Changelog
 
+## Unreleased — a pronunciation fix must not call yesterday's honest take a lie, 2026-11-27
+
+A reviewer checked the candidate that shipped the pronunciation dictionary and found the
+one thing that build had not been asked: what happens to the takes people already have.
+They recorded "Science can change the way a machine works." through the ordinary entry point
+on the previous revision, then checked the same WAV and timeline on the new one, where it was
+**refused** - "phrase 1 (...) is 3.71s of speech, but the timeline says it takes 3.52s".
+
+The audio was honest. It was the rule engine's reading of those words, and the checker
+re-rendered it with the dictionary and got a longer file. So an *improvement* in how the
+voice pronounces turned every older recording into a false accusation about its own script -
+and the better the pronunciation got, the more of a person's existing work would be declared
+invalid. Reproduced here from the reviewer's own files: rendered through the pre-dictionary
+engine the take reproduces at whole-file correlation 1.0000 and worst frame 1.000, to the
+same 77,635 samples that were published.
+
+- **The reading table is a versioned render setting, like rate and pitch.** `rules-1` is the
+  pre-dictionary engine exactly as it shipped; `cmudict-1` is the dictionary's. A take records
+  `voice.readings`, and `voice/lexicon.mjs` refuses an unknown table rather than defaulting to
+  it - a field that explains the bytes must not be a field nothing enforces. Changing how a
+  word is read from now on means adding a set, never editing one.
+- **An older take verifies against every table the build has, and only on an exact
+  reproduction.** A record that predates the field, or that names a table this build does not
+  have, is re-rendered under each known table; it is accepted only when the worst frame agrees
+  at the same threshold as before (0.5 recorded, 0.95 recovered). The words, their order, their
+  start times and the file are all still required to be the same arrangement, so this does not
+  reopen the reviewer's original defect: take A's audio under take B's timeline is still
+  refused, and that case is pinned with the escape hatch open.
+- **The evidence says both what the record claimed and what the audio is.** `voice.matched` -
+  `{rate, pitch, readings}` - sits beside `voice.recorded`, and every accepted take reports it,
+  so a card is never told its record was exact when the sound says otherwise. The canvas line
+  adds "audio made with the rules-1 reading table, not cmudict-1" when the two differ, since a
+  card made before a pronunciation fix would otherwise look identical to one made after it.
+- **`node voice/verify-take.mjs <node-dir>`** answers "is this older card still honest?" -
+  reopening a workspace deliberately does not re-check a take (one you approved should play
+  tomorrow), so this is how a person asks instead of trusting. It runs the same `bindTake` the
+  server refuses a bad take with, prints `verifies` plus the worst-frame agreement and the
+  table that made the audio, or `DOES NOT VERIFY` plus the phrase and moment that disagree.
+- **The frozen table is pinned to the shipped sample, not described.** 77,635 samples for that
+  sentence, and the phonemes of `science`, `change`, `machine`, `colour` and `every` under both
+  tables, so a later edit cannot quietly turn history into a lookalike that almost reproduces
+  old audio and then fails the frame check.
+- **Tests: 95/95** with a usable Chromium (was 91/91). Four new: an older take verifies while a
+  foreign recording is still refused; an unknown table is refused where it is used; the frozen
+  table is the engine that shipped; and the re-verify command on a directory, a mislabelled
+  take, a stolen recording and a missing timeline.
+
 ## Unreleased — a take's words and a take's sound have to be the same take, 2026-11-27
 
 A reviewer took two narrations of different sentences, both 3.291 s long to the sample, and

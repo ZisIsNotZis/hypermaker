@@ -19,7 +19,7 @@
 // spectrum without consulting this file, so "it sounds like words" is a number rather than
 // an opinion.
 
-import { tokenize } from "./lexicon.mjs";
+import { tokenize, checkReadings, CURRENT_READINGS } from "./lexicon.mjs";
 
 export const RATE = 22050; // Speech energy is under 8 kHz; 44.1 kHz would double the file
                           // for nothing. The WAV this writes is still ordinary 16-bit PCM.
@@ -206,10 +206,20 @@ export function synthesize(tokens, options = {}) {
 // The entry point the voice actually uses: one line of text per phrase, spoken in order.
 // `segments` says where each phrase begins in the file, which is what lets the server check
 // an agent's timeline against the WAV that was published rather than against its story.
+// `readings` belongs here for the same reason rate and pitch do: it changes the bytes. A take
+// recorded as "rate 1, pitch 112" but rendered by the rule engine cannot be reproduced by a
+// build that reads words from the dictionary, and without this field the record could not say
+// which one made the audio. It is validated where it is used, so a typo is a refusal and not a
+// silent fallback to whatever this build happens to default to.
 export function effectiveVoice(options = {}) {
   return {
     rate: clamp(Number(options.rate) || 1, 0.5, 2.5),
-    pitch: clamp(Number(options.pitch) || 112, 70, 240)
+    pitch: clamp(Number(options.pitch) || 112, 70, 240),
+    // Refused rather than defaulted. `options.readings` unset means "whatever this build
+    // reads with"; a *named* table this build does not have is a typo or a newer build's
+    // audio, and quietly substituting today's would make the one field that explains the
+    // bytes into a field nothing enforces. `pronounce` raises the same error.
+    readings: options.readings == null ? CURRENT_READINGS : checkReadings(options.readings)
   };
 }
 
@@ -217,7 +227,7 @@ export function renderParagraph(phrases, options = {}) {
   const parts = [], segments = [];
   let cursor = 0;
   for (const phrase of phrases) {
-    const { tokens, unreadable } = tokenize(phrase.text);
+    const { tokens, unreadable } = tokenize(phrase.text, effectiveVoice(options).readings);
     if (unreadable.length) throw new Error(`the offline voice cannot say ${unreadable.map(w => `"${w}"`).join(", ")}`);
     if (!tokens.length) continue;
     const pcm = synthesize(tokens, options);
