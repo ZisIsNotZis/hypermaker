@@ -1,5 +1,5 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { extname, join, relative, resolve } from "node:path";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { basename, extname, join, relative, resolve } from "node:path";
 import { spawn } from "node:child_process";
 import { methodRegistry, typeForFile, typeRegistry } from "./registry.mjs";
 import { assemblePrompt } from "./prompt.mjs";
@@ -22,9 +22,15 @@ const reasonFrom = file => {
   return null;
 };
 const finalJson = file => {
-  const value = JSON.parse(readFileSync(file, "utf8"));
+  let value = JSON.parse(readFileSync(file, "utf8"));
+  if (typeof value === "string") value = JSON.parse(value);
   if (typeof value === "object" && value?.artifact) return value;
-  if (typeof value === "string") return JSON.parse(value);
+  // An agent that cannot finish says so in the same JSON shape, with a null
+  // artifact and a sentence naming what it hit. A real run returned "no browser
+  // executable is installed", and the card showed "final output is not artifact
+  // JSON" instead: the one message that told the person what to fix was thrown
+  // away for not being the happy shape.
+  if (typeof value === "object" && typeof value?.error === "string" && value.error.trim()) throw new Error(value.error.trim());
   throw new Error("Codex final output is not artifact JSON");
 };
 
@@ -35,6 +41,12 @@ export function generate({ node, workspace, context = {}, model, effort, useGhPr
   const nodeDir = join(workspace.workdir, String(node.id)); mkdirSync(nodeDir, { recursive: true });
   const prompt = assemblePrompt({ node, workspace, context });
   const log = join(nodeDir, "codex.jsonl"), final = join(nodeDir, "codex-final.json"), devLog = join(workspace.projectCwd || process.cwd(), "dev.log");
+  // When this run started. An agent may reasonably rewrite a file it already had,
+  // but it cannot produce a file whose content predates the run that claims it. Used
+  // below to refuse a "new result" that is really the previous run's output left at
+  // the same path - a real agent did exactly that, and two different posters were
+  // published as two different films with byte-identical video.
+  const startedAt = Date.now();
   const configured = process.env.CODEX_BIN || "codex";
     const command = configured.endsWith(".mjs") ? process.execPath : configured;
     const commandArgs = configured.endsWith(".mjs") ? [configured, "--output-last-message", final] : [];
@@ -62,6 +74,13 @@ export function generate({ node, workspace, context = {}, model, effort, useGhPr
     child.on("close", code => {
       if (cancelled) return fail(new Error("Run stopped by the user"));
       if (code !== 0) {
+        // The node directory belongs to the agent, and a real one deleted the
+        // harness's own files while "tidying": the CLI then could not write its last
+        // message and exited 1 with no reason in its event stream. Say what actually
+        // happened, and point at the one cause worth suspecting.
+        if (!existsSync(final)) {
+          return fail(new Error(`Codex exited with code ${code} and did not write its final message (${basename(final)} is missing): the run's directory was modified during the run. A run may write its own files but must not delete or rewrite prompt.txt, codex.jsonl, codex-final.json or versions/.`));
+        }
         const reason = reasonFrom(log);
         return fail(new Error(`Codex exited with code ${code}${reason ? `: ${reason}` : ""}`));
       }
@@ -69,6 +88,16 @@ export function generate({ node, workspace, context = {}, model, effort, useGhPr
         const result = finalJson(final); const artifact = safe(nodeDir, result.artifact), script = result.script ? safe(nodeDir, result.script) : null;
         if (!existsSync(artifact)) throw new Error("Agent artifact does not exist");
         const type = typeForFile(artifact); if (type !== node.type) throw new Error(`Artifact type mismatch: expected ${node.type}`);
+        // "The file exists" is not "this run made it". The artifact named by the final
+        // JSON has to have been written during this run; an older file at the same
+        // path means the agent returned previous output instead of producing new
+        // output, and publishing that would show a film made from material it never
+        // used. Failures are what a person can act on; a quiet duplicate is not.
+        const writtenAt = Math.round(statSync(artifact).mtimeMs);
+        if (writtenAt < startedAt - 1000) {
+          const age = Math.round((startedAt - writtenAt) / 1000);
+          throw new Error(`The agent returned ${relative(nodeDir, artifact)} without rewriting it: that file is ${age}s older than this run, so it holds the previous result rather than a new one. Try again, or ask the agent to render again into that path.`);
+        }
         if (!existsSync(join(nodeDir, "AGENTS.md"))) writeFileSync(join(nodeDir, "AGENTS.md"), "", "utf8");
         done({ script: script ? relative(nodeDir, script) : null, artifact: relative(nodeDir, artifact) });
       } catch (error) { fail(error); }

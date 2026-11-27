@@ -10,7 +10,11 @@ HyperMaker is a local-first node canvas. Codex turns directly connected artifact
 
 One active workspace is open at a time. Default workdir is `.hypermaker`; opening another directory switches to it. `<workdir>/workspace.yml` is the only graph persistence, and it includes each node's last run status and error so a failure is not forgotten on restart. Node IDs are integers; inputs are ordered integer IDs. Input display names always come from source artifact filename. Node files live in `<workdir>/<id>/`; filenames are relative to that node directory.
 
-Draft nodes have no directory until Generate. Imported external files are copied into their new node directory. Imported files are constant nodes: no method and no Generate. Generated nodes have optional script, artifact, `AGENTS.md`, and raw `codex.jsonl`. No manifest, recursive import discovery, versioning, copy-on-link, or simultaneous workspaces.
+Draft nodes have no directory until Generate. Imported external files are copied into their new node directory. Imported files are constant nodes: no method and no Generate. Generated nodes have optional script, artifact, `AGENTS.md`, and raw `codex.jsonl`. No manifest, recursive import discovery, copy-on-link, or simultaneous workspaces.
+
+A card keeps its finished versions. Changing the material upstream and pressing Generate again must not cost the artifact already approved, so a run does two things in a fixed order: it freezes a copy of each direct input into `<workdir>/<id>/versions/` and hands the agent those copies, and on success it publishes its output under a fresh name in `versions/` and points the card at that. Nothing the agent writes is visible until the run succeeds, so a failure has nothing to roll back, and the artifact on the card and the materials recorded for it always describe the same bytes.
+
+A run may only publish a file it wrote itself. An agent that names a path left by an earlier run - which a real one did, producing two "versions" of the same video for two different posters - is a failed run with a reason the person can act on, not a new version. The harness compares the artifact's modification time against the moment the run started and refuses anything older. `workspace.yml` stores the kept versions with their source copies, so they survive a restart. Going back to an earlier version is a pointer move, is itself reversible, and is refused while the card is generating.
 
 ## Canvas
 
@@ -35,6 +39,6 @@ Prompt sections, exact order:
 # USER PROMPT
 ```
 
-Direct inputs include directory; artifact filename plus text contents or multimodal path and metadata; source filename and contents when present; and `AGENTS.md` when present. Only direct inputs are included. Text output is plain UTF-8 unless user requests Markdown. `AGENTS.md` always emitted; empty for ordinary nodes.
+Direct inputs include directory; the frozen copy's path plus the artifact filename it came from, text contents or multimodal metadata; source filename and contents when present; and `AGENTS.md` when present. Only direct inputs are included. Text output is plain UTF-8 unless user requests Markdown. `AGENTS.md` always emitted; empty for ordinary nodes.
 
 Quality choices: sketch, demo, standard, artistic, realistic. Sketch and demo omit background unless user explicitly asks for one. Preview displays exact artifact; no preview/final generation mode. Types and methods are filesystem registry entries under `types/<type>/methods/<method>`.

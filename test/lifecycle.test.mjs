@@ -45,7 +45,7 @@ test("the adapter speaks the codex exec contract the real CLI accepts", async ()
   const id = Object.keys(created.nodes).at(-1);
   await post(p, "/api/generate", { id, model: "gpt-5.6-luna", effort: "low" });
   const node = await until(p, id, n => n.artifact || n.error);
-  assert.equal(node.artifact, "note.txt", JSON.stringify(node));
+  assert.match(node.artifact, /note\.txt$/, JSON.stringify(node));
   const argv = JSON.parse(readFileSync(join(workdir, String(id), "argv.json"), "utf8"));
   assert.deepEqual(argv.slice(0, 4), ["exec", "--json", "--output-last-message", join(workdir, String(id), "codex-final.json")],
     `a real codex CLI is invoked as \`codex exec --json ...\`, got ${JSON.stringify(argv.slice(0, 4))}`);
@@ -71,7 +71,7 @@ test("a second Generate on a running card is refused instead of starting a secon
   assert.equal(second.status, 409, "the second request is refused");
   assert.match(second.error, /already generating/i);
   const node = await until(p, id, n => n.artifact || n.error);
-  assert.equal(node.artifact, "note.txt");
+  assert.match(node.artifact, /note\.txt$/);
   assert.equal(node.error, null);
 });
 
@@ -97,7 +97,7 @@ test("Stop ends the run, kills its whole process tree, and keeps the previous ar
   const node = await until(p, id, n => n.status !== "running", 40);
   assert.equal(node.status, "cancelled", `stopped card reports cancelled, got ${JSON.stringify(node)}`);
   assert.match(node.error, /stopped/i);
-  assert.equal(node.artifact, "note.txt", "the artifact from the earlier run is still the card's artifact");
+  assert.match(node.artifact, /note\.txt$/, "the artifact from the earlier run is still the card's artifact");
   assert.equal(readFileSync(join(workdir, String(id), "note.txt"), "utf8"), "first run\n", "and it was not overwritten");
   // The grandchild lives in the agent's process group and keeps rewriting its
   // marker. Clearing the marker after the Stop and looking again is the honest
@@ -182,4 +182,19 @@ test("a run interrupted by the server shutting down is not left looking idle", a
   assert.equal(node.status, "error", `an interrupted run must not come back as idle, got ${JSON.stringify(node)}`);
   assert.match(node.error, /interrupted/i);
   assert.equal(node.artifact, null);
+});
+
+test("an agent that could not finish reaches the card with its own reason", async () => {
+  // A real run answered with a null artifact and the sentence "no browser
+  // executable is installed". The card said "final output is not artifact JSON",
+  // which hides the one message a person can act on.
+  const workdir = fresh(), p = await nextPort();
+  start(p, workdir, { AGENT_MODE: "cannot" }); await ready(p);
+  const id = Object.keys((await post(p, "/api/node", { x: 0, y: 0, type: "text", method: "llm", prompt: "hi" })).nodes).at(-1);
+  await post(p, "/api/generate", { id });
+  const node = await until(p, id, n => n.status !== "running");
+  assert.equal(node.status, "error", `an agent that produced nothing did not succeed, got ${JSON.stringify(node)}`);
+  assert.match(node.error, /no browser executable is installed/, `the agent's own reason is on the card, got ${node.error}`);
+  assert.doesNotMatch(node.error, /not artifact JSON/, "and it is not replaced by a parser complaint");
+  assert.equal(node.artifact, null, "no artifact is claimed");
 });

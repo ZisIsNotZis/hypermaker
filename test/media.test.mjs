@@ -77,7 +77,10 @@ async function generate(port, spec) {
 test("an image node renders a real PNG through Remotion and previews it", async t => {
   if (skip) return t.skip(skip);
   const { dir, id, node, page, errors } = await generate(stillPort, { type: "image", method: "remotion" });
-  assert.equal(node.artifact, "remotion-square.png");
+  // The card points at a published copy, so a later run cannot write over the image
+  // being shown. What matters here is the made thing's name, not where it is kept.
+  assert.ok(node.artifact.startsWith("versions/"), `the artifact is published, got ${node.artifact}`);
+  assert.match(node.artifact, /remotion-square\.png$/);
 
   // The artifact on disk is a real PNG, not a text file with a PNG name.
   const bytes = readFileSync(join(dir, String(id), node.artifact));
@@ -100,7 +103,8 @@ test("an image node renders a real PNG through Remotion and previews it", async 
 test("a video node renders a real MP4 through Remotion and previews it", async t => {
   if (skip) return t.skip(skip);
   const { dir, id, node, page, errors } = await generate(videoPort, { type: "video", method: "remotion" });
-  assert.equal(node.artifact, "remotion-square.mp4");
+  assert.ok(node.artifact.startsWith("versions/"), `the artifact is published, got ${node.artifact}`);
+  assert.match(node.artifact, /remotion-square\.mp4$/);
 
   // A video is not "an mp4 name": the file must be an ISO base media container
   // with real track data, which is what renderMedia + FFmpeg produce and what a

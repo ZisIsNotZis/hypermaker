@@ -9,6 +9,12 @@ const parseScalar = value => {
   try { return JSON.parse(text); } catch { return text.replace(/^['"]|['"]$/g, ""); }
 };
 
+// `file` is part of a source, not decoration: it is where the bytes this artifact
+// was made from live on disk once the material card has been regenerated. Dropping
+// it here made a kept version point back at `poster.png` - today's file - which is
+// the mislabelling the snapshot exists to prevent.
+const compactSources = sources => (sources || []).map(s => ({ id: Number(s.id), type: s.type, artifact: s.artifact ?? null, ...(s.file ? { file: s.file } : {}) }));
+
 export function serializeWorkspace(nodes = {}) {
   return Object.entries(nodes).sort(([a], [b]) => Number(a) - Number(b)).map(([id, node]) => {
     // `status` and `error` are persisted on purpose: a failed or stopped run has to
@@ -20,8 +26,16 @@ export function serializeWorkspace(nodes = {}) {
     const fields = ["x", "y", "inputs", "type", "method", "prompt", "quality", "script", "artifact", "status", "error"];
     const lines = fields.map(field => `  ${field}: ${field === "inputs" ? `[${(node.inputs || []).join(", ")}]` : scalar(node[field])}`);
     if (Array.isArray(node.sources) && node.sources.length) {
-      const compact = node.sources.map(s => ({ id: Number(s.id), type: s.type, artifact: s.artifact ?? null }));
-      lines.push(`  sources: ${JSON.stringify(compact)}`);
+      lines.push(`  sources: ${JSON.stringify(compactSources(node.sources))}`);
+    }
+    // Each kept version is one finished run: the file that holds its bytes (which
+    // may be a copy under versions/, when a later run wrote the same name) and the
+    // materials that version was made from. Without this, regenerating a film
+    // leaves the older render sitting on disk with nothing on the canvas that
+    // points at it.
+    if (Array.isArray(node.versions) && node.versions.length) {
+      const compact = node.versions.map(v => ({ id: v.id, artifact: v.artifact ?? null, file: v.file ?? null, sources: compactSources(v.sources) }));
+      lines.push(`  versions: ${JSON.stringify(compact)}`);
     }
     return `${id}:\n${lines.join("\n")}`;
   }).join("\n") + (Object.keys(nodes).length ? "\n" : "");
@@ -52,11 +66,10 @@ export function writeWorkspace(workdir, nodes) {
   writeFileSync(temp, serializeWorkspace(nodes), "utf8");
   renameSync(temp, target);
 }
-
 export function nodeRecord(id, node) {
-  return { id: Number(id), x: node.x ?? 0, y: node.y ?? 0, inputs: (node.inputs || []).map(Number), type: node.type, method: node.method ?? null, prompt: node.prompt || "", quality: node.quality || "standard", script: node.script ?? null, artifact: node.artifact ?? null, status: node.status ?? null, error: node.error ?? null, sources: Array.isArray(node.sources) ? node.sources : null };
+  const record = { id: Number(id), x: node.x ?? 0, y: node.y ?? 0, inputs: (node.inputs || []).map(Number), type: node.type, method: node.method ?? null, prompt: node.prompt || "", quality: node.quality || "standard", script: node.script ?? null, artifact: node.artifact ?? null, status: node.status ?? null, error: node.error ?? null, sources: Array.isArray(node.sources) ? node.sources : null, versions: Array.isArray(node.versions) && node.versions.length ? node.versions : null };
+  return record;
 }
-
 export function workspacePath(workdir, id, filename) {
   const path = resolve(workdir, String(id), filename || "");
   if (!path.startsWith(resolve(workdir) + "/")) throw new Error("Node path outside workspace");

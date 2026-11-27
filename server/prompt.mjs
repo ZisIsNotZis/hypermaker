@@ -12,7 +12,11 @@ function inputSection(node, inputs, workspace) {
     const source = workspace.nodes[id];
     if (!source) return `INPUT ${index + 1}\nmissing node ${id}`;
     const dir = join(workspace.workdir, String(id));
-    const artifact = source.artifact ? join(dir, source.artifact) : "";
+    // A run is given a frozen copy of its material (`frozen`), not the live file:
+    // the card upstream can be regenerated or hand-replaced while a film renders,
+    // and an agent that reads the live file while the record says something else
+    // is exactly how a version ends up claiming material it never saw.
+    const artifact = source.frozen || (source.artifact ? join(dir, source.artifact) : "");
     const sourceFile = source.script ? join(dir, source.script) : "";
     const lines = [`INPUT ${index + 1}`, `directory: ${dir}`, `artifact: ${source.artifact || "(none)"}`];
     // A linked card with no artifact yet is the ordinary way a person builds a
@@ -24,6 +28,9 @@ function inputSection(node, inputs, workspace) {
     if (!source.artifact) lines.push(`note: this input has not been generated yet; it has no artifact to use. Its directory is empty of output, so do not wait for it. Either proceed without it, or say in your final JSON error that input ${index + 1} needs to be generated first.`);
     if (source.type === "text" && artifact && existsSync(artifact)) lines.push("artifact content:", "```", fileText(artifact), "```");
     else if (artifact) lines.push(`artifact path: ${artifact}`);
+    // Say plainly that this is a copy, so an agent that wants to "improve" the
+    // material edits it instead of reaching for the original card's file.
+    if (source.frozen) lines.push(`note: this path is a frozen copy of the material taken when this run started; read it, do not modify it.`);
     if (sourceFile && existsSync(sourceFile)) lines.push(`source: ${source.script}`, "source content:", "```", fileText(sourceFile), "```");
     const memory = join(dir, "AGENTS.md");
     if (existsSync(memory)) lines.push("AGENTS.md:", "```", fileText(memory), "```");

@@ -70,7 +70,7 @@ canvasTest("double-click creates a card, typing persists, and Generate produces 
   assert.equal((await workspace()).nodes[id].prompt, "make a persona");
   await card.locator("[data-generate]").click();
   const node = await waitForNode(id);
-  assert.equal(node.artifact, "xiaoming_persona.txt", JSON.stringify(node));
+  assert.match(node.artifact, /xiaoming_persona\.txt$/, JSON.stringify(node));
   await page.waitForFunction(() => !document.querySelector(".preview pre")?.textContent.includes("loading"), null, { timeout: 5000 });
   assert.match(await page.locator(".preview pre").textContent(), /程序员小明/);
   await page.close();
@@ -267,7 +267,7 @@ canvasTest("a card covered by another can still be generated after being raised"
   assert.equal(await frontMost(page), first);
   await page.locator(`.card[data-id="${first}"] [data-generate]`).click({ timeout: 5000 });
   const node = await waitForNode(first);
-  assert.equal(node.artifact, "xiaoming_persona.txt", JSON.stringify(node));
+  assert.match(node.artifact, /xiaoming_persona\.txt$/, JSON.stringify(node));
   assert.equal(node.prompt, "underneath");
   await page.close();
 });
@@ -313,7 +313,7 @@ canvasTest("reopening the page restores cards, links and generated previews", as
   await page.mouse.move(boxA.x + 100, boxA.y + 15); await page.mouse.down();
   await page.mouse.move(boxB.x + 100, boxB.y + 15, { steps: 6 }); await page.mouse.up(); await page.waitForTimeout(200);
   await page.locator(`.card[data-id="${a}"] [data-generate]`).click();
-  assert.equal((await waitForNode(a)).artifact, "xiaoming_persona.txt");
+  assert.match((await waitForNode(a)).artifact, /xiaoming_persona\.txt$/);
   const reopened = await browser.newPage();
   const reopenedErrors = []; reopened.on("pageerror", error => reopenedErrors.push(String(error)));
   await reopened.goto(`http://127.0.0.1:${port}/`);

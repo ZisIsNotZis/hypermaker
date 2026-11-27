@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
-import { createReadStream, existsSync, mkdirSync, readFileSync, copyFileSync, rmSync, statSync } from "node:fs";
-import { extname, join, relative, resolve } from "node:path";
+import { createReadStream, existsSync, mkdirSync, readFileSync, copyFileSync, readdirSync, rmSync, statSync } from "node:fs";
+import { basename, extname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readWorkspace, writeWorkspace, nodeRecord } from "./workspace.mjs";
 import { registryInfo, typeForFile } from "./registry.mjs";
@@ -30,6 +30,65 @@ const clients = new Set(), running = new Map();
 const json = (res, status, value) => { res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(value)); };
 const body = req => new Promise((ok, no) => { let data = ""; req.on("data", x => data += x); req.on("end", () => { try { ok(data ? JSON.parse(data) : {}); } catch (e) { no(e); } }); });
 const nextId = () => ++idCounter;
+// Every finished run is published under a name no later run can write to. The card
+// then points at that published file, so two things fall out of one mechanism:
+//
+//   * an agent that reuses its usual filename (they all do) writes over scratch in
+//     the node directory, never over what the person is watching or listening to;
+//   * a run that fails after writing half an output leaves the published file
+//     untouched, because nothing ever wrote to it.
+//
+// Copying the previous artifact somewhere at the start of a run - the first
+// attempt - could not do this: the agent's bytes had already been written over the
+// live file by the time the run failed.
+function publish(workdir, id, artifact) {
+  if (!artifact) return null;
+  const dir = join(workdir, String(id)), source = join(dir, artifact);
+  if (!existsSync(source)) return null;
+  const name = basename(artifact).replace(/^v\d+-/, "");
+  mkdirSync(join(dir, "versions"), { recursive: true });
+  // Keep asking for a name until one is free. Deriving the number from the version
+  // list was not enough: restoring a version empties a slot, so the next run picked
+  // a number that already named the artifact on the card and wrote straight over
+  // the film the person was watching - the exact thing publishing exists to stop.
+  let n = 1, rel;
+  do { rel = join("versions", `v${n++}-${name}`); } while (existsSync(join(dir, rel)));
+  copyFileSync(source, join(dir, rel));
+  return rel;
+}
+// An artifact from before this change lives at the top of its node directory. It
+// is still perfectly good bytes, so it is adopted into `versions/` once, on first
+// use, rather than left as the one file a new run is allowed to overwrite.
+function adoptLegacy(workdir, id, artifact) {
+  if (!artifact || artifact.startsWith("versions/")) return artifact;
+  const dir = join(workdir, String(id));
+  return existsSync(join(dir, artifact)) ? (publish(workdir, id, artifact, 0) || artifact) : artifact;
+}
+// A version's provenance has to be as durable as its bytes. Upstream files are
+// rewritten by the next run (the material card keeps one artifact name), so a
+// version that only remembered `poster.png` described whatever the poster holds
+// *today*, not what this render saw. Copy the material bytes alongside the
+// version and point the recorded source at that copy.
+function freezeSources(workdir, id, sources = []) {
+  if (!sources.length) return [];
+  const dir = join(workdir, String(id));
+  // A number that is free, not a number derived from the version list: an earlier
+  // run's snapshot must never be written over, because the version that names it
+  // still exists. This is the same collision that let a publish overwrite the
+  // artifact on the card.
+  mkdirSync(join(dir, "versions"), { recursive: true });
+  const used = readdirSync(join(dir, "versions")).map(f => /^s(\d+)-/.exec(f)?.[1]).filter(Boolean).map(Number);
+  const stamp = Math.max(0, ...used) + 1;
+  return sources.map(source => {
+    const from = join(workdir, String(source.id), source.artifact || "");
+    if (!source.artifact || !existsSync(from)) return { ...source, file: null };
+    // The source's own name, without a version prefix it may have picked up when
+    // it was published: `s2-from-1-v1-poster.png` reads like a bug and hides the name.
+    const rel = join("versions", `s${stamp}-from-${source.id}-${basename(source.artifact).replace(/^v\d+-/, "")}`);
+    copyFileSync(from, join(dir, rel));
+    return { ...source, file: rel, frozen: join(dir, rel) };
+  });
+}
 // The stored status is the last run's outcome; a live run overrides it. A run that
 // the server itself cut off is written to disk as an error at startup, so a card
 // never quietly turns back into a draft after a crash.
@@ -69,6 +128,27 @@ const server = createServer(async (req, res) => { try {
   // status/error belong to the run, not to the client: a card's prompt or position
   // edit must never be able to claim a run succeeded or erase a failure.
   if (url.pathname === "/api/node" && req.method === "PATCH") { const b = await body(req), n = getNode(b.id); delete b.status; delete b.error; Object.assign(n, b); nodes[b.id] = nodeRecord(b.id, n); save(); return json(res, 200, view()); }
+  // Going back must move the provenance with the bytes. Restoring only the file
+  // would leave the card claiming the newest film's materials over an older
+  // picture - the same lie the frozen-source work was about.
+  if (url.pathname === "/api/restore" && req.method === "POST") {
+    const b = await body(req), n = getNode(b.id);
+    if (running.has(n.id)) return json(res, 409, { ...view(), error: `Node ${n.id} is generating; stop it before going back to an earlier version` });
+    const list = [...(n.versions || [])], index = list.findIndex(v => Number(v.id) === Number(b.version));
+    if (index < 0) return json(res, 404, { ...view(), error: `Node ${n.id} has no version ${b.version}` });
+    const chosen = list[index];
+    if (!chosen.file || !existsSync(join(workdir, String(n.id), chosen.file))) return json(res, 409, { ...view(), error: `Version ${chosen.id} of node ${n.id} is missing its file (${chosen.file || "none"})` });
+    // The version being replaced becomes selectable in the same slot, so going back
+    // is itself reversible.
+    const ordinal = Math.max(0, ...list.map(v => Number(v.id) || 0)) + 1;
+    // The version being replaced stays where its bytes already are. Because a run
+    // publishes rather than overwrites, that is enough: the file it points at is not
+    // going anywhere, so there is nothing to copy and nothing to roll back.
+    const back = n.artifact ? { ...(list[index]), id: ordinal, artifact: n.artifact, file: adoptLegacy(workdir, n.id, n.artifact), sources: n.sources || [] } : null;
+    if (back?.file) list.splice(index, 1, back); else list.splice(index, 1);
+    nodes[n.id] = nodeRecord(n.id, { ...n, artifact: chosen.file, sources: chosen.sources || [], versions: list, status: "idle", error: null }); save(); emit({ kind: "restored", id: n.id, version: chosen.id });
+    return json(res, 200, view());
+  }
   if (url.pathname === "/api/clone" && req.method === "POST") { const b = await body(req), source = getNode(b.id), id = nextId(); nodes[id] = nodeRecord(id, { ...source, x: source.x + 40, y: source.y + 40, inputs: [...source.inputs], artifact: null, script: null, status: null, error: null }); save(); return json(res, 200, view()); }
   if (url.pathname === "/api/delete" && req.method === "POST") { const b = await body(req); delete nodes[b.id]; for (const n of Object.values(nodes)) n.inputs = n.inputs.filter(id => id !== Number(b.id)); if (existsSync(join(workdir, String(b.id)))) rmSync(join(workdir, String(b.id)), { recursive: true, force: true }); save(); return json(res, 200, view()); }
   if (url.pathname === "/api/layout" && req.method === "POST") { Object.entries(nodes).forEach(([id, n], i) => { n.x = i % 4 * 340 + 40; n.y = Math.floor(i / 4) * 280 + 40; }); save(); return json(res, 200, view()); }
@@ -79,34 +159,70 @@ const server = createServer(async (req, res) => { try {
     if (running.has(n.id)) return json(res, 409, { ...view(), error: `Node ${n.id} is already generating` });
     if (typeof b.prompt === "string") n.prompt = b.prompt;
     // Freeze what this run is given *now*. A film takes minutes; a person may
-    // rewire the canvas while watching it, and reading the links again at
-    // completion would label the film with materials it never saw.
     const givenInputs = [...(n.inputs || [])];
     // Take the id from the key, not from the record: a node read back from
     // workspace.yml has no `id` field of its own (the map key is the id), so
     // using s.id wrote `null` for every source of a workspace loaded from disk -
     // which is exactly the ordinary case after a restart.
     const givenSources = givenInputs.filter(id => nodes[id]).map(id => ({ id: Number(id), type: nodes[id].type, artifact: nodes[id].artifact ?? null }));
-    // A run in flight changes nothing about the artifact already on the card: if the
-    // run fails or is stopped, the card keeps showing the last good artifact, and
-    // that artifact must keep the provenance it was made with. So the frozen set
-    // stays local to this run and is only written when the run succeeds.
-    const run = { ...n, inputs: givenInputs, status: "running", error: null };
+    // Ids, not positions: restoring a version replaces an entry, so counting would
+    // hand out an id that is already in the list.
+    const ordinal = Math.max(0, ...(n.versions || []).map(v => Number(v.id) || 0)) + 1;
+    // Freeze the material bytes now, under this run's number, and hand the agent the
+    // copies. Whatever happens upstream from here - a regenerate, a hand-replaced
+    // file - this run keeps reading the bytes it started with, so what it publishes
+    // and what the card records can only describe the same thing. The first attempt
+    // at this copied the material when the run *finished*, which recorded the newer
+    // file a person had swapped in mid-render.
+    const runSources = freezeSources(workdir, n.id, givenSources)
+      .map(({ id, type, artifact, file }) => ({ id, type, artifact, file, frozen: join(workdir, String(n.id), file) }));
+    // The artifact on the card becomes the alternative once this run succeeds. An
+    // older workspace keeps its artifact at the top of the node directory, which a
+    // new run may write over, so it is adopted into versions/ on first use.
+    const kept = n.artifact ? { id: ordinal, artifact: n.artifact, file: adoptLegacy(workdir, n.id, n.artifact), sources: n.sources || [] } : null;
+    // Freezing the copies is this run's own bookkeeping, so its number must not be
+    // reused - but publishing picks its own free name, above.
+    // The card keeps pointing at the published artifact while the run works; only a
+    // successful run moves it. Nothing the agent writes is visible until then, so a
+    // run that dies halfway leaves the picture, the sound and their provenance as
+    // they were - there is no copy to make and nothing to roll back.
+    const run = { ...n, inputs: givenInputs, sources: runSources, status: "running", error: null };
     nodes[n.id] = nodeRecord(n.id, run); save(); emit({ kind: "started", id: n.id });
-    const agent = runCodex({ node: run, workspace: { workdir, nodes: { ...nodes }, projectCwd: root }, model: b.model, effort: b.effort, useGhPrefix: b.useGhPrefix });
+    // The prompt has to point at the frozen copies, not at the live card files. The
+    // agent reads its material some time after this line - a film takes minutes -
+    // and until this was wired up it read whatever the material card held *then*,
+    // so a person who replaced a poster mid-render got a film made from the new
+    // poster while the record named the old one.
+    const promptNodes = { ...nodes };
+    for (const source of runSources) if (source.frozen) promptNodes[source.id] = { ...nodes[source.id], frozen: source.frozen };
+    const agent = runCodex({ node: run, workspace: { workdir, nodes: promptNodes, projectCwd: root }, model: b.model, effort: b.effort, useGhPrefix: b.useGhPrefix });
     running.set(n.id, agent);
     agent.then(result => {
-      // The previous artifact is replaced only when the new run succeeded, and the
-      // provenance is the set frozen at start (see `givenSources`), not whatever
-      // the links say by now.
-      // `inputs` is deliberately not restored: a link the person added while this
-      // ran is their preparation for the next run, not something this run gets to
-      // undo. Only `sources` describes the finished artifact, and it comes from
-      // the frozen set.
-      nodes[n.id] = nodeRecord(n.id, { ...nodes[n.id], ...result, sources: givenSources, status: "idle", error: null }); save(); emit({ kind: "complete", id: n.id });
+      // The finished bytes are published under a name no later run can write to, and
+      // that is what the card shows. Whatever the agent left behind at its own
+      // filename is scratch, and is free to be overwritten next time.
+      const published = publish(workdir, n.id, result.artifact);
+      const previous = kept?.file ? [...(nodes[n.id].versions || []), kept] : (nodes[n.id].versions || []);
+      const sources = runSources.map(({ id, type, artifact, file }) => ({ id, type, artifact, file }));
+      // `inputs` is deliberately left as it is now: a link the person added during
+      // the run is their preparation for the next one, not something this run gets
+      // to undo. Only `sources` describes the artifact, and that comes from the set
+      // frozen at start.
+      // Release the run slot in the same synchronous step that publishes the
+      // outcome. Writing `idle` first left a window where the card showed a finished
+      // film while a second Generate was still refused with "already generating" -
+      // publishing takes a copy, so that window got wide enough to hit every time.
+      running.delete(n.id);
+      nodes[n.id] = nodeRecord(n.id, { ...nodes[n.id], ...result, artifact: published || result.artifact, sources, versions: previous, status: "idle", error: null }); save(); emit({ kind: "complete", id: n.id });
     }).catch(error => {
       const status = /stopped/i.test(error.message) ? "cancelled" : "error";
-      nodes[n.id] = nodeRecord(n.id, { ...nodes[n.id], status, error: error.message }); save(); emit({ kind: status === "cancelled" ? "cancelled" : "error", id: n.id, error: error.message });
+      // Nothing the failed run wrote was ever published, so the artifact, its
+      // provenance and the kept versions are still exactly what they were. What has
+      // to go is this run's frozen material copies: they describe a run that
+      // produced nothing, and leaving them would grow versions/ with every failure.
+      for (const source of runSources) if (source.file) rmSync(join(workdir, String(n.id), source.file), { force: true });
+      running.delete(n.id);
+      nodes[n.id] = nodeRecord(n.id, { ...nodes[n.id], sources: n.sources || null, status, error: error.message }); save(); emit({ kind: status === "cancelled" ? "cancelled" : "error", id: n.id, error: error.message });
     }).finally(() => running.delete(n.id));
     return json(res, 202, view());
   }
@@ -122,7 +238,6 @@ export { server, assemblePrompt, runCodex };
 export const assembledPrompt = assemblePrompt;
 export const methodsFor = type => registryInfo().methods[type] || [];
 export const eventFromLine = () => null;
-export const discover = () => new Map();
 export const generate = runCodex;
 export { registryInfo };
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

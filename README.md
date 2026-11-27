@@ -1,6 +1,6 @@
 **English** | [简体中文](README.zh-CN.md)
 
-> **Status: canvas usable, generation path verified (0.1.0, 2026-11-27).** `npm test` passes 38/38 when a usable Chromium is available; two cases render for real through Remotion (a PNG and an h264 MP4), one renders a real WAV and checks the player can report its length, three pin how an artifact records the materials it was made from, two pin how its audio is measured, seven cover the run lifecycle, and two drive Stop and a failed run in a real browser. The ordinary user path — create, type, move, overlap and raise, link by dragging one card onto another's title bar, right-click unlink, delete with confirmation, reopen — was exercised end to end in a real browser. One **real Codex CLI run** was also taken: the agent wrote and ran a script and returned a text artifact the canvas previewed. What is simulated and what is real is spelled out in [**Verification limits**](#verification-limits).
+> **Status: canvas usable, generation path verified, versions kept (0.1.0, 2026-11-27).** `npm test` passes 44/44 when a usable Chromium is available; five pin that a re-run cannot cost you the version you already approved (a failed attempt keeps the old film and its provenance, a second version stays playable with its own material, a material swapped mid-render changes nothing, kept versions survive a restart and a running card refuses to be rewound); two cases render for real through Remotion (a PNG and an h264 MP4), one renders a real WAV and checks the player can report its length, three pin how an artifact records the materials it was made from, two pin how its audio is measured, seven cover the run lifecycle, and two drive Stop and a failed run in a real browser. The ordinary user path — create, type, move, overlap and raise, link by dragging one card onto another's title bar, right-click unlink, delete with confirmation, reopen — was exercised end to end in a real browser. One **real Codex CLI run** was also taken: the agent wrote and ran a script and returned a text artifact the canvas previewed. What is simulated and what is real is spelled out in [**Verification limits**](#verification-limits).
 
 <div align="center">
   <img src="docs/logo.svg" alt="Hypermaker logo" width="112" />
@@ -118,6 +118,22 @@ first, so 62 header bytes were counted as samples. Walking the chunk table gives
 11506** over 178752 samples, and its correlation with the source 4-second WAV is ~0.9997 -
 that is the number to trust, and `test/wav.mjs` now parses chunks so the mistake cannot
 quietly return.
+- **Versions** answer the ordinary creative move: change the material upstream, keep the
+  film you already liked, try a new one. Two failures made this necessary, both reproduced
+  by hand first. A real agent answers the same prompt with the same filename, so a run that
+  wrote its file and then failed left the card showing the old film's name and provenance
+  over the failed attempt's bytes. And a film that reads its material and renders for
+  minutes would record whatever the poster said when it *finished*, not what it read. Both
+  come from the same cause and are fixed by one rule: **a run is given a frozen copy of its
+  material and publishes its result under a name nothing can write to** (`versions/v1-…`).
+  Nothing the agent writes is visible until the run succeeds, so a failure has nothing to
+  roll back, and the card's artifact and provenance always describe the same bytes. Click a
+  `v1`/`v2` button on the card to go back; that is itself reversible, and refused with a
+  reason while the card is generating. A run may only publish a file it wrote itself: a
+  real agent handed back the film it had already rendered, so two different posters became
+  two "versions" with byte-identical video. That is now a failure with the reason on the
+  card ("older than this run"), with the approved version still playable and its material
+  still recorded; `test/versions.test.mjs` pins it.
 - **Provenance** ("made from #1 image poster.png - #3 audio tone.wav") is a persisted
   snapshot, not a rendering of the current links, because links are the wrong source of
   truth in three ways. Each rule is pinned by a test in `test/sources.test.mjs` and each was

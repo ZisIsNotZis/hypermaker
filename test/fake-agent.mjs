@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 // A stand-in for the Codex CLI whose only job is to be observable: it can be
@@ -29,6 +29,31 @@ if (mode === "fail") {
   console.log(JSON.stringify({ type: "error", message: "the agent could not finish" }));
   console.log(JSON.stringify({ type: "turn.failed", error: { message: "the agent could not finish" } }));
   process.exit(3);
+}
+
+if (mode === "reuse") {
+  // The agent answers without rendering: it names the file the previous run left.
+  // A real agent did this when it decided the old render was good enough, so a
+  // second poster produced a "new" film with byte-identical video.
+  const stale = join(dir, "note.txt");
+  // Only the first run writes it. The second run names it again without touching
+  // it, so its content predates the run that claims it.
+  if (!existsSync(stale)) writeFileSync(stale, "made by an earlier run\n");
+  const result = { prompt: "stand-in", script: null, artifact: "note.txt", type: "text", method: "llm", error: null };
+  if (output) writeFileSync(output, JSON.stringify(result));
+  console.log(JSON.stringify({ type: "turn.completed" }));
+  process.exit(0);
+}
+
+if (mode === "cannot") {
+  // What the real CLI did when it could not render: a successful exit, and a final
+  // message in the same JSON shape with a null artifact and the reason spelled out.
+  // The card must show that sentence - it is the only thing that says what to fix.
+  const reason = "Rendering could not complete because no browser executable is installed or available";
+  const result = { prompt: "stand-in", script: "render.mjs", artifact: null, type: "text", method: "llm", error: reason };
+  if (output) writeFileSync(output, JSON.stringify(result));
+  console.log(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: JSON.stringify(result) } }));
+  process.exit(0);
 }
 
 if (mode === "tree") {

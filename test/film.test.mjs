@@ -126,8 +126,12 @@ test("one card turns generated canvas material into a playable film with sound, 
   // 4. The prompt the agent received named both real artifacts. This is the exact
   //    break a person hit: links existed, but the prompt said `artifact: (none)`.
   const prompt = readFileSync(join(workdir, String(filmId), "prompt.txt"), "utf8");
-  assert.match(prompt, new RegExp(`artifact path: .*${imageId}.*${poster.artifact}`), `the prompt named the poster, got:\n${prompt.match(/# INPUTS[\s\S]{0,600}/)?.[0]}`);
-  assert.match(prompt, new RegExp(`artifact path: .*${audioId}.*tone\\.wav`), "the prompt named the audio file");
+  // The run is given a frozen copy of each input under its own node directory, so
+  // nothing upstream can change what it reads. The copy still names the material it
+  // came from, which is what makes the prompt answerable.
+  assert.match(prompt, new RegExp(`artifact path: .*/${filmId}/versions/s\\d+-from-${imageId}-${poster.artifact.replace(/^versions\/v\d+-/, "")}`), `the prompt named the poster, got:\n${prompt.match(/# INPUTS[\s\S]{0,600}/)?.[0]}`);
+  assert.match(prompt, new RegExp(`artifact path: .*/${filmId}/versions/s\\d+-from-${audioId}-tone\\.wav`), "the prompt named the audio file");
+  assert.match(prompt, /frozen copy of the material/, "and says the material is a frozen copy, so an agent does not try to edit the original");
   assert.doesNotMatch(prompt, /artifact: \(none\)/, "neither input reached the agent as an empty card");
 
   // 5. The film is a real h264 container with audible sound in it.

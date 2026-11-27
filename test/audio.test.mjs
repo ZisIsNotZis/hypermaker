@@ -57,7 +57,9 @@ test("an audio node renders a real WAV and the canvas player can report its leng
     await new Promise(r => setTimeout(r, 100));
   }
   assert.equal(node?.error, null, `generation reported no error, got ${node?.error}`);
-  assert.equal(node?.artifact, "tone-test.wav");
+  // The card points at a published copy so a later run cannot overwrite the WAV
+  // being listened to; the name of the made thing is unchanged.
+  assert.match(node?.artifact || "", /^versions\/v\d+-tone-test\.wav$/);
 
   // The bytes on disk are a real RIFF/WAVE file with the declared shape.
   const bytes = readFileSync(join(dir, String(id), node.artifact));
