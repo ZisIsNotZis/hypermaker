@@ -116,7 +116,15 @@ export function verifyNarration({ attemptDir, artifact, material = null, from = 
     // were re-rendered from this very script and agreed to this correlation. Kept because
     // it is what a person is trusting when they read the sentence and press play, and it is
     // a number a later check cannot quietly stop computing.
-    take: { correlation: bound?.correlation ?? null },
+    take: {
+      correlation: bound?.correlation ?? null,
+      // Set only when the timeline's own settings could not reproduce the audio and the take
+      // was accepted at settings recovered from within the precision the record was written
+      // at. It is evidence of an imprecise record, not of a bad take: the words are the
+      // card's words, and a reader should not later be told the record was exact when it was
+      // not. `matched` is what the audio is; `recorded` is what the file claimed.
+      ...(bound?.voice ? { voice: bound.voice } : {})
+    },
     // Which card was read, when there was one. Provenance the creator asked for: reopening
     // the workspace must say both what was said and where the words came from.
     source: from ? { id: Number(from.id), artifact: from.artifact ?? null } : null

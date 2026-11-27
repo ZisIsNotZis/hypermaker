@@ -8,14 +8,51 @@ card reported the second sentence over the first one's audio. Nothing in the old
 wired wrong: it compared the timeline with the file's *duration*, and duration cannot tell
 two sentences of equal syllable count apart.
 
-- **The published bytes are re-rendered from their own script.** Rendering is deterministic
-  - the noise source is seeded from the words - so the server renders the timeline's phrases
-  again and correlates the result with the file. Measured on this voice: same words 1.000,
-  one word changed 0.515, two clauses swapped 0.166, same words reordered 0.026. A take below
-  **0.85** is refused, with a message that gives the correlation. `voice/bind.mjs` owns the
-  comparison; `timeline.json` now records the rate and pitch it was rendered at, and an older
-  timeline without them is still verified at the defaults rather than breaking workspaces
-  written by the previous build.
+- **The published bytes are re-rendered from their own script, phrase by phrase, frame by
+  frame.** Rendering is deterministic - the noise source is seeded from the words - so the
+  server re-renders each of the timeline's phrases alone and compares it with the slice of
+  the file the timeline places it at. The comparison is 25 ms frames, and the answer is the
+  worst frame that carries sound, so no amount of identical opening can average a difference
+  away. Measured: the same phrase **1.000**, a word changed **-0.344**, a phrase reworded at
+  its end **-0.218**, an ending clause swapped **-0.297**; a phrase below **0.5** is refused.
+  Both of the intermediate designs were caught by the same reviewer and are described below
+  rather than quietly replaced. `timeline.json` records the rate and pitch it was rendered
+  at, and an older timeline without them is still verified at the defaults rather than
+  breaking workspaces written by the previous build.
+- **Two takes with a shared beginning cannot be confused, at any length.** The reviewer's
+  second report: two 32-second takes of the same twelve sentences, differing only in their
+  last two clauses. The first version of this check compared the whole file, so the mixed
+  take scored 0.896 on the strength of the eleven and a half seconds that were identical and
+  was accepted. Per-phrase correlation was the same mistake one level down - a phrase
+  reworded only at its end scored 0.940 - which is why the unit is now the frame. On the
+  reviewer's own files the two honest takes score 1.000 on every phrase and the mixed take
+  fails on exactly phrases 11 and 12, at seconds 30.15 and 30.83, with no honest sentence
+  reported as wrong.
+- **The frame unit is measured to be necessary, not chosen.** A word substituted for one of
+  the same rendered length cannot be caught by any duration check, and whole-phrase
+  correlation would have published it: `wall` -> `hedge` renders to exactly the same number
+  of samples and scores 0.62 whole-phrase against a 0.5 bar, while its worst frame is -0.567.
+  Seven such substitutions were found in one sentence, every one accepted by the phrase-level
+  measure and refused by the frame-level one. The test asserts both halves of that contrast,
+  and the whole-phrase implementation was run against it and watched going red.
+- **The tool's own take always verifies.** The reviewer's third report: `voice/render.mjs
+  --rate 1.23456 --pitch 113.45678` wrote a timeline recording `1.235` / `113.457`, so the
+  server re-rendered at the rounded speed and refused an honest take at 0.300 on its third
+  phrase. The CLI now records the effective settings the samples were made with, at full
+  precision, and verifies its own output through the same `bindTake` the server uses before
+  returning it (exit 4, "a bug in the tool", if it ever fails). A record written by an older
+  build to three decimals is *recovered* instead of refused: the recorded rate is treated as
+  known only to its written precision, the search is confined to that interval, and a
+  recovered take must reach 0.95 - a true rate measures ~0.99, a neighbouring one 0.76-0.88.
+  Recovery also runs when a rounded record merely scraped past the bar at 0.89 against an
+  exact 1.000, so a rounding cannot turn into a card that says "nearly these words".
+- **A refusal says which kind of problem it is.** "The words differ" about an honest take
+  sends a person after the wrong bug. When the audio is the claimed words at a nearby rate,
+  the message now says the record's rate or pitch is wrong and the script is not.
+- **A phrase's declared duration is checked too.** An interior phrase's slice is always the
+  right number of samples whenever the file continues past it, so only the last phrase could
+  ever run out of audio. The timeline's own `duration` is now compared with what its words
+  render to, which is what catches a misdescribed middle of a take.
 - **A narration may select from its material, but not invent.** Every spoken word must appear,
   in order, in the frozen text the card was given; words that are absent are named in the
   refusal. This is the check that stops an agent which "improved" the copy from publishing a
@@ -32,9 +69,14 @@ two sentences of equal syllable count apart.
   does not (`science` → "S-S-IY-N-S", `moved` → "M-AA-V-EH-D"). `test/docs.test.mjs` pins
   both the removed phrase and the honest replacement, in both languages.
 
-Tests: 75 → 81. `test/bind.test.mjs` is new and pins the swap, the reorder, the one-word
-edit, the length mismatch, a timeline that misstates its own speed, an invented word, and the
-legacy timeline. `test/narration.test.mjs` gained the reviewer's case end to end through the
+Tests: 75 → 86. `test/bind.test.mjs` is new and pins the swap, the reorder, the one-word
+edit, the one-word edit at the end of a long phrase, a 30-second take with a swapped ending,
+the length mismatch, a timeline that misstates its own speed, an invented word, the legacy
+timeline, and the reviewer's rounding case in both directions (the tool's own take verifies
+at full precision and through a record rounded to three decimals, while different words
+hidden behind a rounded record are still refused). `voice/render.mjs` verifies its own output
+before returning it, and that self-check was observed firing against a deliberately broken
+record. `test/narration.test.mjs` gained the reviewer's case end to end through the
 server, and its reopened-card assertions now check the source card and the correlation. Each
 new guard was observed to fail its own test when disabled.
 

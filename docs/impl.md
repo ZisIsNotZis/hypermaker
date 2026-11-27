@@ -114,11 +114,68 @@ trust.
 The fix uses determinism rather than resemblance. Rendering is a pure function of the words
 (the noise source is seeded from the words themselves), so `voice/bind.mjs` re-renders the
 timeline's own phrases at the rate and pitch the timeline records (`timeline.voice`) and
-correlates the result with the published samples. Measured: the same words 1.000, one word
-changed 0.515, two clauses swapped 0.166, the same words reordered 0.026. `SAME_TAKE` is
-0.85, inside that gap on both sides, and `verifyNarration` refuses below it. A length check
-runs first and reports the lengths rather than a score, because `"2.00s vs 2.63s"` says what
-to fix.
+compares the result with the published samples.
+
+The same reviewer then broke the first version of that fix, twice, and both times the
+mistake was the *unit of comparison*:
+
+- correlating the **whole file** against the whole script averaged a 32-second take's
+  difference into agreement. Twelve sentences differing only in their last two clauses
+  scored **0.896** on the eight-and-a-half seconds of shared audio that dominated the sum,
+  and were accepted.
+- correlating **per phrase** is the same mistake one level down: a phrase reworded only at
+  its end scored **0.940**, because its identical opening still carried the average.
+
+So the comparison is now **per phrase and per frame**. Each phrase is re-rendered alone and
+compared with the slice of the published WAV the timeline places it at, in 25 ms frames with
+a 12.5 ms hop, and the answer is the *worst* frame that carries sound (frames the render
+leaves near-silent, such as a stop's closure, are not judged). A shared prefix cannot hide a
+difference at any length because there is nowhere left for agreement to be averaged into.
+Measured on this voice (`node voice/audit-binding.mjs` prints all of it): the same phrase **1.000** on every frame; a
+word changed **-0.344**; a phrase reworded at the end **-0.218**; an ending clause swapped
+**-0.297**. `SAME_TAKE` is 0.5, which is not close to either side - an honest phrase's worst
+frame is 1.000 and an edited one's is negative, because the two signals disagree about the
+direction of the waveform at that instant.
+
+That the smaller unit is necessary rather than preferred is measured, not argued, and the
+same script prints it. A word substituted for one of the same rendered length is
+invisible to any duration check by construction, and whole-phrase correlation rates it 0.62
+(`wall` -> `hedge`, identical sample count) and 0.65 (`wall` -> `mill`) - both above the 0.5
+bar that measure would have used itself, so both would have been published. Their worst
+frames are **-0.567** and **-0.383**. Seven substitutions of this shape were found in one
+sentence, all accepted by whole-phrase correlation and all refused frame by frame.
+`test/bind.test.mjs` pins two of them and asserts the failed premise (equal length, and a
+whole-phrase score that would have passed) rather than assuming it.
+
+A phrase's length is checked before its sound, and the lengths are reported rather than a
+score, because `"2.00s vs 2.63s"` says what to fix. A refusal names the phrase number, its
+text, and the second of the take that is not those words, and only the phrases that actually
+differ are reported - so eleven honest sentences are never blamed for one edited ending.
+
+**A record must be able to reproduce its own audio.** The reviewer's third report was against this
+very check: `voice/render.mjs --rate 1.23456 --pitch 113.45678` wrote a `timeline.json` that
+recorded `1.235` / `113.457`, because the CLI rounded before writing. The server then
+re-rendered at the rounded speed, the signal drifted, and an honest take failed at 0.300 on
+its third phrase. Three things changed:
+
+- **The tool records what the bytes were made with**, at full precision and after any clamping
+  (`renderParagraph` now returns the effective `voice`; `synth.effectiveVoice` owns it).
+- **A take the tool just wrote is verified before it is returned.** `render.mjs` runs
+  `bindTake` against its own output and exits 4 with "this is a bug in the tool" rather than
+  handing back a take the server would refuse. Observed to fire: with the record deliberately
+  made to misquote a word, the CLI refused its own take and named the phrase.
+- **A record written to a few decimals is recovered, not refused.** This is the part that could
+  be abused, so it is bounded: the recorded rate is treated as a value known only to the
+  precision it was written at, the search is confined to that interval, and a recovered take
+  must reach **0.95** - where a true rate measures ~0.99 and a neighbouring one 0.76-0.88. A
+  search grid was tried first and rejected: it settled for a 0.76 match, which is "nearly the
+  recording" rather than "the recording". Recovery is also attempted when the recorded
+  settings merely *scraped past* the bar (0.89 against an exact 1.000), because settling for
+  the weaker explanation is how a rounding turns into a card that says "nearly these words".
+- **The refusal says which kind of problem it is.** A person told "the words differ" about an
+  honest take goes looking for the wrong bug. When the audio is the claimed words at a nearby
+  rate, the message says the record's rate or pitch is wrong and the script is not; when it is
+  not, it says the words written for that moment were not the words spoken.
 
 The third check is about the material: every spoken word must appear, in order, in the text
 the card was given (`materialText` in `server/prompt.mjs` reads the *frozen* copies, so an
@@ -129,10 +186,16 @@ not contain is refused, and the refusal names it. This is what stops an agent th
 
 Evidence now carries `take.correlation` and `source: {id, artifact}`, so the card can say
 `read from #2 lines.txt · matched 1.000` and a reader can tell which card's words were
-spoken. `test/bind.test.mjs` pins the swap, the reorder, the one-word edit, the length
-mismatch, the misstated rate, the invented word and the legacy timeline written before
-`voice` was recorded (which must still verify at the defaults). Each guard was observed to
-fail its own test with the guard disabled.
+spoken. `take.correlation` is the minimum across phrases, not an average, so the one number
+on the card is the take's weakest sentence. `test/bind.test.mjs` pins the swap, the reorder,
+the one-word edit, the one-word edit at the end of a long phrase (the case the phrase-level
+version accepted), a 30-second take with a swapped ending (which asserts the failed premise:
+that a whole-file correlation would have accepted it), the length mismatch, the misstated
+rate, the invented word and the legacy timeline written before `voice` was recorded (which
+must still verify at the defaults). `test/bind.test.mjs` also pins the reviewer's rounding
+case in both directions: the tool's own take verifies at full precision *and* through a record
+rounded to three decimals, while different words hidden behind a rounded record are still
+refused. Each guard was observed to fail its own test with the guard disabled.
 
 One related bug: `POST /api/node` with no explicit method gave **every** card
 `method: "llm"`, so an audio card carried a text method. It now defaults to the first method

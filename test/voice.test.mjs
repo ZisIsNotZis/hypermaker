@@ -233,6 +233,10 @@ test("the server refuses each way a narration can lie about itself", () => {
   writeFileSync(join(liar, "timeline.json"), JSON.stringify({ phrases: [{ text: "The sea at night is never still.", start: 0, duration: noiseSeconds }] }));
   const caught = verifyNarration({ attemptDir: liar, artifact: "noise.wav" });
   assert.equal(caught.ok, false, "a consistent timeline over noise must not pass");
-  assert.match(caught.problems.join(" "), /not that recording|does not match the script/, `the audio itself is what failed, got: ${caught.problems.join("; ")}`);
+  // This impostor is shorter than its own sentence renders to, so the phrase check refuses
+  // it on length before comparing sound; the wording differs, the finding is the same - the
+  // bytes are not the phrase. Either refusal is acceptable here, but *some* phrase-level
+  // refusal is required, so a check that silently stopped running would still fail this.
+  assert.match(caught.problems.join(" "), /not the sound this voice makes from those words|this phrase's words are not what is in the file|do not fill that stretch/, `the audio itself is what failed, got: ${caught.problems.join("; ")}`);
   assert.equal(caught.evidence, null, "and nothing is kept as evidence for a take that is not speech");
 });

@@ -206,6 +206,13 @@ export function synthesize(tokens, options = {}) {
 // The entry point the voice actually uses: one line of text per phrase, spoken in order.
 // `segments` says where each phrase begins in the file, which is what lets the server check
 // an agent's timeline against the WAV that was published rather than against its story.
+export function effectiveVoice(options = {}) {
+  return {
+    rate: clamp(Number(options.rate) || 1, 0.5, 2.5),
+    pitch: clamp(Number(options.pitch) || 112, 70, 240)
+  };
+}
+
 export function renderParagraph(phrases, options = {}) {
   const parts = [], segments = [];
   let cursor = 0;
@@ -218,7 +225,12 @@ export function renderParagraph(phrases, options = {}) {
     parts.push(pcm);
     cursor += pcm.length;
   }
-  return { samples: parts.flat(), rate: RATE, segments };
+  // The settings these bytes were actually made with, after synthesis has clamped them. A
+  // caller that records the numbers it *asked* for - or worse, rounds them - writes a record
+  // that cannot reproduce its own audio, and a checker that trusts the record then refuses
+  // an honest take. Measured: `--rate 1.23456` recorded as 1.235 re-rendered to a signal that
+  // drifted far enough to fail two of five phrases.
+  return { samples: parts.flat(), rate: RATE, segments, voice: effectiveVoice(options) };
 }
 
 // 16-bit little-endian mono RIFF/WAVE, header included: the same shape `synth` asks an

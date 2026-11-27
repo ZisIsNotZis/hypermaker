@@ -22,7 +22,11 @@ writeFileSync(scriptText, text.split(/\r?\n/).map(l => l.trim()).filter(Boolean)
 
 const root = process.env.HYPERMAKER_PROJECT || process.cwd();
 const wav = join(dir, "narration.wav"), timeline = join(dir, "timeline.json");
-execFileSync(process.execPath, [join(root, "voice/render.mjs"), "--file", scriptText, "--out", wav, "--timeline", timeline], { stdio: "inherit" });
+execFileSync(process.execPath, [join(root, "voice/render.mjs"), "--file", scriptText, "--out", wav, "--timeline", timeline,
+  // Optional, and only used by the test that reproduces the reviewer's report: an agent that
+  // picks a speed and pitch of its own, at a precision the record cannot hold exactly.
+  ...(process.env.NARRATION_RATE ? ["--rate", process.env.NARRATION_RATE] : []),
+  ...(process.env.NARRATION_PITCH ? ["--pitch", process.env.NARRATION_PITCH] : [])], { stdio: "inherit" });
 
 // The guide's own verification step, run for real. If the audio is not speech this throws
 // and the run fails, which is what would happen to a real agent that did not check.

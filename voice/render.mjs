@@ -16,6 +16,7 @@ import { dirname } from "node:path";
 import { audit } from "./lexicon.mjs";
 import { renderParagraph, toWav, RATE } from "./synth.mjs";
 import { measure } from "./measure.mjs";
+import { bindTake } from "./bind.mjs";
 
 const argv = process.argv.slice(2);
 const arg = name => { const i = argv.indexOf(`--${name}`); return i === -1 ? null : argv[i + 1] ?? null; };
@@ -76,8 +77,25 @@ if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith
   // published WAV to its script by re-rendering it: the same words at a different speed or
   // pitch are a different signal, and a timeline that did not say how it was rendered could
   // only be checked by a tolerance loose enough to accept a different sentence.
-  const timeline = { audio: out, rate: rendered.rate, seconds: rendered.samples.length / rendered.rate, voice: { rate: Number((Number(arg("rate")) || 1).toFixed(3)), pitch: Number((Number(arg("pitch")) || 112).toFixed(3)) }, phrases: rendered.segments };
+  //
+  // The values recorded are the ones the samples were actually made with, at full precision
+  // and after clamping - not the strings typed on the command line and not a rounded version
+  // of them. Rounding here was a real bug: `--rate 1.23456` was written down as `1.235`, the
+  // server re-rendered at the rounded speed, and the take's own third phrase failed the check
+  // at 0.300. A record that cannot reproduce its own recording is the one thing this file
+  // exists to prevent.
+  const timeline = { audio: out, rate: rendered.rate, seconds: rendered.samples.length / rendered.rate, voice: rendered.voice, phrases: rendered.segments };
   const timelinePath = arg("timeline");
   if (timelinePath) { mkdirSync(dirname(timelinePath), { recursive: true }); writeFileSync(timelinePath, JSON.stringify(timeline, null, 2)); }
-  console.log(JSON.stringify({ out, seconds: Number(timeline.seconds.toFixed(2)), phrases: timeline.phrases.map(p => ({ text: p.text, start: Number(p.start.toFixed(2)), duration: Number(p.duration.toFixed(2)) })) }, null, 2));
+  console.log(JSON.stringify({ out, seconds: Number(timeline.seconds.toFixed(2)), voice: timeline.voice, phrases: timeline.phrases.map(p => ({ text: p.text, start: Number(p.start.toFixed(2)), duration: Number(p.duration.toFixed(2)) })) }, null, 2));
+  // The one thing this tool must never do is hand back a take its own server would refuse.
+  // `--check` measures the acoustics; this checks the record against the bytes, through the
+  // same code the server uses, at the moment they are written. It costs one re-render of a
+  // file that was just rendered, and it turns a class of drift into a local failure instead
+  // of a rejected take on someone else's canvas.
+  const selfCheck = bindTake({ file: out, timeline });
+  if (!selfCheck.ok) {
+    console.error(`the take this tool just wrote does not verify against its own timeline, which is a bug in the tool rather than in the script:\n  ${selfCheck.problems.join("\n  ")}`);
+    process.exit(4);
+  }
 }

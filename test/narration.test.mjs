@@ -240,7 +240,7 @@ if (out) writeFileSync(out, JSON.stringify({ prompt: "read it", script, artifact
     // The decisive check: both files are real speech of the card's own words, so only the
     // rebind can tell that the sentence now written on the card was recorded by another take.
     // Duration, syllable count and pronunciation all agree; the signal does not.
-    assert.match(node.error, /does not match the script recorded next to it/, `and says the audio is not its script, got ${node.error}`);
+    assert.match(node.error, /not the sound this voice makes from those words/, `and says the audio is not its script, got ${node.error}`);
     assert.equal(node.narration, null, "no evidence was recorded for a refused take");
   } finally { stopServer(app3); stopAll(); }
 });
@@ -291,7 +291,7 @@ if (out) writeFileSync(out, JSON.stringify({ prompt: "read it", script: "make.mj
     // these bytes are not the recording the timeline claims, and the words are not in the
     // material either. Both are named, because a person fixing this needs to know which
     // one to fix. Naming only "not speech" would have been true and less useful.
-    assert.match(node.error, /not that recording|does not match the script|not in the material/, `and names the check that failed, got ${node.error}`);
+    assert.match(node.error, /not that recording|not the sound this voice makes from those words|not in the material/, `and names the check that failed, got ${node.error}`);
     assert.equal(node.narration, null, "no evidence was recorded for a take that was not speech");
     // The refused take is not reachable from the canvas at all: the attempt directory is
     // kept for inspection, but nothing was published into `versions/`, so there is no file a
@@ -299,4 +299,59 @@ if (out) writeFileSync(out, JSON.stringify({ prompt: "read it", script: "make.mj
     const published = existsSync(join(workdir2, String(id), "versions")) ? readdirSync(join(workdir2, String(id), "versions")).filter(f => f.endsWith(".wav")) : [];
     assert.deepEqual(published, [], `no WAV was published, got ${published}`);
   } finally { stopServer(app2); stopAll(); }
+});
+
+test("an honest agent that picks its own speed and pitch still publishes, and the card can say what was recorded", async t => {
+  // The reviewer's third report. `voice/render.mjs --rate 1.23456 --pitch 113.45678` used to
+  // write a timeline recording `1.235` / `113.457`, so the server re-rendered at a slightly
+  // different speed and refused an honest take on its third phrase. The take here is produced
+  // by the same stand-in agent as the approved path, with only the extra parameters added, so
+  // nothing about it is special except the numbers - which is exactly the point.
+  if (skip) return t.skip(skip);
+  const port4 = await freePort();
+  const workdir4 = join(base, "ws-nonround");
+  const app4 = startServer({
+    cwd: root, port: port4,
+    env: {
+      CODEX_BIN: bin, HYPERMAKER_WORKDIR: workdir4, HYPERMAKER_RESET_WORKSPACE: "1", HYPERMAKER_PROJECT: root,
+      NARRATION_RATE: "1.23456", NARRATION_PITCH: "113.45678"
+    }
+  });
+  const create = (path, body) => fetch(`http://127.0.0.1:${port4}${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }).then(r => r.json());
+  try {
+    await waitReady(port4);
+    const material = "The sea at night is never still. It carries every colour of the sky.";
+    const madeText = await create("/api/node", { x: 10, y: 10, type: "text", method: "llm", prompt: material, quality: "demo" });
+    const tid = Number(Object.keys(madeText.nodes).at(-1));
+    await create("/api/generate", { id: tid });
+    let textNode;
+    for (let i = 0; i < 200; i++) {
+      textNode = (await fetch(`http://127.0.0.1:${port4}/api/workspace`).then(r => r.json())).nodes[tid];
+      if (textNode?.artifact || textNode?.error) break;
+      await new Promise(r => setTimeout(r, 100));
+    }
+    // Without this the narration has nothing to read, and "no source card" would be correct
+    // rather than the bug it is being tested for.
+    assert.match(textNode.artifact || "", /lines\.txt$/, `the material card was written, got ${textNode.artifact} / ${textNode.error}`);
+    const made = await create("/api/node", { x: 300, y: 10, type: "audio", method: "narration", quality: "demo", prompt: "read it", inputs: [tid] });
+    const id = Number(Object.keys(made.nodes).at(-1));
+    // The same link a person makes by dragging one card onto another. Passing `inputs` at
+    // create time is not the wiring the canvas uses, and a card with no link has no material,
+    // so without this the narration would legitimately report no source card.
+    await create("/api/link", { source: tid, target: id });
+    await create("/api/generate", { id });
+    let node;
+    for (let i = 0; i < 600; i++) {
+      node = (await fetch(`http://127.0.0.1:${port4}/api/workspace`).then(r => r.json())).nodes[id];
+      if (node?.artifact || node?.error) break;
+      await new Promise(r => setTimeout(r, 100));
+    }
+    assert.equal(node.error, null, `an honest take at a non-round rate was refused: ${node.error}`);
+    assert.ok(node.artifact, "the take was published");
+    // The record on the card judged the bytes it describes, exactly. This is the bug the
+    // reviewer found, so its absence is asserted rather than assumed.
+    assert.equal(node.narration.take.correlation, 1, `the take agrees with its own record exactly, got ${node.narration.take.correlation}`);
+    assert.match(node.narration.verdict, /speech/);
+    assert.equal(node.narration.source?.id, tid, `and the card says which card it read, got ${JSON.stringify(node.narration.source)}`);
+  } finally { stopServer(app4); stopAll(); }
 });
