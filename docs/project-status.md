@@ -32,6 +32,10 @@ pass" means "generation works". Both are true, but for different reasons.
 | `hyperframe` image/video | — | everything | nothing beyond the method guidance being passed to the agent |
 | Quality presets | — | — | passed as guidance only; never measured against a real model |
 
+Two real runs were taken: one through the working tree, and one through a clean
+`git archive` export of the candidate (a different prompt; the agent wrote
+`generate_artifact.mjs` and a two-line `.txt`).
+
 The real run used `codex-cli 0.172.0` with ChatGPT authentication and the
 adapter's own flags (`exec --json --output-last-message … --sandbox
 danger-full-access --skip-git-repo-check --ephemeral`). It is evidence that the
