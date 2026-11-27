@@ -174,6 +174,15 @@ function compare(n, id) {
 // Two things a press deliberately does not do: it does not re-render (a phrase's times are
 // facts about the published file, so re-rendering would be a different take) and it does not
 // start a run (a listen must not cost a generation).
+//
+// A press is a wish about *that* press, never a mode. Once a person touches the player - plays,
+// pauses, drags the progress bar - the player owns the listen. A supervisor found what happens
+// without this: hear sentence 1, drag the clock into sentence 2, and sentence 1's end-watch saw a
+// clock already past its end and paused the player a few milliseconds later, so the sound stopped
+// about where it had been asked to start. The watch is now dropped by any pause and by any seek
+// that lands outside the sentence it was armed for; what was asked for is then heard from where
+// the clock actually is, to the end of the file, and the chip follows that clock.
+function stopPhrase(audio){if(audio.phraseStop){cancelAnimationFrame(audio.phraseStop);audio.phraseStop=0}audio.phraseFrom=NaN}
 function phraseWatch(e,audio){const chips=[...e.querySelectorAll('[data-phrase]')];if(!chips.length)return;
   const paint=()=>{for(const b of chips){const from=+b.dataset.from,to=+b.dataset.to,at=audio.currentTime;const inside=!audio.paused&&at>=from-0.05&&(to>from?at<to-0.01:true);if(inside)b.setAttribute('data-playing','');else b.removeAttribute('data-playing')}};
   // Wired once per player element. `sync` runs on every server event, and re-adding the same
@@ -186,7 +195,12 @@ function phraseWatch(e,audio){const chips=[...e.querySelectorAll('[data-phrase]'
     const tick=()=>{if(e.querySelector('.preview audio')!==audio){audio.phraseFrame=0;return}paint();audio.phraseFrame=requestAnimationFrame(tick)};
     const start=()=>{paint();if(!audio.phraseFrame)audio.phraseFrame=requestAnimationFrame(tick)};
     const stop=()=>{if(audio.phraseFrame){cancelAnimationFrame(audio.phraseFrame);audio.phraseFrame=0}paint()};
-    for(const [type,fn] of [['play',start],['playing',start],['pause',stop],['ended',stop],['seeked',paint],['timeupdate',paint]])audio.addEventListener(type,fn);
+    // A seek the chip itself made lands on the sentence it armed, so it survives - that is why the
+    // test is `phraseFrom` and not a "was this a chip seek" flag. Any other seek means the person
+    // is listening from somewhere else now, and the armed stop is abandoned before it fires.
+    const takeover=()=>{if(audio.phraseStop&&Math.abs(audio.currentTime-audio.phraseFrom)>=0.05)stopPhrase(audio)};
+    const finish=()=>{stopPhrase(audio);stop()};
+    for(const [type,fn] of [['play',start],['playing',start],['pause',finish],['ended',finish],['seeking',takeover],['seeked',paint],['timeupdate',paint]])audio.addEventListener(type,fn);
   }
   paint();
 }
@@ -202,12 +216,21 @@ function playPhrase(e,n,index){const v=n.narration,phrase=v&&Array.isArray(v.phr
   phraseWatch(e,audio);
   // Only one press may be seeking at a time. Pressing a second button must abandon the first
   // press's end-watch, or the older watch pauses the sentence the person just asked for.
-  if(audio.phraseStop){cancelAnimationFrame(audio.phraseStop);audio.phraseStop=0}
-  const watch=()=>{if(e.querySelector('.preview audio')!==audio){audio.phraseStop=0;return}if(audio.currentTime>=stopAt-0.01){audio.phraseStop=0;audio.pause();return}audio.phraseStop=requestAnimationFrame(watch)};
+  stopPhrase(audio)
+  // The clock is at or past this sentence's measured end. Two very different things look the same
+  // from there, and telling them apart is what makes a press and a drag join up: the sentence just
+  // played out (pause - that is the whole point of the button), or the person moved the clock here
+  // (the jump is theirs, and pausing there would stop the sound exactly where they asked to start
+  // hearing it - the supervisor's report). `seeking` cannot answer this: the player fires that
+  // event a task later, and the frame that notices the past-the-end clock had already run. So the
+  // clock is compared with how much wall time actually passed since the frame before: a sentence
+  // ending moves it ~16 ms, a drag moves it seconds.
+  const watch=(prev,seen)=>{if(e.querySelector('.preview audio')!==audio)return stopPhrase(audio);const now=performance.now(),at=audio.currentTime;if(at-prev>(now-seen)/1000+0.25)return stopPhrase(audio);if(at>=stopAt-0.01){stopPhrase(audio);audio.pause();return}audio.phraseStop=requestAnimationFrame(()=>watch(at,now))};
+  const arm=prev=>{audio.phraseStop=requestAnimationFrame(()=>watch(prev,performance.now()))};
   // `play()` clears `paused` at once but fires its event a tick later, so the card would sit
   // unlit for a moment after a press that did work. Painting right here closes that gap; the
   // event handlers keep it true afterwards, and the `catch` un-paints if playback is refused.
-  const seek=()=>{if(e.querySelector('.preview audio')!==audio)return;audio.currentTime=from;audio.phraseStop=requestAnimationFrame(watch);audio.play().catch(err=>{phraseWatch(e,audio);notice(e,`the player would not start: ${err.message}`)})};
+  const seek=()=>{if(e.querySelector('.preview audio')!==audio)return;audio.phraseFrom=from;audio.currentTime=from;arm(from);audio.play().catch(err=>{phraseWatch(e,audio);notice(e,`the player would not start: ${err.message}`)})};
   if(audio.readyState>=1)seek();else audio.addEventListener('loadedmetadata',seek,{once:true});
 }
 // The chips describe the player whether or not a chip was pressed, because a person can also

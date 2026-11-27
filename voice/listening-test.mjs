@@ -26,10 +26,13 @@
 // The score is not adjusted for what is impossible to hear (a proper noun nobody could know,
 // a homograph): an honest low score on a bad line is the finding, and editing the lines after
 // seeing it is how this measurement would be turned back into a proxy.
-import { mkdirSync, readFileSync, writeFileSync, existsSync, copyFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, existsSync, copyFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, dirname, resolve } from "node:path";
 import { renderParagraph, toWav } from "./synth.mjs";
 import { audit, pronounce } from "./lexicon.mjs";
+import { wavSamples } from "./wav.mjs";
+import { execFileSync } from "node:child_process";
 
 const argv = process.argv.slice(2);
 const arg = name => { const i = argv.indexOf(`--${name}`); return i === -1 ? null : argv[i + 1] ?? null; };
@@ -140,10 +143,6 @@ async function film(wav, dir, seconds) {
   // film cannot be handed to a listener as evidence about sound.
   const { bundle } = await import("@remotion/bundler");
   const { renderMedia, selectComposition } = await import("@remotion/renderer");
-  const { execFileSync } = await import("node:child_process");
-  const publicDir = join(dir, "public");
-  mkdirSync(publicDir, { recursive: true });
-  copyFileSync(wav, join(publicDir, "track.wav"));
   const fps = 30, durationInFrames = Math.max(1, Math.ceil(seconds * fps));
   const entry = join(dir, "listening-film.jsx");
   writeFileSync(entry, `
@@ -166,16 +165,39 @@ registerRoot(Root);
 `);
   const chrome = process.env.HYPERMAKER_CHROME || process.env.CHROME_BIN;
   const browserArgs = chrome ? { browserExecutable: chrome, chromiumOptions: { executablePath: chrome } } : {};
-  const serveUrl = await bundle({ entryPoint: entry, publicDir, rspack: true });
-  const composition = await selectComposition({ serveUrl, id: "Film", ...browserArgs });
+  // Everything the renderer needs and leaves behind - the `public/` copy of the track and the
+  // ~20 MB webpack build - happens in a scratch directory of this run's own making, outside the
+  // listener's output directory. Left to itself `bundle()` writes that build into the system temp
+  // directory and never removes it (19 stale bundles, 395 MB, were found); but building it inside
+  // the output directory means deleting `build/` and `public/` there, and a supervisor had real
+  // files of their own under both names. A tool may clean up after itself; it may not clean up
+  // after its user. The finished film and the measured track are copied out, the scratch goes.
+  const scratch = mkdtempSync(join(tmpdir(), "hypermaker-listen-"));
   const out = join(dir, "listen.mp4");
-  await renderMedia({ serveUrl, composition, codec: "h264", outputLocation: out, audioCodec: "aac", concurrency: 1, ...browserArgs });
-  // Measure the film's own track, not the source WAV: the point of listening to the film is
-  // that the audio survived the container.
+  let peak;
+  try {
+    const publicDir = join(scratch, "public");
+    mkdirSync(publicDir, { recursive: true });
+    copyFileSync(wav, join(publicDir, "track.wav"));
+    const serveUrl = await bundle({ entryPoint: entry, publicDir, rspack: true, outDir: join(scratch, "build") });
+    const composition = await selectComposition({ serveUrl, id: "Film", ...browserArgs });
+    const rendered = join(scratch, "listen.mp4");
+    await renderMedia({ serveUrl, composition, codec: "h264", outputLocation: rendered, audioCodec: "aac", concurrency: 1, ...browserArgs });
+    peak = measureTrack(rendered, join(scratch, "film-track.wav"));
+    copyFileSync(rendered, out);
+    copyFileSync(join(scratch, "film-track.wav"), join(dir, "film-track.wav"));
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+  return { out, peak, track: join(dir, "film-track.wav") };
+}
+
+// Measure the film's own track, not the source WAV: the point of listening to the film is that
+// the audio survived the container. Kept beside the film rather than thrown away, because it is
+// the bytes the peak was measured on.
+function measureTrack(out, check) {
   const ff = join(process.cwd(), "node_modules/@remotion/compositor-linux-x64-gnu/ffmpeg");
-  const check = join(dir, "film-track.wav");
   execFileSync(ff, ["-hide_banner", "-loglevel", "error", "-y", "-i", out, "-map", "0:a:0", "-ac", "1", "-ar", "22050", check]);
-  const { wavSamples } = await import("./wav.mjs");
   const { samples } = wavSamples(readFileSync(check));
   // `wavSamples` returns floats in -1..1, not int16 counts. Comparing against 1000 here (the
   // int16 scale) refused a perfectly audible film at peak 0.64 - a bug in the check, caught by
@@ -183,7 +205,7 @@ registerRoot(Root);
   let peak = 0;
   for (const v of samples) peak = Math.max(peak, Math.abs(v));
   if (peak < 0.03) throw new Error(`the rendered film's audio track is silent (peak ${peak.toFixed(4)} of 1), so it is not something a person can judge`);
-  return { out, peak, track: check };
+  return peak;
 }
 
 function score(outDir) {
@@ -213,6 +235,17 @@ if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith
   if (flag("score")) { score(arg("score") || arg("out") || "listen-out"); process.exit(0); }
 
   const out = resolve(arg("out") || "listen-out");
+  // A second run into the same directory used to overwrite `transcript.md` without a word. The
+  // sheet is the one artifact in this project a person makes by listening, and it cannot be
+  // remade by re-running anything - so an answered sheet is treated as a deliverable and not as
+  // scratch. `--fresh` is the explicit way to say the old one may go.
+  const sheetPath = join(out, "transcript.md");
+  if (existsSync(sheetPath) && readSheet(readFileSync(sheetPath, "utf8")).some(Boolean) && !flag("fresh")) {
+    console.error(`${sheetPath} already has answers in it, so this run would throw away the only listening evidence there is;
+` +
+      `score it (node voice/listening-test.mjs --score ${out}), or pass --fresh with a filled sheet you mean to discard`);
+    process.exit(3);
+  }
   mkdirSync(out, { recursive: true });
   const script = arg("script") ? readFileSync(arg("script"), "utf8") : DEFAULT_SCRIPT;
   const lines = script.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
@@ -229,7 +262,7 @@ if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith
   writeFileSync(wav, toWav(rendered.samples, rendered.rate));
   const seconds = rendered.samples.length / rendered.rate;
 
-  writeFileSync(join(out, "transcript.md"), sheet(lines.length));
+  writeFileSync(sheetPath, sheet(lines.length));
   writeFileSync(join(out, "key.txt"), lines.join("\n") + "\n");
 
   console.log(`wrote ${wav} (${seconds.toFixed(2)} s, ${lines.length} lines)`);
@@ -246,7 +279,7 @@ if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith
   console.log([
     "",
     "Now: listen to the film (or the WAV) once through without stopping, then again writing",
-    `what you heard into ${join(out, "transcript.md")}. Do not open ${join(out, "key.txt")} first -`,
+    `what you heard into ${sheetPath}. Do not open ${join(out, "key.txt")} first -`,
     "it is the answer, and the whole value of this test is that the sheet did not contain it.",
     "",
     `Then: node voice/listening-test.mjs --score ${out}`,

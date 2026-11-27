@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { bundle } from "@remotion/bundler";
 import { renderStill, selectComposition } from "@remotion/renderer";
@@ -20,10 +20,18 @@ registerRoot(Root);
 `);
 const chrome = process.env.HYPERMAKER_CHROME || process.env.CHROME_BIN;
 const browserArgs = chrome ? { browserExecutable: chrome, chromiumOptions: { executablePath: chrome } } : {};
-const serveUrl = await bundle({ entryPoint: entry, rspack: true });
-const composition = await selectComposition({ serveUrl, id: "Poster", ...browserArgs });
+// The bundle is scratch and is 20 MB a time: built here, under this run's own directory, and
+// removed once the poster exists - see `voice/listening-test.mjs` for the measurement that
+// found repeated runs filling the system temp directory.
+const buildDir = join(dir, "build");
 const artifact = join(dir, "sound-poster.png");
-await renderStill({ serveUrl, composition, output: artifact, frame: 0, ...browserArgs });
+try {
+  const serveUrl = await bundle({ entryPoint: entry, rspack: true, outDir: buildDir });
+  const composition = await selectComposition({ serveUrl, id: "Poster", ...browserArgs });
+  await renderStill({ serveUrl, composition, output: artifact, frame: 0, ...browserArgs });
+} finally {
+  rmSync(buildDir, { recursive: true, force: true });
+}
 
 const script = join(dir, "render-poster.mjs");
 writeFileSync(script, "// written by the stand-in agent\n");

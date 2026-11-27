@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { chromium } from "playwright";
 
@@ -24,14 +24,22 @@ if (fromEnv && !existsSync(fromEnv)) throw new Error(`HYPERMAKER_CHROME points a
 const browserArgs = { browserExecutable: browser, chromiumOptions: { executablePath: browser } };
 
 writeFileSync(entry, `import React from 'react';\nimport { AbsoluteFill, Composition, registerRoot } from 'remotion';\nconst Scene = () => <AbsoluteFill style={{background:'#7c3aed',justifyContent:'center',alignItems:'center',color:'white',fontSize:72}}>Remotion</AbsoluteFill>;\nconst Root = () => <Composition id="Main" component={Scene} durationInFrames={${video ? 2 : 1}} fps={30} width={320} height={180} />;\nregisterRoot(Root);\n`);
-writeFileSync(script, `import { bundle } from '@remotion/bundler';\nimport { selectComposition, renderStill, renderMedia } from '@remotion/renderer';\nconst serveUrl = await bundle({ entryPoint: ${JSON.stringify(entry)}, rspack: true });\nconst composition = await selectComposition({ serveUrl, id: 'Main', browserExecutable: ${JSON.stringify(browser)} });\n${video ? `await renderMedia({ serveUrl, composition, codec: 'h264', outputLocation: ${JSON.stringify(artifact)}, browserExecutable: ${JSON.stringify(browser)}, concurrency: 1 });` : `await renderStill({ serveUrl, composition, output: ${JSON.stringify(artifact)}, frame: 0, browserExecutable: ${JSON.stringify(browser)} });`}\n`);
+writeFileSync(script, `import { rmSync } from 'node:fs';\nimport { bundle } from '@remotion/bundler';\nimport { selectComposition, renderStill, renderMedia } from '@remotion/renderer';\nconst buildDir = ${JSON.stringify(join(dir, "build"))};
+const serveUrl = await bundle({ entryPoint: ${JSON.stringify(entry)}, rspack: true, outDir: buildDir });\nconst composition = await selectComposition({ serveUrl, id: 'Main', browserExecutable: ${JSON.stringify(browser)} });\n${video ? `await renderMedia({ serveUrl, composition, codec: 'h264', outputLocation: ${JSON.stringify(artifact)}, browserExecutable: ${JSON.stringify(browser)}, concurrency: 1 });` : `await renderStill({ serveUrl, composition, output: ${JSON.stringify(artifact)}, frame: 0, browserExecutable: ${JSON.stringify(browser)} });`}\nrmSync(buildDir, { recursive: true, force: true });\n`);
 
 const { bundle } = await import("@remotion/bundler");
 const { selectComposition, renderStill, renderMedia } = await import("@remotion/renderer");
-const serveUrl = await bundle({ entryPoint: entry, rspack: true });
-const composition = await selectComposition({ serveUrl, id: "Main", ...browserArgs });
-if (video) await renderMedia({ serveUrl, composition, codec: "h264", outputLocation: artifact, ...browserArgs, concurrency: 1 });
-else await renderStill({ serveUrl, composition, output: artifact, frame: 0, ...browserArgs });
+// The bundle is 20 MB of scratch that `bundle()` otherwise leaves in the system temp directory
+// for good. Built under this run's directory and removed once the artifact exists.
+const buildDir = join(dir, "build");
+try {
+  const serveUrl = await bundle({ entryPoint: entry, rspack: true, outDir: buildDir });
+  const composition = await selectComposition({ serveUrl, id: "Main", ...browserArgs });
+  if (video) await renderMedia({ serveUrl, composition, codec: "h264", outputLocation: artifact, ...browserArgs, concurrency: 1 });
+  else await renderStill({ serveUrl, composition, output: artifact, frame: 0, ...browserArgs });
+} finally {
+  rmSync(buildDir, { recursive: true, force: true });
+}
 const result = { prompt: "remotion test", script, artifact, type: video ? "video" : "image", method: "remotion", error: null };
 const output = process.argv[process.argv.indexOf("--output-last-message") + 1];
 if (output) writeFileSync(output, JSON.stringify(result));

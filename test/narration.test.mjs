@@ -182,6 +182,36 @@ test("canvas text becomes a narration that measures as speech, and a film that c
   }, null, { timeout: 10000 });
   const secondStart = await page.evaluate(() => document.querySelector(".preview audio").currentTime);
   assert.ok(secondStart >= record[1].start - 0.3, `the second sentence starts where its record says (${record[1].start}s), player was at ${secondStart.toFixed(2)}s`);
+  // 4c. The two ways of listening have to join up: hear sentence 1, then take the player over by
+  //     dragging its clock into sentence 2. A supervisor did exactly that and the sound stopped a
+  //     few milliseconds after the drag, because sentence 1's armed end had already gone by and
+  //     its watch paused the player at the first frame it looked. Setting `currentTime` is what a
+  //     scrubber does, so this is the same event path a real drag takes.
+  await chips.nth(0).click();
+  await page.waitForFunction(() => { const a = document.querySelector(".preview audio"); return a && !a.paused; }, null, { timeout: 10000 });
+  const intoSecond = record[1].start + 0.3;
+  await page.evaluate(at => { document.querySelector(".preview audio").currentTime = at; }, intoSecond);
+  // A second of sound after the seek is the whole assertion: the old watch paused within a frame.
+  await page.waitForTimeout(1000);
+  const afterScrub = await page.evaluate(() => { const a = document.querySelector(".preview audio"); return { at: a.currentTime, paused: a.paused }; });
+  assert.equal(afterScrub.paused, false, `dragging into the second sentence keeps the player playing, it stopped at ${afterScrub.at.toFixed(2)}s of ${intoSecond.toFixed(2)}s`);
+  assert.ok(afterScrub.at > intoSecond + 0.4, `and the sound comes from where the clock was dragged to (${intoSecond.toFixed(2)}s), the player was at ${afterScrub.at.toFixed(2)}s`);
+  assert.equal(await chips.nth(1).getAttribute("data-playing"), "", "the chip follows the clock the person dragged to, not the one they pressed");
+  // The pause the person makes afterwards is still respected, and nothing drifts back.
+  await page.evaluate(() => document.querySelector(".preview audio").pause());
+  await page.waitForTimeout(300);
+  const afterScrubPause = await page.evaluate(() => { const a = document.querySelector(".preview audio"); return { at: a.currentTime, paused: a.paused, playing: document.querySelectorAll("[data-phrase][data-playing]").length }; });
+  assert.equal(afterScrubPause.paused, true, "pausing after a drag keeps it paused");
+  assert.equal(afterScrubPause.playing, 0, "and no chip claims a sentence is playing");
+  // And the reverse direction: a fresh press after all that still stops at its own measured end,
+  // so abandoning the watch on a take-over did not abandon the stop altogether. The end is
+  // recomputed here rather than read from `end`, which is defined a few lines below.
+  const firstEnd = record[0].start + record[0].duration;
+  await chips.nth(0).click();
+  await page.waitForFunction(() => { const a = document.querySelector(".preview audio"); return a && !a.paused; }, null, { timeout: 10000 });
+  await page.waitForFunction(seconds => { const a = document.querySelector(".preview audio"); return a && a.paused && a.currentTime <= seconds + 0.15; }, firstEnd, { timeout: 20000 });
+  const afterAgain = await page.evaluate(() => document.querySelector(".preview audio").currentTime);
+  assert.ok(afterAgain >= firstEnd - 0.2 && afterAgain <= firstEnd + 0.15, `a fresh press still stops at the sentence's measured end (${firstEnd.toFixed(2)}s), stopped at ${afterAgain.toFixed(2)}s`);
   // Pausing the way a person does - with the player's own control - must clear the mark too. A
   // supervisor reproduced the opposite: play sentence 2, pause in the player, and the chip
   // stayed lit while the clock sat still, so the card claimed a sentence was playing when
@@ -199,7 +229,10 @@ test("canvas text becomes a narration that measures as speech, and a film that c
   assert.equal(later.at, paused.at, "a paused player does not move");
   assert.equal(later.playing, 0, "and nothing on the card claims it is playing");
   // Playing again from the player's own button lights the sentence the clock is in - the same
-  // reading, in the other direction, so the card follows a person who never touches a chip.
+  // reading, in the other direction, so the card follows a person who never touches a chip. The
+  // clock is put inside sentence 2 first, because 4c left it at the end of sentence 1 and the
+  // assertion below is about which sentence the *player's* clock is in.
+  await page.evaluate(at => { document.querySelector(".preview audio").currentTime = at; }, record[1].start + 0.2);
   await page.evaluate(() => document.querySelector(".preview audio").play());
   await page.waitForFunction(() => document.querySelectorAll("[data-phrase][data-playing]").length === 1, null, { timeout: 5000 });
   assert.equal(await chips.nth(1).getAttribute("data-playing"), "", "playing the player again lights the sentence it is in");

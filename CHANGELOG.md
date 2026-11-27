@@ -1,5 +1,56 @@
 # Changelog
 
+## Unreleased — the player takes over from a sentence button, and a listening run is repeatable, 2026-11-27
+
+Two ordinary things a person does with the take they just made, both found by doing them rather
+than by reading the code.
+
+**Hear a sentence, then drag the player into the next one.** A supervisor pressed sentence 1,
+then moved the player's own clock into sentence 2. The sound stopped 5 ms later, at 2.93 s -
+exactly where the drag had landed. Sentence 1's end-watch was still armed, its measured end had
+already gone by, and the first frame it looked at paused the player. A press is now a wish about
+that press and not a mode: any pause drops the armed stop, and so does any move of the clock that
+is bigger than the time that has actually elapsed (a sentence ending moves the clock ~16 ms, a
+drag moves it seconds). What was asked for is then heard from where the clock is, to the end of
+the file, and the lit sentence follows that clock. `paused`/`seeking` alone could not make this
+distinction - the player fires `seeking` a task after the frame that noticed the jump.
+
+- **`test/narration.test.mjs` asserts the join-up, in a real browser with the real WAV:** press
+  sentence 1, drag into sentence 2, require a full second of sound from where the drag landed and
+  the chip lit for sentence 2; pause and require it stays paused with nothing lit; then press
+  sentence 1 again and require it still stops at its own measured end (so a takeover does not
+  turn the stop off for good). **Negative control:** deleting the elapsed-time comparison fails
+  the drag assertion at 2.93 s and nothing else.
+
+**A listening run leaves evidence, not scratch.** `voice/listening-test.mjs` renders a real film,
+and `bundle()` was writing its ~20 MB webpack output into the system temp directory and never
+removing it: 19 stale bundles, 395 MB, were found from earlier runs, and a 7.7 GB tmpfs was down
+to 20 MB. Repeated runs of the same check also overwrote `transcript.md` - the one artifact in
+this project that only listening can make.
+
+- **The build happens in a scratch directory of the run's own making, outside the output
+  directory, and is deleted whole.** The first version of this fix built inside `--out` and then
+  removed `build/` and `public/` there - and a supervisor had real files under both names, which
+  a listening run deleted. A tool may clean up after itself; it may not clean up after its user.
+  The finished `listen.mp4` and the measured `film-track.wav` are copied out before the scratch
+  goes. What remains in the output directory is `listen.wav`, `listen.mp4`, `film-track.wav`
+  (the bytes the peak was measured on), `transcript.md`, `key.txt` and the entry file. A run into a directory whose sheet already has answers is **refused** (exit 3, naming
+  `--score` and `--fresh`), and `--fresh` is the explicit way to say the old sheet may go.
+  `test/voice.test.mjs` pins both: an answered sheet surviving a refused run, `--fresh` replacing
+  it, two repeat runs, and a `build/` and `public/` holding the listener's own files, unchanged.
+  **Negative controls:** disabling the guard fails the refused-run assertion; putting back the
+  deletion of the output `build/` fails the assertion that those files survive.
+- **The film stand-ins do the same in their own node directories**, because they were the other
+  three callers of `bundle()`:
+  `test/fake-film-codex.mjs`, `test/fake-poster-codex.mjs`, `test/fake-remotion-codex.mjs` build
+  under the node directory they own and remove the output. No rendering behaviour changed.
+
+Tests: **129/129** with a usable Chromium (was 128); the new one is the listening-run check. What
+this does not settle is unchanged: nobody has filled in a listening sheet, so nothing here says a
+person understands the voice. Both slices make that question cheaper to ask - hearing one line
+without regenerating, and a listening sheet a re-run can no longer destroy - and neither answers
+it. `node voice/listening-test.mjs` is still the only entry that can.
+
 ## Unreleased — a number keeps its meaning, or it is refused, 2026-11-27
 
 Four ordinary lines came back reading as a different sentence. **No listening session was

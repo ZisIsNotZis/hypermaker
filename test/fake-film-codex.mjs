@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { bundle } from "@remotion/bundler";
 import { renderMedia, selectComposition } from "@remotion/renderer";
@@ -55,10 +55,19 @@ registerRoot(Root);
 
 const chrome = process.env.HYPERMAKER_CHROME || process.env.CHROME_BIN;
 const browserArgs = chrome ? { browserExecutable: chrome, chromiumOptions: { executablePath: chrome } } : {};
-const serveUrl = await bundle({ entryPoint: entry, publicDir, rspack: true });
-const composition = await selectComposition({ serveUrl, id: "Film", ...browserArgs });
+// The bundle is scratch. Left to itself `bundle()` writes a 20 MB `remotion-webpack-bundle-*`
+// into the system temp directory and never removes it; repeated runs of the canvas tests were
+// found filling a 7.7 GB tmpfs. It is built here, under the node directory this run owns, and
+// removed as soon as the film exists.
+const buildDir = join(dir, "build");
 const artifact = join(dir, "sound-has-a-shape-film.mp4");
-await renderMedia({ serveUrl, composition, codec: "h264", outputLocation: artifact, audioCodec: "aac", concurrency: 1, ...browserArgs });
+try {
+  const serveUrl = await bundle({ entryPoint: entry, publicDir, rspack: true, outDir: buildDir });
+  const composition = await selectComposition({ serveUrl, id: "Film", ...browserArgs });
+  await renderMedia({ serveUrl, composition, codec: "h264", outputLocation: artifact, audioCodec: "aac", concurrency: 1, ...browserArgs });
+} finally {
+  rmSync(buildDir, { recursive: true, force: true });
+}
 
 // The check the guide demands, and the one a silent track would pass without.
 const { execFileSync } = await import("node:child_process");

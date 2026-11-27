@@ -13,7 +13,7 @@
 //     the bytes against the words, and both are exercised here.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
@@ -481,4 +481,47 @@ test("the listening score counts what was heard, not how it was spelled", async 
   // 7 words of 14 were heard: the other line's 7 are missed and stay in the denominator, so
   // a half-blank sheet cannot report better than the half that was actually transcribed.
   assert.equal(blank.accuracy, 0.5, "a blank line's words count as missed in the total, not dropped from it");
+});
+
+test("a listening run leaves the deliverables and refuses to overwrite an answered sheet", () => {
+  // Three things a person running this met: the film's webpack build landed in the system temp
+  // directory and was never removed (20 MB a run, found filling a 7.7 GB tmpfs); a second run
+  // into the same directory overwrote `transcript.md` without a word - destroying the one
+  // artifact in this project that only listening can make; and the first attempt at fixing the
+  // first problem built inside the output directory and then deleted `build/` and `public/`
+  // there, which were a supervisor's own files. The scratch lives outside the output directory
+  // now, so a tool cleans up after itself and not after its user.
+  const dir = mkdtempSync(join(base, "listen-rerun-"));
+  // Files of the listener's own, under the very names the earlier version deleted.
+  mkdirSync(join(dir, "build"), { recursive: true });
+  mkdirSync(join(dir, "public"), { recursive: true });
+  writeFileSync(join(dir, "build", "my-notes.txt"), "scratch of mine\n");
+  writeFileSync(join(dir, "public", "my-clip.wav"), "not a wav, but mine\n");
+  const run = (...args) => {
+    try { return { code: 0, out: execFileSync(process.execPath, [join(root, "voice/listening-test.mjs"), "--out", dir, "--no-film", ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }) }; }
+    catch (error) { return { code: error.status, out: String(error.stdout || "") + String(error.stderr || "") }; }
+  };
+  const first = run();
+  assert.equal(first.code, 0, `a first run writes the test, got ${first.code}: ${first.out}`);
+  assert.match(readFileSync(join(dir, "transcript.md"), "utf8"), /\*\*Line 1\.\*\*[ \t]*$/m, "the sheet starts blank, with no words on it");
+  // The answer goes on the sheet the way a listener writes it, and a re-run must refuse.
+  const sheetPath = join(dir, "transcript.md");
+  writeFileSync(sheetPath, readFileSync(sheetPath, "utf8").replace("**Line 1.** ", "**Line 1.** the sea at night is never still"));
+  const again = run();
+  assert.equal(again.code, 3, `a re-run into an answered directory is refused, got ${again.code}: ${again.out}`);
+  assert.match(again.out, /already has answers/, "and says why rather than just failing");
+  assert.match(readFileSync(sheetPath, "utf8"), /the sea at night/, "the answers survive the refused run");
+  // `--fresh` is the explicit way to say the old sheet may go, so nobody is trapped.
+  const fresh = run("--fresh");
+  assert.equal(fresh.code, 0, `--fresh replaces it on purpose, got ${fresh.code}: ${fresh.out}`);
+  assert.doesNotMatch(readFileSync(sheetPath, "utf8"), /the sea at night/, "and the sheet is blank again afterwards");
+  // Repeating the check must not accumulate scratch of its own, and must not touch the
+  // listener's own files under `build/` or `public/`.
+  for (let i = 0; i < 2; i++) assert.equal(run("--fresh").code, 0, "and the same check runs again cleanly");
+  const listing = readdirSync(dir);
+  assert.equal(readFileSync(join(dir, "build", "my-notes.txt"), "utf8"), "scratch of mine\n", "a file the listener kept in build/ survives the run that used to delete it");
+  assert.equal(readFileSync(join(dir, "public", "my-clip.wav"), "utf8"), "not a wav, but mine\n", "and one under public/ does too");
+  assert.deepEqual(readdirSync(join(dir, "build")), ["my-notes.txt"], "the run adds nothing to build/ either");
+  assert.deepEqual(readdirSync(join(dir, "public")), ["my-clip.wav"], "nor to public/");
+  for (const want of ["listen.wav", "transcript.md", "key.txt"]) assert.ok(listing.includes(want), `a listener still gets ${want}`);
 });
