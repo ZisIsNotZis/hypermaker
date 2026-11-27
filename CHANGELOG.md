@@ -33,15 +33,19 @@ a person is given and the words around the old one:
   script is a sentence with a short gap after it while a blank line adds nothing.
 
 **What is not established.** Whether a *model* reads "brisk" and passes 200. A real run was
-attempted and could not proceed: `codex-cli 0.172.0` is installed locally with credentials
-present, but every turn failed with `workspace routing discovery timed out` while reconnecting
-to `chatgpt.com/backend-api`, and from this environment `chatgpt.com` answers nothing while
-`example.com` answers 200 - the backend is unreachable, not the binary missing. So the model
-half is still owed, and `test/guide-pace.test.mjs` pins only the checkable half: the instruction
-is in the assembled prompt, with the right numbers and the right warning, and the guide's own
-"within about 1%" claim is true of the tool. There is also no pace control on the canvas: an
-agent can pass `--wpm` and the card shows the result, but a person cannot set it by hand yet,
-and the README says so rather than implying a slider exists.
+attempted and stopped at workspace discovery: `codex-cli 0.172.0` is installed locally with
+credentials present, every turn failed with `workspace routing discovery timed out` against
+`chatgpt.com/backend-api/ps/mcp`, and the model turn never began. Measured per route rather
+than in one lumpy sentence - the site is reachable from the host, discovery answers 451, the
+model entry answers 405 to an unauthenticated GET, and the agent's own sandbox gets nothing
+from those names while `example.com` returns 200. So this is not "the model backend is down";
+it is a specific link that needs a real, authorized entry point completing discovery, and the
+next attempt must say which route it used. `docs/evidence/` holds the transcript and the
+table. The model half is still owed, and `test/guide-pace.test.mjs` pins only the checkable
+half: the instruction is in the assembled prompt, with the right numbers and the right
+warning, and the guide's own "within about 1%" claim is true of the tool. There is also no pace
+control on the canvas: an agent can pass `--wpm` and the card shows the result, but a person
+cannot set it by hand yet, and the README says so rather than implying a slider exists.
 
 Tests: `test/pace.test.mjs` (three: a requested pace is the pace the bytes have, the multiplier
 still means what it meant and the recorded multiplier reproduces the take, and a pace out of

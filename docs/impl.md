@@ -156,13 +156,17 @@ untouched. `test/pace.test.mjs` pins all three: the pace reached, the multiplier
 what it meant, and a pace outside the range refused with the limit and the pace actually
 reached.
 
-What a real model does with the instruction is **not** established, and the reason is the
-environment rather than this repository. `codex-cli 0.172.0` is installed here under
-`~/.codex/packages/` with credentials present, so a real run was attempted; it failed every
-turn with `workspace routing discovery timed out` while reconnecting to
-`chatgpt.com/backend-api`, and a probe says why: from this machine `chatgpt.com` returns no
-response at all while `example.com` returns 200. The model half therefore needs a host that
-can reach that backend. What is pinned instead:
+What a real model does with the instruction is **not** established, and the reason is narrow.
+`codex-cli 0.172.0` is installed here under `~/.codex/packages/` with credentials present, so a
+real run was attempted; every turn failed with `workspace routing discovery timed out` while
+reconnecting to `chatgpt.com/backend-api/ps/mcp`, and the model turn never started. Measured
+per route: from the host the `chatgpt.com` site is reachable, workspace discovery answers
+**451**, and the model entry returns **405** to an unauthenticated GET; from the agent's sandbox
+the same names return nothing at all while `example.com` returns 200, so those zeros describe
+that sandbox's egress and not the service. The model half therefore needs a real, authorized
+entry point that completes workspace discovery - not merely a reachable hostname - and the
+evidence has to name which route it used. `docs/evidence/` holds the transcript and this
+table. What is pinned instead:
 `test/guide-pace.test.mjs` pins the weaker, checkable half - that the instruction is in the
 prompt the agent is handed, with the right numbers and the right warning about `--rate`, and
 that the guide's own "within about 1%" claim is true of the tool. A take in which a model reads
@@ -420,7 +424,7 @@ breaking the behaviour:
 
 ## Verification
 
-TDD seams: workspace round trip/atomic write/path safety; registry; prompt order/direct input metadata; node/import/link persistence; async result validation/concurrency/failure; UI creation, scrolling, drag-link, unlink, persistence, controls, preview/download. Run `npm test`, `npm run test:e2e`, `node --check`, and `git diff --check`. `npm test` is 163 declared cases: `test/pace.test.mjs` adds three for settable, measured pace and the multiplier's unchanged meaning, `test/guide-pace.test.mjs` adds two for the instruction reaching the agent's prompt and the guide's own promise being true, `test/compare-playback.test.mjs` adds one for one-sound-at-a-time in the compare panel, `test/download-name.test.mjs` adds two for the exported filename, `test/keep-card.test.mjs` adds six for the run directory and the card guard, five of which fail when the guard is disabled; `test/prepare-window.test.mjs` adds three for the run claim, the overlapping press failing with two 202s when the claim is deferred to the spawn; registry/prompt/workspace checks, three canvas-script checks, eight canvas browser cases, two media renders, one audio render, one film built from canvas material, three provenance cases, two WAV measurement cases, seven lifecycle cases, two Stop/failure UI cases, and the short-film story, which is a command rather than part of the suite. Browser tests launch Chromium through `test/browser.mjs`, honoring `HYPERMAKER_CHROME` or `CHROME_BIN` when Playwright's own browser is not installed. Every browser test asserts that the page raised no error, and the assertions are collected rather than thrown from the event listener, because a throw there surfaces after the test has ended.
+TDD seams: workspace round trip/atomic write/path safety; registry; prompt order/direct input metadata; node/import/link persistence; async result validation/concurrency/failure; UI creation, scrolling, drag-link, unlink, persistence, controls, preview/download. Run `npm test`, `npm run test:e2e`, `node --check`, and `git diff --check`. `npm test` is 167 declared cases: `test/evidence-claims.test.mjs` adds four pinning the grain of the one real-model attempt: no document may turn that attempt into a claim about the whole model backend, the route and its 451 must be named, the evidence file has to say where the run stopped, and it has to state what it does not prove, `test/pace.test.mjs` adds three for settable, measured pace and the multiplier's unchanged meaning, `test/guide-pace.test.mjs` adds two for the instruction reaching the agent's prompt and the guide's own promise being true, `test/compare-playback.test.mjs` adds one for one-sound-at-a-time in the compare panel, `test/download-name.test.mjs` adds two for the exported filename, `test/keep-card.test.mjs` adds six for the run directory and the card guard, five of which fail when the guard is disabled; `test/prepare-window.test.mjs` adds three for the run claim, the overlapping press failing with two 202s when the claim is deferred to the spawn; registry/prompt/workspace checks, three canvas-script checks, eight canvas browser cases, two media renders, one audio render, one film built from canvas material, three provenance cases, two WAV measurement cases, seven lifecycle cases, two Stop/failure UI cases, and the short-film story, which is a command rather than part of the suite. Browser tests launch Chromium through `test/browser.mjs`, honoring `HYPERMAKER_CHROME` or `CHROME_BIN` when Playwright's own browser is not installed. Every browser test asserts that the page raised no error, and the assertions are collected rather than thrown from the event listener, because a throw there surfaces after the test has ended.
 
 If `/tmp` is small or full, point the fixtures somewhere roomy (`TMPDIR=/var/tmp/x npm test`). Remotion writes real video next to its workspace, and a full scratch disk fails the media cases with `ENOSPC` — which looks like a code failure but is not. A directory on a Windows drive is not a substitute: Chromium cannot create its profile there.
 
