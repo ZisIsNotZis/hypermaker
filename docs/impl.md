@@ -63,7 +63,22 @@ while the server still held it; `test/canvas-protection.test.mjs` presses Genera
 65 MiB clip, reloads, and asserts the same sentence and a working Stop (it skips where no
 Chromium is installed). It is `null` when every file is small enough to copy. A file the filesystem
 refused outright is reported as unprotected with the reason, and a guard whose manifest
-cannot be read reports that it could not protect the card rather than reporting it clean. A successful run replaces `artifact`/`script`; a failed or stopped run leaves the previous artifact in place and records `status` + `error`. SIGINT/SIGTERM cancel live agents so no renderer outlives the server.
+cannot be read reports that it could not protect the card rather than reporting it clean. A successful run replaces `artifact`/`script`; a failed or stopped run leaves the previous artifact in place and records `status` + `error`.
+
+A card's run slot is claimed **synchronously in the request handler**, before the first
+await past reading the body, and that claim is what `/api/cancel` signals. It used to be
+recorded only when the agent was spawned, so everything in between - adopting the old
+take, copying sources, guarding the card, seconds of work for a card holding an 8 MiB
+picture - ran unmarked: two canvases pressing Generate together both got 202, ran two
+agents, and published v3 over one another, and a Stop pressed in that window was told
+`not generating` while the run went ahead. The claim is `{agent, stopping, cancel()}`, so
+Stop before a process exists records the press and the run is stopped the moment it
+starts; a release only clears the slot when it still owns it (`releaseClaim`), so a
+settled run cannot free a card that has already started again. Every reply that starts
+nothing (a refusal, a thrown preparation) gives the slot back. `test/prepare-window.test.mjs`
+presses twice over two connections with the snapshot step held open
+(`HYPERMAKER_HOLD_BEFORE_GUARD_MS`, tests only), and fails with two 202s when the claim is
+taken at the spawn instead. SIGINT/SIGTERM cancel live agents so no renderer outlives the server.
 
 ## HTTP and UI
 
@@ -338,7 +353,7 @@ breaking the behaviour:
 
 ## Verification
 
-TDD seams: workspace round trip/atomic write/path safety; registry; prompt order/direct input metadata; node/import/link persistence; async result validation/concurrency/failure; UI creation, scrolling, drag-link, unlink, persistence, controls, preview/download. Run `npm test`, `npm run test:e2e`, `node --check`, and `git diff --check`. `npm test` is 137 declared cases with a browser (`test/keep-card.test.mjs` adds six for the run directory and the card guard, five of which fail when the guard is disabled); registry/prompt/workspace checks, three canvas-script checks, eight canvas browser cases, two media renders, one audio render, one film built from canvas material, three provenance cases, two WAV measurement cases, seven lifecycle cases, and two Stop/failure UI cases. Browser tests launch Chromium through `test/browser.mjs`, honoring `HYPERMAKER_CHROME` or `CHROME_BIN` when Playwright's own browser is not installed. Every browser test asserts that the page raised no error, and the assertions are collected rather than thrown from the event listener, because a throw there surfaces after the test has ended.
+TDD seams: workspace round trip/atomic write/path safety; registry; prompt order/direct input metadata; node/import/link persistence; async result validation/concurrency/failure; UI creation, scrolling, drag-link, unlink, persistence, controls, preview/download. Run `npm test`, `npm run test:e2e`, `node --check`, and `git diff --check`. `npm test` is 146 declared cases (`test/keep-card.test.mjs` adds six for the run directory and the card guard, five of which fail when the guard is disabled; `test/prepare-window.test.mjs` adds three for the run claim, the overlapping press failing with two 202s when the claim is deferred to the spawn); registry/prompt/workspace checks, three canvas-script checks, eight canvas browser cases, two media renders, one audio render, one film built from canvas material, three provenance cases, two WAV measurement cases, seven lifecycle cases, and two Stop/failure UI cases. Browser tests launch Chromium through `test/browser.mjs`, honoring `HYPERMAKER_CHROME` or `CHROME_BIN` when Playwright's own browser is not installed. Every browser test asserts that the page raised no error, and the assertions are collected rather than thrown from the event listener, because a throw there surfaces after the test has ended.
 
 If `/tmp` is small or full, point the fixtures somewhere roomy (`TMPDIR=/var/tmp/x npm test`). Remotion writes real video next to its workspace, and a full scratch disk fails the media cases with `ENOSPC` — which looks like a code failure but is not. A directory on a Windows drive is not a substitute: Chromium cannot create its profile there.
 

@@ -1,5 +1,39 @@
 # Changelog
 
+## Unreleased — one press is one run, from the press itself, 2026-11-28
+
+A supervisor found that two open canvases pressing Generate on the same card at the same
+moment each got `202` and the card ended on `v3`: two agents, two guards, two publishes
+for one press each. It reproduced with an 8 MiB picture next to the card - and that is the
+shape of the bug. A card was marked `running` only when the agent was spawned, while the
+seconds before that (adopting the old take into `versions/`, copying the frozen sources,
+and above all copying every file the card holds into the run's guard) ran unmarked. The
+ordinary "second Generate while running" test passed because it waited for the agent's own
+`argv.json` first - it never stood in the gap.
+
+The same gap had a second face, which the supervisor also measured: pressing Stop during
+that copy was answered `not generating`, and the run went ahead and billed.
+
+**The claim is taken synchronously in the request handler**, before the first await past
+reading the body, and the object it puts in the run slot is `{agent, stopping, cancel()}`.
+So the second press sees the first and is refused with `already generating`; the card is
+`running` (and offers Stop) from the press; Stop before a process exists records the press
+and the run is stopped the instant it starts, or is never started at all when it happens
+while the snapshot is still being taken. Every reply that starts nothing - a refusal, a
+thrown preparation - gives the slot back, and a release only clears the slot when it still
+owns it (`releaseClaim`), so a settled run cannot free a card that has already started
+again.
+
+Tests: three in `test/prepare-window.test.mjs`, through the HTTP entry point, with the
+snapshot step held open by `HYPERMAKER_HOLD_BEFORE_GUARD_MS` (tests only) so the window is
+entered rather than raced. Two presses over two separate connections (a shared `fetch`
+agent queues them, which is not the situation) must answer `202`/`409` and publish one
+take; Stop during the preparation leaves the approved take, publishes nothing, spawns no
+process, and the card can be used again afterwards; and a settled run does not release the
+claim of the run that follows it. With the claim deferred back to the spawn, the first of
+these fails with two `202`s - the negative control - and the other two stay green, which is
+what they are for. Suite: **146/146** with a usable Chromium, 24 skipped here.
+
 ## Unreleased — a card can be redone without losing what you put beside it, 2026-11-28
 
 The open gap was stated plainly in the README and in the status doc: the harness

@@ -280,6 +280,12 @@ function sendFile(req, res, file) {
   res.writeHead(206, { "content-type": mime, "content-length": end - start + 1, "content-range": `bytes ${start}-${end}/${size}`, "accept-ranges": "bytes" });
   createReadStream(file, { start, end }).pipe(res);
 }
+// A run's slot is released by the run that owns it, never by whatever comes later.
+// A run that settled and had its slot cleared has already allowed the next press to
+// take the slot; a later `running.delete` from the settled run's own tail would then
+// clear the *new* run's claim, and the canvas would offer Generate on a card that is
+// working. Comparing the identity of the claim is what makes that impossible.
+const releaseClaim = (id, claim) => { if (running.get(id) === claim) running.delete(id); };
 const server = createServer(async (req, res) => { try {
   const url = new URL(req.url, "http://localhost");
   if (url.pathname === "/api/events") { res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" }); clients.add(res); req.on("close", () => clients.delete(res)); return; }
@@ -364,7 +370,36 @@ const server = createServer(async (req, res) => { try {
     const b = await body(req), n = getNode(b.id);
     // Refuse a second run instead of spawning a second agent: two processes writing
     // the same node directory is how an artifact gets silently overwritten.
+    //
+    // The claim is taken here and nowhere later, and it is taken *synchronously*:
+    // `body(req)` has awaited the request, but no other await has run yet, so two
+    // presses that arrive together are decided one after the other and the second
+    // sees the first. That slot is also the only place the cancel signal lives, so
+    // Stop always has exactly one target. It used to be recorded only when the agent
+    // was spawned, and everything before that - adopting the old take, copying
+    // sources, guarding the card, which is seconds of work for a card holding an
+    // 8 MiB picture - ran with nothing marked, so a second press in that window was
+    // answered 202, got a run directory and a guard of its own, and the two runs
+    // published v3 over each other.
     if (running.has(n.id)) return json(res, 409, { ...view(), error: `Node ${n.id} is already generating` });
+    const claim = { agent: null, stopping: null, cancel: () => { claim.stopping = claim.stopping || new Error("Run stopped by the user"); return claim.agent ? claim.agent.cancel() : true; } };
+    running.set(n.id, claim);
+    // Every way out of this request after the claim is a reply to it - the 202, one
+    // of the refusals, or the 400 the handler writes when preparing the run throws
+    // (an unreadable source, a card the filesystem will not let us guard). A card
+    // left claimed after a request that started nothing would say "already
+    // generating" for the rest of the session, so the claim is dropped when the
+    // reply goes out and no agent was ever made.
+    res.on("finish", () => {
+      if (claim.agent) return;
+      releaseClaim(n.id, claim);
+      // A refused press and a preparation that threw both leave nothing to recover:
+      // the marker that names a run directory would otherwise sit in the card until
+      // the next startup looked for a guard that was never finished.
+      endRun(workdir, n.id);
+      if (attemptDirs.get(n.id)) dropAttempt(attemptDirs.get(n.id));
+      attemptDirs.delete(n.id);
+    });
     // A method whose tool is not on this machine cannot produce anything, and the
     // audio card used to default to exactly such a method (`bark.cpp`, chosen because
     // it sorts first) on a machine with no `~/bark.cpp`. The press then failed with
@@ -373,6 +408,9 @@ const server = createServer(async (req, res) => { try {
     // exists, and point at the method that does work.
     const chosen = methodFor(n.type, n.method);
     if (chosen && chosen.available === false) {
+      // Nothing was started, so the claim goes back before the refusal is written:
+      // a card must not be left saying it is generating a run that does not exist.
+      releaseClaim(n.id, claim);
       const fallback = methodsFor(n.type).find(m => m.available !== false);
       return json(res, 409, { ...view(), error: `${chosen.id} needs ${(chosen.requires || []).join(", ")} on this machine, which is not there, so nothing was started.${fallback ? ` Choose ${fallback.id} instead - it works with nothing installed.` : ""}` });
     }
@@ -414,6 +452,7 @@ const server = createServer(async (req, res) => { try {
     // what would fix it, before anything is created.
     const drafts = givenSources.filter(s => !s.artifact);
     if (drafts.length) {
+      releaseClaim(n.id, claim);
       const names = drafts.map(s => `#${s.id}`).join(", ");
       return json(res, 409, { ...view(), error: `Generate ${names} first, or unlink ${drafts.length > 1 ? "them" : "it"}: ${drafts.length > 1 ? "those cards have" : "that card has"} no result yet, so this run has no material to use.` });
     }
@@ -437,7 +476,24 @@ const server = createServer(async (req, res) => { try {
     // of reporting a clean success. The snapshot is taken here rather than earlier so the
     // material copies this run made are protected too, and it excludes the harness's own
     // bookkeeping (`run.json`, the prompt and logs) by name.
+    // A hold in the longest-awaited step of the preparation, so a test can stand in
+    // the window instead of racing a few milliseconds of file copying. Only tests set
+    // it; it changes nothing about what happens, only when.
+    if (process.env.HYPERMAKER_HOLD_BEFORE_GUARD_MS) await new Promise(r => setTimeout(r, Number(process.env.HYPERMAKER_HOLD_BEFORE_GUARD_MS)));
     const guard = await guardCard(join(workdir, String(n.id)), join(attemptDir, guardName));
+    // The card may have been stopped while the snapshot was being taken: there is no
+    // process to signal yet, so the press is answerable now, before the run starts.
+    if (claim.stopping) {
+      // The run directory holds nothing but a guard for a run that never started; the
+      // reply's own cleanup drops it. The marker goes now, because it is what a next
+      // startup would follow.
+      endRun(workdir, n.id);
+      releaseClaim(n.id, claim);
+      attemptDirs.delete(n.id);
+      nodes[n.id] = nodeRecord(n.id, { ...nodes[n.id], status: "cancelled", error: claim.stopping.message }); save();
+      emit({ kind: "cancelled", id: n.id, error: claim.stopping.message });
+      return json(res, 200, view());
+    }
     // What this run could not protect, said now and not after the fact: a supervisor put
     // a 65 MiB clip next to a card, the run ended normally, and neither the receipt nor
     // the card mentioned that the file was outside the copy tier. The reply to the press
@@ -476,7 +532,12 @@ const server = createServer(async (req, res) => { try {
     const promptNodes = { ...nodes };
     for (const source of runSources) if (source.frozen) promptNodes[source.id] = { ...nodes[source.id], frozen: source.frozen };
     const agent = runCodex({ node: run, workspace: { workdir, nodes: promptNodes, projectCwd: root }, model: b.model, effort: b.effort, useGhPrefix: b.useGhPrefix, attemptDir });
-    running.set(n.id, agent);
+    claim.agent = agent;
+    // Stop pressed while the card was still being prepared: there was no process
+    // yet, so the claim remembers the press and the run is stopped the moment it
+    // exists. Without this a person who pressed Stop on a card holding a large
+    // picture was told "not generating" and the run went ahead anyway.
+    if (claim.stopping) agent.cancel();
     agent.then(async result => {
       // A narration card claims to have spoken a script. Check that claim against the bytes
       // before anything is published: the timeline must describe this WAV, and the WAV must
@@ -549,7 +610,7 @@ const server = createServer(async (req, res) => { try {
       // outcome. Writing `idle` first left a window where the card showed a finished
       // film while a second Generate was still refused with "already generating" -
       // publishing takes a copy, so that window got wide enough to hit every time.
-      running.delete(n.id);
+      releaseClaim(n.id, claim);
       // What the person asked for *this* artifact, frozen at start exactly like the
       // material: `prompt` stays theirs to edit for the next take, `promptUsed`
       // answers "what is on screen and what was it asked to be".
@@ -583,14 +644,14 @@ const server = createServer(async (req, res) => { try {
       // the only place anything is deleted.
       endRun(workdir, n.id);
       pruneRuns(workdir, n.id);
-      running.delete(n.id);
+      releaseClaim(n.id, claim);
       // A Stop stays a Stop even when the stopped run had been damaging the card: the
       // outcome is what the person did, and calling it an error would suggest the run
       // failed on its own. What the run touched is still on the card, in the same
       // sentence, because that is the part they would otherwise never learn.
       const reason = damaged ? `${error.message} ${damaged}` : error.message;
       nodes[n.id] = nodeRecord(n.id, { ...nodes[n.id], sources: n.sources || null, status, error: reason }); save(); emit({ kind: status === "cancelled" ? "cancelled" : "error", id: n.id, error: reason });
-    }).finally(() => { running.delete(n.id); attemptDirs.delete(n.id); });
+    }).finally(() => { releaseClaim(n.id, claim); attemptDirs.delete(n.id); });
     // The press itself answers with the notice, so a person learns before the agent has
     // done any work that a large file is only protected against deletion. It is returned
     // here, after the completion handlers are attached: returning early skipped them and
