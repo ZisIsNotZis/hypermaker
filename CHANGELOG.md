@@ -2,8 +2,12 @@
 
 ## Unreleased — a number keeps its meaning, or it is refused, 2026-11-27
 
-A listener heard four ordinary lines and the meaning changed. Measured on the build that
-shipped them, through the real reader:
+Four ordinary lines came back reading as a different sentence. **No listening session was
+involved, here or in the round below**: each line was synthesized with the real reader, the
+words it chose and the bytes it published were compared with what the line says, and a
+reviewer reading the output reported the mismatch. A wrong amount needs no ear to notice -
+it is a different list of words, and the same words render byte for byte to the same audio.
+Measured on the build that shipped them, through the real reader:
 
 | line | before | now |
 | --- | --- | --- |
@@ -12,7 +16,8 @@ shipped them, through the real reader:
 | `1,000,000,000,000 dollars` | "one dollars" — the magnitude dropped | one trillion dollars |
 | `It is -3.5 degrees.` | "three point five" — the sign dropped | minus three point five degrees |
 
-A second round on a script **pasted from a page** found three more, all of them silent:
+A second round, on a script **pasted from a page** the reviewer copied, found three more,
+all of them silent:
 
 | line | before | now |
 | --- | --- | --- |
@@ -54,13 +59,22 @@ because `¥ is a currency this voice does not name` is something a writer can ac
   name` over Node's stack noise. `test/refusal-message.test.mjs` fails on the old message.
 - **The renderer's refusal no longer ends `¥500..`** or puts a `The symbols:` label in front of
   a sentence that already names the character.
-- **Tests: 127/127** with a usable Chromium (was 114/114). Eight new in
+- **Tests: 128/128** with a usable Chromium (was 114/114). Eight new in
   `test/numbers-fidelity.test.mjs`, four in `test/numbers-pasted.test.mjs`, one in
-  `test/refusal-message.test.mjs`.
+  `test/refusal-message.test.mjs`, and one in `test/docs.test.mjs` that pins how the wrong
+  readings were *found*: the docs may not credit them to a listening session, because none
+  took place and the project does not claim a person understood the voice.
+- **The evidence attribution is corrected.** This entry previously credited the four wrong
+  readings to a person hearing them, and the README called the two rounds listening sessions.
+  Neither was true: both rounds were the real reader's output compared with the sentence by a
+  person reading it, and no one has listened to a take, here or earlier. The wording is fixed in both READMEs, the
+  status page and the code comments, and the honest version is now the one a test requires.
 
-Still unproven, and unchanged: nobody has filled in a listening sheet. Both rounds above were a
-person telling us what they heard, on lines they wrote - which is the only way this defect could
-have been found, and is why `node voice/listening-test.mjs` exists.
+Still unproven, and unchanged: nobody has filled in a listening sheet, so nothing here says a
+person can understand the voice. Both rounds above were a person *writing* the lines and
+reading the reader's output, which is enough to catch a wrong amount - the sentence is wrong
+before it is ever played. Whether the corrected sentence is *understandable by ear* is a
+different question, and is why `node voice/listening-test.mjs` exists.
 
 ## Unreleased — a number in a script is said, not spelled out, 2026-11-27
 
@@ -363,8 +377,9 @@ two sentences of equal syllable count apart.
   intelligible" was backed by formant counts and onset floors - real measurements of a
   signal, and not evidence that anyone understood a sentence. There is no recogniser or
   speech model on this machine, so the docs now say that plainly, give the command that
-  produces a file to listen to, and record the defects a listener hears and a measurement
-  does not (`science` → "S-S-IY-N-S", `moved` → "M-AA-V-EH-D"). `test/docs.test.mjs` pins
+  produces a file to listen to, and record the defects a listener *would* hear as a different
+  word and a measurement of the signal does not (`science` → "S-S-IY-N-S", `moved` →
+  "M-AA-V-EH-D"). Those were found by comparing the readings with a dictionary, not by ear. `test/docs.test.mjs` pins
   both the removed phrase and the honest replacement, in both languages.
 
 Tests: 75 → 86. `test/bind.test.mjs` is new and pins the swap, the reorder, the one-word

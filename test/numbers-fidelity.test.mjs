@@ -1,6 +1,7 @@
-// A listener heard four ordinary lines read back wrong. Each one changed what the line meant,
-// which is worse than a refusal: the card plays, the voice is clear, and the sentence is about
-// a different amount or a different number.
+// Four ordinary lines read back wrong - found by synthesizing them with the real reader and
+// comparing the chosen words and published bytes with the line, not by listening. Each one
+// changed what the line meant, which is worse than a refusal: the card plays, the voice is
+// clear, and the sentence is about a different amount or a different number.
 //
 //   "The ticket costs $1250."          "twelve fifty dollars"  - a price read as a year
 //   "It costs £0.50."                  "fifty cents"           - the currency was replaced

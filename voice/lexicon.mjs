@@ -250,7 +250,7 @@ const RULES = [
 // versioning. Versioning is what lets this one ship at all.
 //
 // `cmudict-4` is `cmudict-3` with four numeral readings corrected, and nothing else changed: a
-// listener heard `$1250` said as "twelve fifty dollars", `£0.50` as "fifty cents", a trillion
+// reading check found `$1250` said as "twelve fifty dollars", `£0.50` as "fifty cents", a trillion
 // said as "one", and a minus sign dropped. Each of those is a sentence whose meaning is wrong,
 // which is why they are a new set rather than an edit - `cmudict-3`'s takes, if any exist, must
 // keep reproducing from the table that made them, wrong readings included.

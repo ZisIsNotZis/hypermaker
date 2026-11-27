@@ -144,6 +144,40 @@ test("the status documents agree on where the project stands", () => {
   }
 });
 
+test("the docs credit the reading defects to the check that found them, not to a listener", () => {
+  // The record of how the four wrong readings were found drifted twice: the README said
+  // "two rounds of listening" and the changelog opened with "a listener heard four ordinary
+  // lines". Neither happened. The lines were synthesized with the real reader and the words
+  // it chose were compared with the sentence, which is enough to see a wrong amount without
+  // hearing anything - and the difference matters, because "two rounds of listening" reads as
+  // evidence that somebody understood the voice, which is exactly the claim this project
+  // refuses to make. A listener still has to settle intelligibility, and no sheet is filled.
+  const claims = [
+    ["README.md", /rounds of listening|round of listening|listener heard/i],
+    ["README.zh-CN.md", /实际试听|试听发现|听者听到|有人听过这几句/],
+    ["docs/project-status.md", /listening round|rounds of listening|listener heard/i],
+    ["CHANGELOG.md", /A listener heard|rounds of listening|round of listening/i],
+  ];
+  for (const [name, pattern] of claims) {
+    const text = doc(name);
+    // Only the newest changelog section is held to this: older entries describe earlier
+    // wording and rewording them would rewrite history.
+    const body = name === "CHANGELOG.md" ? text.split(/^## /m).slice(0, 2).join("## ") : text;
+    for (const m of body.matchAll(new RegExp(pattern.source, "gi"))) {
+      const line = body.slice(0, m.index).split("\n").length;
+      assert.fail(`${name}:${line} credits the reading defects to listening ("${m[0]}"); they were found by synthesizing the lines and comparing the words with the sentence`);
+    }
+  }
+  // And the honest attribution has to stay present, or a future edit could drop both the
+  // overclaim and the correction and leave a silent gap.
+  assert.match(doc("README.md"), /synthesized with the real reader/i,
+    "README.md says how the wrong readings were actually found");
+  assert.match(doc("README.zh-CN.md"), /都不是真人试听/,
+    "README.zh-CN.md says the rounds were not listening sessions");
+  assert.match(doc("CHANGELOG.md"), /No listening session was/i,
+    "CHANGELOG.md says plainly that no listening session was involved");
+});
+
 test("the capability list matches the registry it describes", async () => {
   // The Chinese README listed five methods while the registry had six: `synth` was
   // added exactly because the speech binaries were missing, and the list that a reader

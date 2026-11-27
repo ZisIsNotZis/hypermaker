@@ -132,7 +132,7 @@ test("the voice is not a square wave", () => {
   // range. Three chained resonators have a large gain, so 75% of the samples hit that clamp
   // and the output was a flat-topped square wave: periodic, formant-shaped, and monotonous,
   // with every syllable envelope flattened into one buzz. It measured "speech-like" because
-  // the measure counted frames, and a listener heard a rasp.
+  // the measure counted frames, and the file was a flat-topped rasp rather than words.
   const { wav } = narrate(base);
   const { samples } = wavSamples(readFileSync(wav));
   let peak = 0;

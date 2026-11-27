@@ -131,8 +131,8 @@ export function synthesize(tokens, options = {}) {
       // version clamped every sample at 0.98 to keep the file in range - which turned 75% of
       // the output into a square wave. A square wave is periodic and formant-shaped enough to
       // look like speech to a check that counts frames, and it flattened every syllable
-      // envelope into one continuous buzz, so a listener heard a rasp instead of words and the
-      // onset count was measuring the clamp rather than the voice. The whole buffer is scaled
+      // envelope into one continuous buzz - it would have sounded like a rasp rather than words,
+      // and the onset count was measuring the clamp rather than the voice. The whole buffer is scaled
       // once, at the end, so the shape of the envelope survives.
       out.push(x * gain * (envelope ? envelope(i, n) : 1));
     }
