@@ -2,8 +2,9 @@
 
 ## Classification
 
-`useful`, local-canvas milestone: a runnable, inspectable local application for
-composing generated artifacts, with one real Codex run taken as evidence.
+`useful`, active: a runnable, inspectable local application for composing generated
+artifacts. The canvas, the generation path and the retry/version path are covered by
+tests and by a handful of real Codex CLI runs.
 
 ## Status
 
@@ -12,8 +13,11 @@ The last upstream commit planned work; this milestone closed the gap between the
 canvas being reachable and the canvas being usable, and then checked the one path
 a local fixture cannot stand in for: a real Codex CLI run.
 
-No further development is planned. The sections below say what that claim rests
-on, so the next person can decide whether to reopen it.
+Development continues, but the open work is **evidence, not features**: output
+quality has not been judged, speech synthesis has never run, `realistic` and long
+renders are unexercised, and a creator's file next to a card is protected from the
+harness's clean-up but not from the agent itself. The sections below say what each
+claim rests on.
 
 ## What is real and what is simulated
 
@@ -79,25 +83,29 @@ Two honest gaps a first-time user will meet:
 
 - Product source of truth: [`design.md`](design.md).
 - Implementation source of truth: [`impl.md`](impl.md).
-- `npm test`: 38 cases — 3 registry/prompt, 5 workspace round trips, 3 canvas
-  script checks, 8 browser canvas cases, 2 media renders, 1 audio render, 1 film, 3 provenance, 2 wav measurement, 7
-  lifecycle cases, and 2 Stop/failure UI cases. Without a browser it is 18 pass +
-  13 skip + 0 fail; every skipped case says which browser it looked for.
+- `npm test`: **65 cases** across 16 files. 4 registry/prompt, 4 method
+  availability/refusal, 6 workspace round trips, 3 canvas script checks, 12 browser
+  canvas cases, 2 media renders, 1 audio render, 1 film, 3 provenance, 2 wav
+  measurement, 8 run-lifecycle, 2 Stop/failure UI, 4 attempt/retry, 7 version, and 5
+  documentation checks. Without a browser the canvas cases skip and say which browser
+  they looked for.
+- `test/docs.test.mjs` pins the facts in these documents that a reader is misled by
+  when they rot: the stated test count, the claim that audio has no real-generation
+  evidence, speech being presented as working, the project being described as closed,
+  and the method list matching the registry. It was added after all five had drifted.
 - `node test/chain.mjs`: the content chain above, with `01-poster` …
   `04-chain-reopened` screenshots and `chain.json` beside them.
 - `node test/journey.mjs`: walks the ordinary path once — create, overlap, raise,
   move, link, unlink, generate, Stop, regenerate, reopen, delete — and
   screenshots each step into `.tmp/journey/`, printing the facts as JSON.
 - Real-CLI checks live under `.tmp/` (gitignored) because they need a logged-in
+  account and a network.
 - Fixture servers use `test/server.mjs`: an OS-assigned port and process-group
   teardown. This was not cosmetic — a server left on a fixed port by an interrupted
   run answered a later "negative control", which then looked green while testing
   nothing. For a related reason the first version of the Stop check also passed
   vacuously: it cancelled before the agent had started, so no orphan could exist.
   It now waits for the agent to actually be running.
-  teardown. This was not cosmetic — a server left on a fixed port by an interrupted
-  run answered a later "negative control", which then looked green while testing
-  nothing. Two of the lifecycle checks below were caught this way.
 
 ## Boundaries
 
@@ -110,9 +118,15 @@ persistence; z-order, undo and multi-select are canvas state, not stored.
 
 No benchmark results, project video, or paper were produced; these remain out of
 scope. Generated video *output* is a product feature and is covered by a
-real-render test — see [impl.md](impl.md). Audio, `hyperframe`, and the quality
-presets remain unverified (table above), and are the natural next evidence to
-collect, not new features to add.
+real-render test — see [impl.md](impl.md).
+
+Audio *artifacts* are verified (table above); **speech** is not, and neither are
+`hyperframe` or the quality presets. Those, and a judgement of whether a finished
+film is any good, are the natural next evidence to collect rather than new features
+to add. One limit is a real gap rather than missing evidence: the harness keeps a
+run out of the card's directory, but the agent is given that directory and
+`--sandbox danger-full-access`, so an agent that decides to tidy it can delete a
+file its owner put there. Probed on 2026-11-27 (`.tmp/probe-card-reach.mjs`).
 
 ## Versioning
 

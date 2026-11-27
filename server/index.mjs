@@ -3,7 +3,7 @@ import { createReadStream, existsSync, mkdirSync, readFileSync, copyFileSync, re
 import { basename, dirname, extname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readWorkspace, writeWorkspace, nodeRecord } from "./workspace.mjs";
-import { registryInfo, typeForFile } from "./registry.mjs";
+import { methodFor, methodsFor, registryInfo, typeForFile } from "./registry.mjs";
 import { assemblePrompt } from "./prompt.mjs";
 import { generate as runCodex } from "./codex.mjs";
 
@@ -322,6 +322,17 @@ const server = createServer(async (req, res) => { try {
     // Refuse a second run instead of spawning a second agent: two processes writing
     // the same node directory is how an artifact gets silently overwritten.
     if (running.has(n.id)) return json(res, 409, { ...view(), error: `Node ${n.id} is already generating` });
+    // A method whose tool is not on this machine cannot produce anything, and the
+    // audio card used to default to exactly such a method (`bark.cpp`, chosen because
+    // it sorts first) on a machine with no `~/bark.cpp`. The press then failed with
+    // the agent's own message about a missing file - after an attempt directory and a
+    // run marker had already been made. Say which file is missing, before anything
+    // exists, and point at the method that does work.
+    const chosen = methodFor(n.type, n.method);
+    if (chosen && chosen.available === false) {
+      const fallback = methodsFor(n.type).find(m => m.available !== false);
+      return json(res, 409, { ...view(), error: `${chosen.id} needs ${(chosen.requires || []).join(", ")} on this machine, which is not there, so nothing was started.${fallback ? ` Choose ${fallback.id} instead - it works with nothing installed.` : ""}` });
+    }
     if (typeof b.prompt === "string") n.prompt = b.prompt;
     // Freeze what this run is given *now*. A film takes minutes; a person may
     const givenInputs = [...(n.inputs || [])];
@@ -486,7 +497,10 @@ const server = createServer(async (req, res) => { try {
 } catch (error) { json(res, 400, { error: error.message }); } });
 export { server, assemblePrompt, runCodex };
 export const assembledPrompt = assemblePrompt;
-export const methodsFor = type => registryInfo().methods[type] || [];
+// `methodsFor` and `methodFor` come from the registry itself (it is what knows
+// whether a method's tool is installed), so they are re-exported rather than wrapped:
+// a wrapper that dropped `available` made this module disagree with the registry.
+export { methodFor, methodsFor };
 export const eventFromLine = () => null;
 export const generate = runCodex;
 export { registryInfo };

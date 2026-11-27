@@ -1,6 +1,6 @@
 **English** | [简体中文](README.zh-CN.md)
 
-> **Status: canvas usable, generation path verified, versions kept (0.1.0, 2026-11-27).** `npm test` passes 51/51 when a usable Chromium is available; six pin that a re-run cannot cost you the version you already approved (a failed attempt keeps the old film and its provenance, a second version stays playable with its own material, a material swapped mid-render changes nothing, kept versions survive a restart, a running card refuses to be rewound, and a run that hands back an old file fails while a genuine re-render is still accepted even when its bytes match), one pins that a kept version carries the prompt that made it and that going back restores it, two drive a real browser through two takes — versions are numbered v1, v2, editing the prompt does not change what the artifact on screen was asked for, going back moves the picture and the words together, and both takes can be watched side by side without moving the card — and two cover the first thing a person meets after upgrading: a version from before prompts were recorded next to one that has a prompt, where the unknown instruction must stay unknown, the draft in the box must survive, and the card must say so; two cases render for real through Remotion (a PNG and an h264 MP4), one renders a real WAV and checks the player can report its length, three pin how an artifact records the materials it was made from, two pin how its audio is measured, seven cover the run lifecycle, and two drive Stop and a failed run in a real browser. The ordinary user path — create, type, move, overlap and raise, link by dragging one card onto another's title bar, right-click unlink, delete with confirmation, reopen — was exercised end to end in a real browser. One **real Codex CLI run** was also taken: the agent wrote and ran a script and returned a text artifact the canvas previewed. What is simulated and what is real is spelled out in [**Verification limits**](#verification-limits).
+> **Status: an ordinary creative session works, and is now what the tests follow (0.1.0, 2026-11-27).** You can make a film from canvas material, change the material, keep the take you approved, compare two takes, go back to one, and survive a failure, a Stop or a restart without losing the one you liked. `npm test` passes **65/65** with a usable Chromium; [Verification limits](#verification-limits) separates what is real from what a fixture stands in for, and says plainly that **speech synthesis is not proven** and that nothing here has been judged on *taste*.
 
 <div align="center">
   <img src="docs/logo.svg" alt="Hypermaker logo" width="112" />
@@ -18,10 +18,12 @@
   <img src="docs/screenshots/canvas.svg" alt="Hypermaker canvas with three connected artifact cards" width="94%" />
 </p>
 
-> **Status: local-canvas milestone (0.1.0).** The prototype reached its
-> experimental goal; no further development is planned unless the project's
-> inputs or goals change. [`docs/project-status.md`](docs/project-status.md) has the
-> real-vs-simulated table and what a first run is like.
+> **Status: 0.1.0, still being developed.** This is not a closed experiment. The
+> canvas and the generation path are usable and covered by tests; the open work is
+> evidence rather than features — output quality has not been judged, speech
+> synthesis has never run, and the `realistic` preset has not been measured. See
+> [`docs/project-status.md`](docs/project-status.md) for the real-vs-simulated table
+> and what a first run is like.
 
 ## Why Hypermaker?
 
@@ -70,9 +72,10 @@ Server environment variables:
 
 - Build a DAG by dragging cards together; only direct inputs enter a downstream prompt.
 - Generate plain UTF-8 text with the `llm` method.
-- Generate still images and video with the `hyperframe` or `remotion` methods. Both are verified end to end through real Remotion renders (`test/media.test.mjs`, `demo` quality): a 320x180 PNG asserted by signature and by the loaded preview, and a 320x180 h264 MP4 asserted by container and by the `<video>` the browser decodes. Audio is wired but not yet backed by a real-generation test — see **Verification limits** below.
-- Generate audio: the offline `synth` method writes a WAV with nothing installed (tones, chords, rhythm, sound effects), and `tts.cpp`/`bark.cpp` cover speech when those local binaries and a GGUF model exist.
+- Generate still images and video with the `hyperframe` or `remotion` methods. Both are verified end to end through real Remotion renders (`test/media.test.mjs`, `demo` quality): a 320x180 PNG asserted by signature and by the loaded preview, and a 320x180 h264 MP4 asserted by container and by the `<video>` the browser decodes.
+- Generate audio with the offline `synth` method, which writes a real WAV with nothing installed (tones, chords, rhythm, sound effects). `test/audio.test.mjs` renders one and asserts the canvas player reports its true length, and one real Codex CLI run produced a 4-second WAV the canvas played. **Speech is not available out of the box**: the `tts.cpp` and `bark.cpp` methods only describe how to call binaries under `~/tts.cpp` and `~/bark.cpp`, which are not on this machine, so no speech run has ever been taken — see **Verification limits**.
 - Pick a quality preset — `sketch`, `demo`, `standard`, `artistic`, `realistic` — which changes how much inspection and repair the agent does.
+- **The method list follows the card's type, and says which methods can run here.** Switching a card's output type refills its method list; a method whose local tool is missing stays selectable but is labelled `(needs a local install)`, and pressing Generate on it is refused with a sentence naming the missing binary and the method that works instead. Before this, switching a text card to audio left `llm` in the dropdown (so the offline `synth` method could not be picked at all) while the server would have run `bark.cpp`, whose binary does not exist.
 - Import an existing local file as a constant node (no method, no Generate); the file is copied into its node directory. Import is HTTP-only today (`POST /api/import`), like clone and relayout below.
 - Run several generations concurrently, one per card; each card shows its own `draft` / `running` / `idle` / `cancelled` / `error` state over SSE. While a card is running it offers **Stop**, which ends the agent and everything it started; a second Generate on the same card is refused rather than starting a second agent.
 - Read the reason a run stopped or failed on the card itself, including the agent's own last error message. The outcome is stored, so reopening the page or restarting the server does not turn a failure into a quiet draft.
@@ -102,7 +105,19 @@ This section mixes two kinds of evidence, and they are marked as they appear:
 - **Text** generation is exercised end to end against `test/fake-codex.mjs`, which writes the artifact a real agent would. Separately, one **real Codex CLI run** was taken on 2026-11-27 (`codex-cli 0.172.0`, ChatGPT auth): the agent wrote `generate.mjs`, ran it, and returned a plain-text artifact the canvas previewed (37 s, ~48k input tokens). That proves the adapter matches the real binary's `exec --json --output-last-message …` contract; it says nothing about output quality.
 - **Image** generation is exercised end to end against `test/fake-remotion-codex.mjs`, which really bundles and renders with Remotion; the artifact is checked to be a real PNG. The "agent" is fake, the render is not. A **real Codex CLI run** also rendered a 1200x675 PNG whose preview the canvas showed. It is worth knowing what that run did: the agent produced a correct image, but it reached for a Playwright screenshot because the method guide never told it where a browser was, so Remotion could not start. The guide now names `HYPERMAKER_CHROME`/`CHROME_BIN`.
 - **Video** generation is exercised end to end against the same fixture with `REMOTION_TEST_VIDEO=1`: Remotion bundles, selects, and calls `renderMedia` with h264, and the test asserts an `ftyp`/`avc1`/`moov` container plus a preview `<video>` that decodes 320x180 with a non-zero duration. Beyond the fixture, a **real Codex CLI run** took the generated poster as an input card, rendered a 720x404 h264 MP4 (3 s, 30 fps) from it - h264 needs even dimensions, so the requested 405 becomes 404, and the canvas played it — so a realistic composition is now covered once, by one run. What is still not proven is that the result is *good*: the fixture composition is two frames, and one real render says nothing about wording, pacing or how often a model picks sensible dimensions.
-- **Audio** now has two halves with different standing. The **artifact path** is proven, including against a real model: `test/audio.test.mjs` drives a card whose agent writes a real 6-second 44.1 kHz mono PCM WAV with nothing installed, and asserts the RIFF header, the sample rate, that the data chunk size matches the bytes, that the samples are not silence, and that the canvas player reports the true length and can seek. Separately, a real Codex CLI run produced a 4-second WAV the canvas played (`0:00 / 0:04`) through the new offline `synth` method. **Speech synthesis is not proven**: `tts.cpp` and `bark.cpp` name binaries (`~/tts.cpp/build/bin/tts-cli`, `~/bark.cpp/build/examples/main/main`) that this machine does not have, so no speech run has been taken. `synth` produces tones, chords and rhythm, not words, and its guide says so.
+- **Audio.** The **artifact path** is proven, including against a real model: `test/audio.test.mjs` drives a card whose agent writes a real 6-second 44.1 kHz mono PCM WAV with nothing installed, and asserts the RIFF header, the sample rate, that the data chunk size matches the bytes, that the samples are not silence, and that the canvas player reports the true length and can seek. Separately, a real Codex CLI run produced a 4-second WAV the canvas played (`0:00 / 0:04`) through the new offline `synth` method. **Speech synthesis is not proven**: `tts.cpp` and `bark.cpp` name binaries (`~/tts.cpp/build/bin/tts-cli`, `~/bark.cpp/build/examples/main/main`) that this machine does not have, so no speech run has been taken. `synth` produces tones, chords and rhythm, not words, and its guide says so.
+- **A creator's own file next to a card survives the harness, not the agent.** The cleanup rule
+  cannot reach it: a run writes only in `attempts/<start>/`, and nothing in a run's
+  bookkeeping reads or deletes anything in the card's own directory. That is the
+  guarantee the four `test/attempts.test.mjs` cases pin, and it is what a person needs
+  after a fifth retry. It is **not** a guarantee against the agent itself: the run is
+  launched with `HYPERMAKER_CARD_DIR` set to that directory and
+  `--sandbox danger-full-access`, so an agent that decides to tidy its surroundings can
+  delete a file you put there, and the run still ends `idle`. Probed on 2026-11-27 with a
+  stand-in agent that removes exactly one file and nothing else (`.tmp/probe-card-reach.mjs`):
+  the file answered `200` before the run and `404` after it. Closing this means not
+  handing the agent the card directory at all, or giving it a read-only view; neither is
+  done.
 - **A film from canvas material** is the headline outcome, and it was taken with the real
   CLI: a real poster card and a real 4-second WAV card were linked to one video card, the
   agent rendered a 720x404 h264 MP4, and the embedded audio measured **4.05 s, peak 11506,
@@ -270,11 +285,18 @@ git diff --check
 - Canvas: create, drag, link, unlink, pan, zoom, preview, download, delete-with-confirmation, import.
 - Deterministic tests plus a Playwright browser suite running against fake Codex binaries.
 
+**Open work — evidence, not new features**
+
+- **Speech.** `tts.cpp` and `bark.cpp` name binaries that are not on this machine. Until one exists and a GGUF model is present, speech is a documented method with no run behind it.
+- **Output quality.** No take has been judged on wording, pacing or taste. The tests prove the artifact, the provenance and the recovery path; they say nothing about whether a film is good.
+- **The `realistic` preset and long renders.** `realistic` asks for more inspection and repair; neither it nor a multi-minute render has been exercised against a real agent.
+- **A creator's own file is protected from clean-up, not from the agent.** The harness never touches a file next to the card, but the agent is given `HYPERMAKER_CARD_DIR` and `--sandbox danger-full-access`, so an agent that decides to tidy that directory can delete it. Nothing stops that today; keeping it out of the agent's hands is the fix, and it is not done.
+
 **Deferred / not planned right now**
 
 - More output types and generation methods.
 - Richer graph editing (multi-select, undo, dependency-aware relayout), richer media metadata, collaboration.
-- Benchmarks, a video, or a paper — none were produced and none are in scope for this milestone.
+- Benchmarks, a project video, or a paper.
 
 The registry boundary exists so that a future experiment (a new type, a different agent) does not require rewriting the core. If someone picks the project up, that is the seam to start from.
 

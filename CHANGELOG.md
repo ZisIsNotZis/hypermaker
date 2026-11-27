@@ -1,5 +1,51 @@
 # Changelog
 
+## Unreleased — the audio card can be used, and the docs stop contradicting themselves, 2026-11-27
+
+A creator following the README to an audio card hit two failures and a set of documents that
+disagreed with each other. Both were found by walking the documented path rather than by
+running the suite.
+
+- **The method list was filled once, when a card was built.** `fillMethods` ran only in
+  `shell`, so switching a new text card to `audio` left `llm` in the dropdown - the offline
+  `synth` method the README recommends could not be selected at all - while the server, which
+  does know the type changed, would have run `bark.cpp`. The list is now rebuilt whenever the
+  type can have changed, guarded on `type|method` so an unchanged card does not re-fetch.
+- **A new audio card defaulted to the one method that cannot work.** The method list was
+  sorted by name, so `bark.cpp` sorted first and became the default on a machine with no
+  `~/bark.cpp`. A method now declares `requires: ["~/…"]`, the registry reports whether that
+  path exists, and methods that can run are offered first. Methods whose tool is missing stay
+  in the list - hiding them would make the guide unreachable for someone who has the binary -
+  but are labelled `(needs a local install)`.
+- **Pressing Generate on such a card failed about a binary, as if about the render.** It made
+  an attempt directory and a run marker first, then reported the agent's message about a
+  missing file. The server now refuses before creating anything, naming the missing path and
+  the method that works instead.
+- **The public documents contradicted each other and the code.** The front page said both
+  "canvas usable, versions kept" and "no further development is planned"; the capability list
+  said audio had no real-generation test while a later section reported a real 6-second WAV
+  and a measured film; speech was listed as a working capability on a machine without either
+  binary; `project-status.md` still said 38 cases and that the project was closed. All three
+  are corrected, and **`test/docs.test.mjs` now pins them** — the stated test count against the
+  suite's own declarations, the audio claim, speech never being presented as working, the
+  project not being described as closed, and the method list matching the registry.
+- **One claim narrowed to what is true.** This changelog said "nothing a run does can reach a
+  file that sits next to the card". The clean-up cannot reach it, and that is what the four
+  `test/attempts.test.mjs` cases show - but the agent is started with
+  `HYPERMAKER_CARD_DIR` and `--sandbox danger-full-access`, so an agent that tidies that
+  directory deletes the file and the run still reports success. Probed with a stand-in agent
+  that removes exactly one file and nothing else: readable (`200`) before the run, gone
+  (`404`) after. Recorded in the README, `project-status.md` and the earlier entry rather than
+  left as an overstatement.
+- Verified: **65/65** with a real Chromium. The two browser defects are negative-controlled
+  by restoring each half (`.tmp/neg-methods.sh`: no refill on type change, alphabetical
+  default) and watching the probe report disagreement; the five documentation claims by
+  restoring each defect (`.tmp/neg-docs.sh`), where the first attempt showed two assertions
+  could still pass - a control that wrote "Speech works" and one that dropped `synth` from the
+  method list - so both were tightened until all seven go red. Walked at the real entry: a
+  fresh canvas, an audio card switched from text, `synth` chosen and a WAV previewed
+  (`.tmp/accept-docs.mjs`).
+
 ## Unreleased — trying again costs nothing you care about, and a refused run says why, 2026-11-27
 
 A creator's normal path is not "generate once". It is try, fail, stop, retry, drop a
@@ -21,7 +67,13 @@ reference file next to the card, retry again. Three things were wrong with that 
   during a run - cannot tell a poster a person dropped in from an agent's output, and
   moving it to a quarantine bin is not much better: the path they knew stops working, and
   the bin itself gets pruned. That is why the two are now in different directories
-  instead: nothing a run does can reach a file that sits next to the card.
+  instead: **the harness's clean-up cannot reach a file that sits next to the card.** That
+  is the whole claim, and it is the one this change earns - a run writes and is cleaned up
+  under `attempts/`, so no rule of the harness has any business in the card's folder. It is
+  not a boundary against the agent: the run is still started with `HYPERMAKER_CARD_DIR`
+  pointing at that folder and `--sandbox danger-full-access`, so an agent that tidies its
+  surroundings can delete the file and the run will report success. Probed, not assumed
+  (`.tmp/probe-card-reach.mjs`, 2026-11-27: readable before the run, 404 after it).
 - **A linked draft greyed out Generate and said nothing.** Linking an empty card into
   another and pressing Generate answered 400 with `path must be of type string, received
   null` - in the browser console only - and left an attempt directory and a run marker
@@ -37,7 +89,9 @@ reference file next to the card, retry again. Three things were wrong with that 
   to the card and per published take (`versions/v2-prompt.txt`), alongside the script and
   the CLI invocation (`codex-command.json`). The sweep that bounds `versions/` first
   deleted those two files on the very next run, which is what the newest test now pins.
-- Verified: **56/56** with a real Chromium. The three behaviours above each have a
+- Verified: **56/56** with a real Chromium, **61/61** with `test/docs.test.mjs` added - that
+  file exists because this very entry's overstatement and three stale numbers elsewhere
+  were found by a reader instead of by the suite. The three behaviours above each have a
   negative control that restores the old code and turns exactly that test red: adoption
   deleting before the save, the run writing into the card's directory with a deleting
   cleanup, no pruning, no prompt exclusion, no refusal, and a hidden notice. The journey
