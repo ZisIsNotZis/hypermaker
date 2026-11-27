@@ -197,6 +197,41 @@ case in both directions: the tool's own take verifies at full precision *and* th
 rounded to three decimals, while different words hidden behind a rounded record are still
 refused. Each guard was observed to fail its own test with the guard disabled.
 
+### Stress comes from the dictionary, and is read back
+
+The dictionary marks the primary stress of every word and the engine threw those marks away at
+build time, stressing syllable one of every word. `build-dict.mjs` now writes a second table
+beside the pronunciations, `vendor/cmudict/stress.txt.gz`: one digit per vowel in the same
+order the engine derives syllables from the same phonemes, and only for the 34,858 words whose
+emphasis is *not* on the first syllable. Absence is meaningful - it means "first syllable",
+which is what the engine already did - so a word the table omits is read exactly as before and
+nothing is refused for being missing. Every reading of a listed word is written, not only the
+off-first ones, so pattern index i stays aligned with reading index i; `test/voice.test.mjs`
+walks the whole table and checks that alignment against the dictionary rather than trusting it.
+
+The table is a **new reading set**, `cmudict-2`, and the default. Editing `cmudict-1` would
+have made every take it made unreproducible, which is the defect the previous slice fixed, so
+the frozen sets are pinned by hash instead: three texts at two rates must render byte for byte
+what they always did. `tokenize()` attaches `stress` to a token only for `cmudict-2`, and
+`synthesize()` uses it when it names a syllable the word actually has - an index past the end
+is treated as "no note", because following it would move the emphasis onto the next word.
+
+Whether the emphasis landed where the dictionary says is then read back out of the file by
+`voice/check-stress.mjs`, which enumerates every stress assignment for the script, renders
+each through the real `renderParagraph`, and reports the one that reproduces the samples
+exactly. The search space is the product of the syllable counts of the multi-syllable words in
+a line, so it is capped and refused rather than run for minutes on a long script. This is an
+identity check, not a similarity score: there is no threshold to fit. That matters because the
+first implementation *was* a score - it cut the energy envelope at its deepest minima and
+called the loudest piece stressed - and measured against the dictionary it was wrong in both
+directions (one piece instead of two in `toward` and `about`; a loud `sh` outweighing
+`machine`'s vowel). Reproduction replaced the heuristic rather than tuning it.
+
+The tests pin the negative control as well: `cmudict-1`'s `machine` still reads back as syllable
+one, and audio this voice did not make is refused rather than matched to the closest stress.
+What none of this establishes is that a *person* hears the stress; that is still the listening
+test's job.
+
 One related bug: `POST /api/node` with no explicit method gave **every** card
 `method: "llm"`, so an audio card carried a text method. It now defaults to the first method
 of the card's type that is actually available - `narration` for audio.

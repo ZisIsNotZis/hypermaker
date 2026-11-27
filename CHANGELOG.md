@@ -1,5 +1,84 @@
 # Changelog
 
+## Unreleased — the emphasis lands where the dictionary puts it, 2026-11-27
+
+With the words right, the voice was still putting the primary stress on the first syllable of
+every word, because `build-dict.mjs` threw the dictionary's stress marks away at build time.
+Measured on the sample prose, **7 of its 44 multi-syllable words** were stressed on the wrong
+syllable: `toward`, `without`, `before`, `about`, `machine`, `against`, `around` - `MA-chine`
+and `a-ROUND` said as `MA-chine` and `A-round`. That is the other half of why a correct
+sentence still sounded like a machine reading a list.
+
+- **The stress marks are vendored, not invented.** `vendor/cmudict/stress.txt.gz` (35 KB) is
+  built beside the pronunciations from the same public source by the same command, and holds
+  the primary-stress pattern of 34,858 words - only those whose emphasis is *not* on the first
+  syllable, because that is the only case where it changes the audio. Absence means exactly
+  "first syllable", which is what the engine already did, so a word missing from the table is
+  read as before rather than refused. A pattern is one digit per vowel, in the same order the
+  engine derives syllables from the same phonemes, and a test checks that alignment against
+  the dictionary word by word.
+- **It is a new reading table, `cmudict-2`, and it is now the default.** Editing `cmudict-1`
+  would retroactively make every take it made unreproducible - the exact defect fixed in the
+  entry below, from the other direction. `rules-1` and `cmudict-1` still render **byte for
+  byte** what they always did, pinned by hash over three texts at two rates.
+- **`bindTake` tries every table for both an exact match and a rate-recovered one.** The
+  recovery path used to search rates under the first table only; with a new default table that
+  would have refused exactly the older takes it exists to save, so the loop is now one table at
+  a time with both checks inside it. An honest `cmudict-1` take whose rate was rounded still
+  verifies, and a mismatched recording still does not.
+- **`node voice/check-stress.mjs --wav take.wav --timeline take.json`** reads the emphasis back
+  out of a published file. It re-renders every possible stress position and reports the one
+  that reproduces the samples **exactly**, then compares it with the dictionary's mark - an
+  identity, not a threshold. Exit status zero when every word agrees, four when the file was
+  read but a word is stressed elsewhere, two when it could not be read. The first version was a
+  heuristic that split the energy envelope and called the loudest piece stressed; measured
+  against the dictionary it was simply wrong (one piece instead of two in `toward` and `about`;
+  a loud `sh` outweighing `machine`'s vowel), so it was replaced, not tuned.
+- **The card says when a take is older than the voice.** `evidence.currentReadings` is published
+  beside `take.voice.matched`, so a reopened card reads "made with the cmudict-1 voice; this
+  build reads with cmudict-2" for a take that verified under an older table, and says nothing
+  for a current one. It is stated as a fact, never as a failure: the take passed every check.
+- **Docs stop attributing the remaining gap to stress.** Pronunciation and primary stress are
+  both the dictionary's now, so what a listener still has to overcome is the robotic timbre.
+  Whether that emphasis is *audible to a person* is not claimed: it is the listener's judgement
+  the listening test exists to record, and nobody has recorded it yet.
+- **A published take keeps its own timeline, so `verify-take` finally works on a real card.**
+  This was found by *running* the command this project documents against a real workspace: it
+  answered "no WAV at …" for a card the canvas was playing, because the take lives under
+  `versions/v1-narration.wav` and the timeline lived only in the attempt directory, which is
+  dropped when the run succeeds. The fix copies it beside the take as
+  `v2-narration.timeline.json`, and `voice/verify-take.mjs <node-dir>` now finds a published card
+  as well as an attempt directory. The first attempt at the fix still failed - the sweep that
+  clears unreferenced files in `versions/` deleted the copy moments later - so the sweep's own
+  live-set rule keeps it, the same way `v2-prompt.txt` is kept. Re-running the walk prints
+  `verifies … reading table: cmudict-2` on the published card, and `check-stress` on the same
+  file reports 6 multi-syllable words with **0** stressed in the wrong place (`machine` and
+  `about` on syllable two).
+- **A supervisor ran it on a two-version card and found two more defects in `verify-take`.**
+  With two takes published and the *first* restored, `node voice/verify-take.mjs <node-dir>`
+  verified **v2** while the canvas was showing **v1**, because it sorted filenames and took the
+  newest; and passing the selected `versions/v1-narration.wav` outright answered "no timeline"
+  while `v1-narration.timeline.json` sat beside it. Both are worse than having no command: one
+  answers confidently about a recording the person is not looking at, the other says an honest
+  take records nothing. Now the directory case reads which take the card is *showing* from its
+  own workspace record and says so ("this is the take the card is showing"), a named WAV is
+  matched with its own record, and when the record cannot be read the fallback announces that
+  it guessed ("NOT the take the card is showing: … the newest published take was checked
+  instead").
+- **An old recording is described only as far as the evidence goes.** A timeline written before
+  `voice.readings` existed names no table; the report now says the table was *recovered* from
+  the bytes ("predates the field … rules-1 is the one that reproduces these bytes exactly")
+  rather than claiming the record said it, and adds "It is an older recording: this build reads
+  with cmudict-2, so regenerating it would not sound the same. Either is a fair choice." That is
+  the honest half of the question a creator actually has after a voice change.
+- **Tests: 103/103** with a usable Chromium (was 95/95). Eight new: the stress table is aligned
+  with the dictionary and only lists words that need it; the audio puts the emphasis on the
+  syllable the dictionary names (with `cmudict-1` as the negative control, and audio this voice
+  did not make refused rather than matched to the closest stress); and an older take verifies
+  while its card can still say it was made by an older voice, with a mislabelled record
+  reported as the claim it is. Reverting the synthesizer's one-line change fails the first and
+  third of those.
+
 ## Unreleased — a pronunciation fix must not call yesterday's honest take a lie, 2026-11-27
 
 A reviewer checked the candidate that shipped the pronunciation dictionary and found the

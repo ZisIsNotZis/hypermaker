@@ -277,7 +277,6 @@ export function bindTake({ file, timeline }) {
   const { samples, rate } = wavSamples(readFileSync(file));
   const seconds = Number((samples.length / rate).toFixed(2));
   const worstOf = report => Number((report.reduce((w, p) => (p.correlation < w.correlation ? p : w), report[0])?.correlation ?? 0));
-
   // A take may be checked by a build that reads words differently from the one that made it.
   // The record says which table made the audio; the sets it names are all tried below, and a
   // take is accepted on an exact reproduction by any of them - never on a near miss.
@@ -291,80 +290,68 @@ export function bindTake({ file, timeline }) {
     ? [claimed, ...READING_SETS.filter(s => s !== claimed)]
     : [CURRENT_READINGS, ...READING_SETS.filter(s => s !== CURRENT_READINGS)];
   const voiceWith = readings => ({ ...timeline?.voice, readings });
+  const settingsWith = (readings, rate) => ({
+    rate: Number(rate ?? timeline?.voice?.rate) || 1,
+    pitch: Number(timeline?.voice?.pitch) || 112,
+    readings
+  });
 
-  // First: the take as its record describes it.
-  const recorded = compareAt({ samples, rate, phrases, voice: voiceWith(tries[0]) });
-
-  // Second: are these words, at a rate the record states imprecisely? This is asked whenever
-  // the recorded settings did not reproduce the audio *exactly* - including when they scraped
-  // past the bar at 0.89 while the same take at its real rate measures 1.000. Settling for the
-  // weaker explanation is how a rounding turns into a card that says "nearly these words".
-  const exact = recorded.problems.length === 0 && worstOf(recorded.report) >= RECOVERED_TAKE;
-  if (!exact && recorded.problems.every(p => p.kind === "sound")) {
-    const targets = recorded.problems.length
-      ? recorded.problems.map(p => ({ phrase: p.phrase, slices: p.slices }))
+  // One table at a time, because the two things that can be wrong are independent: *which*
+  // table made the audio, and whether the record states that take's rate precisely enough.
+  // Doing them in one pass over the same table is what makes a take made by an older table
+  // still recoverable when its rate was rounded - trying every table for an exact match first
+  // and only then searching rates under the first one would refuse exactly that take.
+  const accepted = (report, readings, rate) => ({
+    ok: true,
+    problems: [],
+    correlation: worstOf(report),
+    phrases: report,
+    seconds,
+    // `matched` is reported even when it equals `recorded`, so every accepted take has the
+    // same shape of evidence and a caller never has to guess which branch produced it.
+    voice: { recorded: settingsWith(tries[0]), matched: settingsWith(readings, rate) }
+  });
+  let first = null;
+  for (const readings of tries) {
+    const at = compareAt({ samples, rate, phrases, voice: voiceWith(readings) });
+    if (!first) first = at;
+    // Exact: every phrase reproduces, frame for frame.
+    if (!at.problems.length && worstOf(at.report) >= RECOVERED_TAKE) return accepted(at.report, readings);
+    // Not exact. If the only complaint is the sound, the same words may still be in the file
+    // at a rate the record states imprecisely - so search, and accept nothing on a near miss.
+    if (!at.problems.every(p => p.kind === "sound")) continue;
+    const targets = at.problems.length
+      ? at.problems.map(p => ({ phrase: p.phrase, slices: p.slices }))
       // Nothing failed outright, so the phrases to re-examine are the ones that did not agree
       // exactly - there is no problem object to borrow a slice from.
-      : recorded.report.filter(p => p.correlation < RECOVERED_TAKE).map(p => ({ phrase: phrases[p.index], slices: p.slices }));
+      : at.report.filter(p => p.correlation < RECOVERED_TAKE).map(p => ({ phrase: phrases[p.index], slices: p.slices }));
     const recovered = [];
     let allFine = targets.length > 0;
     for (const target of targets) {
-      const best = recoverRate({ phrase: target.phrase, slices: target.slices, rate, recorded: timeline?.voice?.rate, recordedPitch: timeline?.voice?.pitch, recordedReadings: tries[0] });
+      const best = recoverRate({ phrase: target.phrase, slices: target.slices, rate, recorded: timeline?.voice?.rate, recordedPitch: timeline?.voice?.pitch, recordedReadings: readings });
       if (best.score < RECOVERED_TAKE) { allFine = false; break; }
       recovered.push(best.rate);
     }
-    if (allFine) {
-      // The take is the words it claims at a rate the record states imprecisely. Report both,
-      // so a card can say what it was told and what the audio actually is.
-      recovered.sort((a, b) => a - b);
-      const matched = recovered[Math.floor(recovered.length / 2)];
-      const pitch = Number(timeline?.voice?.pitch) || 112;
-      const verdict = compareAt({ samples, rate, phrases, voice: { rate: matched, pitch, readings: tries[0] } });
-      if (!verdict.problems.length) {
-        return {
-          ok: true,
-          problems: [],
-          correlation: worstOf(verdict.report),
-          phrases: verdict.report,
-          seconds,
-          voice: { recorded: { rate: Number(timeline?.voice?.rate) || 1, pitch, readings: tries[0] }, matched: { rate: Number(matched.toFixed(6)), pitch, readings: tries[0] } }
-        };
-      }
-    }
-  }
-  if (exact) {
-    // `matched` is reported even when it equals `recorded`, so every accepted take has the
-    // same shape of evidence and a caller never has to guess which branch produced it.
-    const settings = { rate: Number(timeline?.voice?.rate) || 1, pitch: Number(timeline?.voice?.pitch) || 112, readings: tries[0] };
-    return { ok: true, problems: [], correlation: worstOf(recorded.report), phrases: recorded.report, seconds, voice: { recorded: settings, matched: { ...settings } } };
-  }
-
-  // Third, and only when the record's own table did not reproduce the audio: a different
-  // reading table that does. This is the case a reviewer hit and I reproduced - a take
-  // published before the dictionary existed was refused by the build that added it, and told
-  // its own honest audio was not the words it had written down.
-  //
-  // It is narrow on purpose. The table only changes how words are *pronounced*: the phrase
-  // texts, their starts, their durations and the file are all still required to be the same
-  // arrangement, so a recording of a different sentence cannot be admitted by any table. The
-  // test suite pins exactly that: take A's audio against take B's timeline is still refused.
-  for (const readings of tries.slice(1)) {
-    const alt = compareAt({ samples, rate, phrases, voice: voiceWith(readings) });
-    if (!alt.problems.length && worstOf(alt.report) >= RECOVERED_TAKE) {
-      return {
-        ok: true,
-        problems: [],
-        correlation: worstOf(alt.report),
-        phrases: alt.report,
-        seconds,
-        voice: { recorded: { rate: Number(timeline?.voice?.rate) || 1, pitch: Number(timeline?.voice?.pitch) || 112, readings: tries[0] }, matched: { rate: Number(timeline?.voice?.rate) || 1, pitch: Number(timeline?.voice?.pitch) || 112, readings } }
-      };
-    }
+    if (!allFine) continue;
+    // The take is the words it claims at a rate the record states imprecisely. Report both, so
+    // a card can say what it was told and what the audio actually is.
+    recovered.sort((a, b) => a - b);
+    const matchedRate = recovered[Math.floor(recovered.length / 2)];
+    const verdict = compareAt({ samples, rate, phrases, voice: settingsWith(readings, matchedRate) });
+    if (!verdict.problems.length) return accepted(verdict.report, readings, matchedRate);
   }
 
   // Fourth: it is not the words, at any settings this build can reproduce. Say which phrase,
   // and - when the audio is those words at a nearby rate - say that instead of accusing the
   // script, because the operator's next step is different in the two cases.
-  const problems = recorded.problems.map(p => p.kind === "sound" ? describeMismatch({ ...p, rate, voice: timeline?.voice }) : p.message);
-  return { ok: false, problems, correlation: worstOf(recorded.report), phrases: recorded.report, seconds };
+  const problems = first.problems.map(p => p.kind === "sound" ? describeMismatch({ ...p, rate, voice: timeline?.voice }) : p.message);
+  // A refusal must always say something. It could come back empty in one case: every phrase
+  // matched well enough to report no *problem*, yet the take missed `RECOVERED_TAKE` in the loop
+  // above - which would leave a card that says it was refused with no reason on it, the exact
+  // failure this file exists to prevent. That is a real possibility now that the loop considers
+  // several tables rather than one, so it is named instead of left to luck.
+  if (!problems.length) {
+    return { ok: false, problems: [`this take does not reproduce from its own script at any reading table this build has (${READING_SETS.join(", ")}), and the closest attempt scored ${worstOf(first.report).toFixed(3)} where the same recording scores 1.000; the audio is not the sound these words make`], correlation: worstOf(first.report), phrases: first.report, seconds };
+  }
+  return { ok: false, problems, correlation: worstOf(first.report), phrases: first.report, seconds };
 }

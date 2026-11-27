@@ -17,13 +17,19 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
-import { pronounce, audit, tokenize, dictionary, speakable } from "../voice/lexicon.mjs";
+import { pronounce, audit, tokenize, dictionary, speakable, chosen, stressOf, stressTable, CURRENT_READINGS } from "../voice/lexicon.mjs";
+import { heardStress } from "../voice/check-stress.mjs";
 import { compact } from "../voice/build-dict.mjs";
-import { renderParagraph, toWav, VOWEL_TARGETS, CONSONANTS } from "../voice/synth.mjs";
+import { renderParagraph, toWav, toInt16, VOWEL_TARGETS, CONSONANTS } from "../voice/synth.mjs";
 import { measure } from "../voice/measure.mjs";
 import { wavSamples } from "../voice/wav.mjs";
 import { judge } from "../voice/render.mjs";
 import { verifyNarration } from "../server/narration.mjs";
+
+// The vowels the engine renders, from the table that renders them - the same set the
+// synthesizer and the stress pattern reader agree on, so a syllable count in a test cannot
+// drift from the engine's own.
+const ENGINE_VOWELS = new Set(Object.keys(VOWEL_TARGETS));
 
 const root = process.cwd();
 const base = mkdtempSync(join(tmpdir(), "hypermaker-voice-"));
@@ -337,6 +343,102 @@ test("the check that measures pronunciation uses an independent dictionary, and 
   const broken = compare("The pfft.", new Map([["the", ["DH AH"]], ["pfft", ["P FT"]]]));
   assert.deepEqual(broken.unreadable, ["pfft"], "the voice cannot say it, whatever the dictionary says");
   assert.equal(broken.differs.length, 0, "and a word it cannot say is not also counted as a wrong reading");
+});
+
+test("the stress table is readable, aligned with the dictionary, and only lists words that need it", () => {
+  // The stress table is vendored data, so the risk is not a bug in code but a table that
+  // drifts from the dictionary beside it: a word listed for one reading and not the other,
+  // or a pattern whose length is not the number of syllables the engine will say. Both would
+  // move the emphasis to the wrong syllable while every other check still passed.
+  const stress = stressTable();
+  assert.ok(stress.size > 30000, `the stress table is complete, got ${stress.size} entries`);
+  const dict = dictionary();
+  let checked = 0;
+  for (const [word, pattern] of stress) {
+    const readings = dict.get(word);
+    assert.ok(readings, `"${word}" has a stress pattern but no vocabulary entry`);
+    // The pattern must describe the reading this voice speaks, so its length is that reading's
+    // number of syllables. Reading 0 is what `chosen()` speaks when there is no override.
+    const spoken = chosen(word) || readings[0];
+    const syllables = spoken.filter(p => ENGINE_VOWELS.has(p)).length;
+    assert.equal(pattern.length, syllables, `"${word}" lists ${pattern.length} stress digit(s) for a ${syllables}-syllable reading (${spoken.join(" ")})`);
+    // And it is only here because the emphasis is not already on first-syllable default: a
+    // line whose primary stress is on syllable one is dead weight, and worse, it would claim
+    // the table exists for words that never needed it.
+    assert.ok(pattern.indexOf("1") > 0, `"${word}" is in the stress table but its pattern ${pattern} already stresses syllable one`);
+    checked++;
+  }
+  assert.equal(checked, stress.size, "every entry was read, not only the first few");
+  // A word whose stress is already where the engine puts it must NOT be listed: absence is
+  // the answer "first syllable", and if absence meant "unknown" every word would need a line.
+  assert.equal(stress.get("garden"), undefined, "garden is stressed on its first syllable and needs no entry");
+  assert.equal(stressOf("machine"), 1, "machine's primary stress is its second syllable");
+  assert.equal(stressOf("garden"), null, "and a word the table does not list is first-syllable, not unknown");
+});
+
+test("the audio puts the emphasis on the syllable the dictionary names", () => {
+  // Judged by re-rendering, not by a threshold: for each word, render every possible stress
+  // position and ask which one reproduces the published samples. Exactly one does, so this is
+  // an identity rather than a score. A heuristic that split the energy envelope and called the
+  // loudest piece stressed was measured against the dictionary and was wrong (it found one
+  // piece in `toward` and `about`, and a loud `SH` outweighed `machine`'s vowel), which is why
+  // the check is built this way instead.
+  for (const word of ["machine", "around", "before", "about", "without"]) {
+    const r = renderParagraph([{ text: word }], { readings: CURRENT_READINGS });
+    const heard = heardStress({ integers: r.samples.map(toInt16), text: word, options: { readings: CURRENT_READINGS } });
+    assert.equal(heard.ok, true, `${word}: the build could not read back its own audio (${heard.reason})`);
+    const said = heard.words.find(w => w.word === word);
+    assert.equal(said.heard, stressOf(word), `${word}: the audio emphasises syllable ${said.heard}, the dictionary says ${stressOf(word)}`);
+  }
+  // And the old table really does say it the old way - or the fix would be unmeasurable. This is
+  // the negative control: the same word under `cmudict-1` is read as stressed on syllable one.
+  const old = renderParagraph([{ text: "machine" }], { readings: "cmudict-1" });
+  const heardOld = heardStress({ integers: old.samples.map(toInt16), text: "machine", options: { readings: "cmudict-1" } });
+  assert.equal(heardOld.ok, true, "the old table's audio is also reproducible");
+  assert.equal(heardOld.words[0].heard, 0, "cmudict-1 stresses machine on its first syllable, which is the defect");
+  // A file that is not this voice cannot be read as any stress at all, and says so rather than
+  // picking the closest match.
+  const noise = Array.from({ length: 16000 }, (_, i) => Math.round(Math.sin(i * 0.7) * 9000));
+  assert.equal(heardStress({ integers: noise, text: "machine" }).ok, false, "audio this voice did not make is not read as a stress assignment");
+});
+
+test("an older take still verifies, and the card can tell it was made by an older voice", async () => {
+  // The creator's question after a pronunciation fix is not only "does my old take still
+  // play" - it is "is what I am listening to the voice I now have". Both have to be answerable
+  // from a reopened card, and neither may be answered by refusing the old take.
+  const TEXT = "He wanted to know what the machine was doing.";
+  // One directory per take, because `verifyNarration` looks for `timeline.json` beside the
+  // artifact - that is the agent's contract, and a test that put several timelines in one
+  // directory would be testing a layout this app never produces.
+  const write = (readings, { claim } = {}) => {
+    const dir = mkdtempSync(join(base, "aged-"));
+    const r = renderParagraph([{ text: TEXT }], readings ? { readings } : {});
+    writeFileSync(join(dir, "take.wav"), toWav(r.samples, r.rate));
+    const timeline = { phrases: r.segments.map(s => ({ text: s.text, start: s.start, duration: s.duration })), voice: r.voice };
+    // `claim` is a table to write down instead of the one that made the audio, which is how a
+    // mislabelled record is made without touching a sample.
+    if (claim) timeline.voice = { ...timeline.voice, readings: claim };
+    writeFileSync(join(dir, "timeline.json"), JSON.stringify(timeline));
+    return { ...verifyNarration({ attemptDir: dir, artifact: "take.wav" }), dir };
+  };
+  // The audio is made by the old table but the timeline beside it is not renamed: it says the
+  // truth about itself, because a take that lies about its own voice is a different failure.
+  const aged = write("cmudict-1");
+  assert.equal(aged.ok, true, `an honest take made by an older table was refused: ${aged.problems.join("; ")}`);
+  assert.equal(aged.evidence.currentReadings, CURRENT_READINGS, "the evidence records the voice this build speaks with");
+  assert.equal(aged.evidence.take.voice.matched.readings, "cmudict-1", "and the table that actually reproduces the audio");
+  assert.notEqual(aged.evidence.take.voice.matched.readings, aged.evidence.currentReadings, "so a card can say this take is older than this voice");
+  // The same audio with its record rewritten to claim this build's table: it must still verify
+  // (the sound really is the words), and the evidence must report the table that made it rather
+  // than the one that was written down.
+  const relabelled = write("cmudict-1", { claim: CURRENT_READINGS });
+  assert.equal(relabelled.ok, true, `honest audio was refused over a mislabelled record: ${relabelled.problems.join("; ")}`);
+  assert.equal(relabelled.evidence.take.voice.recorded.readings, CURRENT_READINGS, "the record's claim is kept as the claim");
+  assert.equal(relabelled.evidence.take.voice.matched.readings, "cmudict-1", "and the audio's real table is reported beside it");
+  // This build's own take needs no such note.
+  const fresh = write(null);
+  assert.equal(fresh.ok, true, `a take made by this build was refused: ${fresh.problems.join("; ")}`);
+  assert.equal(fresh.evidence.take.voice.matched.readings, fresh.evidence.currentReadings, "a current take is recorded as current");
 });
 
 test("a listening test does not put its own answer on the sheet or in the film", () => {

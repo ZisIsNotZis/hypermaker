@@ -7,6 +7,7 @@ import { execFileSync } from "node:child_process";
 import { browserPath, launchBrowser } from "./browser.mjs";
 import { freePort, startServer, stopAll, stopServer, waitReady } from "./server.mjs";
 import { wavStats } from "./wav.mjs";
+import { CURRENT_READINGS } from "../voice/lexicon.mjs";
 
 // The slice a person actually asked for: a line of text on one card, a narration of it on
 // the next, and a film that carries that voice.
@@ -175,6 +176,23 @@ test("canvas text becomes a narration that measures as speech, and a film that c
   // measurement that no longer described anything a person can check.
   assert.match(reopened, new RegExp(`read from #${textId}`), `the reopened narration names the card it read, got ${reopened}`);
   assert.match(reopened, /matched 1\.000/, `and says the audio was re-rendered from its script, got ${reopened}`);
+
+  // 8. The take can be re-verified *from disk*, which is what `voice/verify-take.mjs` is for.
+  //    Before this, it could not: the timeline lived only in the attempt directory, which is
+  //    dropped as soon as the run succeeds, and the published WAV is under `versions/` - so the
+  //    command answered "no WAV" for a take the canvas was playing. Found by running it against
+  //    a real workspace, not by reading the code. The first attempt at the fix copied the
+  //    timeline and the sweep in `pruneVersions` deleted it again moments later as
+  //    unreferenced, which is why this asserts on the file *after* a restart.
+  const nodeDir = join(workdir, String(narrationId));
+  const takeFile = join(nodeDir, spoken.artifact);
+  const timelineFile = takeFile.replace(/\.wav$/i, ".timeline.json");
+  assert.ok(existsSync(timelineFile), `the published take keeps its own timeline, looked for ${timelineFile}`);
+  const verified = execFileSync(process.execPath, [join(root, "voice/verify-take.mjs"), nodeDir], { encoding: "utf8" });
+  assert.match(verified, /^verifies: /, `the published card re-verifies from disk, got ${verified}`);
+  assert.match(verified, /worst-frame agreement with the words: 1\.000/, "and does so exactly, not approximately");
+  assert.match(verified, new RegExp(`reading table: ${CURRENT_READINGS}`), "and names the voice that made it");
+
   assert.deepEqual(errors, [], `no page errors, got ${errors.join(" | ")}`);
   await page.close();
 });

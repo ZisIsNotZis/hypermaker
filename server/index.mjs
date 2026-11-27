@@ -136,10 +136,17 @@ function sweepVersions(workdir, id, node) {
   // takes its prompt with it instead of prompts accumulating one per take forever.
   const liveTakes = new Set([...live].map(f => /^v(\d+)-/.exec(f)?.[1]).filter(Boolean));
   const keepPrompt = rel => { const n = /^v(\d+)-prompt\.txt$/.exec(rel)?.[1]; return !!n && liveTakes.has(n); };
+  // A take's own `timeline.json` is live for exactly as long as that take is, and for the same
+  // reason as the prompt: its name is derived from the artifact's number, not stored in the
+  // record. Without this line the sweep deleted it moments after `publish` wrote it - the copy
+  // existed, was named correctly, and was gone by the time anyone asked, which is why
+  // `voice/verify-take.mjs` could not re-verify a published card. Found by running it on a real
+  // workspace rather than by reading the code.
+  const keepTimeline = rel => { const n = /^v(\d+)-.*\.timeline\.json$/.exec(rel)?.[1]; return !!n && liveTakes.has(n); };
   for (const rel of readdirSync(dir)) {
     const file = join(dir, rel);
     try { if (!statSync(file).isFile()) continue; } catch { continue; }
-    if (live.has(rel) || keepPrompt(rel)) continue;
+    if (live.has(rel) || keepPrompt(rel) || keepTimeline(rel)) continue;
     rmSync(file, { force: true });
   }
 }
@@ -467,6 +474,17 @@ const server = createServer(async (req, res) => { try {
       // it is how a person reads what was actually run, so it is published next to
       // the artifact it produced.
       const publishedScript = result.script ? publishScript(workdir, n.id, result.script, published, attemptDir) : null;
+      // The take's own record, kept beside the bytes it describes. Without this a published
+      // narration could not be re-verified after the fact: the timeline lived only in the
+      // attempt directory, which is dropped as soon as the run succeeds, so
+      // `voice/verify-take.mjs <node-dir>` - the command this project tells a person to use on
+      // a card they already have - found no WAV at the top of the directory and no timeline
+      // anywhere. Measured on a real workspace before the fix. Named by the take's ordinal, like
+      // the script and the prompt: `v2-narration.wav` and `v2-narration.timeline.json`.
+      if (published && existsSync(join(attemptDir, "timeline.json"))) {
+        const ordinal = /^v(\d+)-/.exec(basename(published))?.[1];
+        copyFileSync(join(attemptDir, "timeline.json"), join(workdir, String(n.id), "versions", `${ordinal ? `v${ordinal}-` : ""}${basename(published).replace(/^v\d+-/, "").replace(/\.wav$/i, "")}.timeline.json`));
+      }
       // The exact instruction this result was produced from, kept next to the take.
       // `promptUsed` says it in the record; this is the assembled prompt, which is what
       // a person reads when they want the whole thing rather than the one line.

@@ -59,7 +59,7 @@ export function dictionary() {
 //
 // The choice is a fact about narration, so it is written down here rather than inferred from
 // neighbours the engine cannot see. Every other homograph keeps the dictionary's own order.
-const CHOSEN = new Map(Object.entries({
+export const CHOSEN = new Map(Object.entries({
   read: "R IY D", live: "L IH V", wind: "W IH N D", close: "K L OW Z"
 }));
 
@@ -74,6 +74,35 @@ export function chosen(word) {
     if (readings.some(r => r.join(" ") === prefer)) return said;
   }
   return readings[0];
+}
+
+// Which syllable of the spoken reading carries the primary stress, or null when the word is not
+// in the stress table - which means syllable one, the engine's default, needs no note.
+//
+// The table is `vendor/cmudict/stress.txt.gz`, built beside the pronunciation table from the
+// same public source: one digit per vowel, in the same syllable order the engine derives from
+// the same phonemes, and only for words whose spoken reading stresses something other than
+// syllable one. Absence is therefore not a gap to be filled by a guess - it is the answer
+// "first syllable", which is what this voice already did before the table existed.
+let STRESS = null;
+const STRESS_PATH = fileURLToPath(new URL("../vendor/cmudict/stress.txt.gz", import.meta.url));
+export function stressTable() {
+  if (STRESS) return STRESS;
+  STRESS = new Map();
+  for (const line of gunzipSync(readFileSync(STRESS_PATH)).toString("utf8").split("\n")) {
+    if (!line) continue;
+    const tab = line.indexOf("\t");
+    if (tab < 0) continue;
+    STRESS.set(line.slice(0, tab), line.slice(tab + 1));
+  }
+  return STRESS;
+}
+
+export function stressOf(word) {
+  const pattern = stressTable().get(String(word).toLowerCase());
+  if (!pattern) return null;
+  const at = pattern.indexOf("1");
+  return at > 0 ? at : null;
 }
 
 // The vowel phonemes this engine renders. Used to ask of a reading whether it can be spoken
@@ -210,9 +239,21 @@ const RULES = [
 // because it was good (it read `science` as "S-S-IY-N-S") but because audio made by it still
 // has to verify. Changing how a word is read from now on means adding `cmudict-2`, never editing
 // an existing set.
-export const READING_SETS = ["rules-1", "cmudict-1"];
+//
+// `cmudict-2` is the same words as `cmudict-1` and then some: identical phonemes, but each word
+// is also told which syllable carries the primary stress, so the synthesizer stops putting it on
+// syllable one. It is a *new* set rather than an edit to `cmudict-1` for the reason above - a
+// published take must keep reproducing from the table that made it, and its audio really does
+// have the old stress. This is the same lesson a second time, from the other direction: the
+// pronunciation fix broke old takes by changing a table in place, and the fix for *that* was
+// versioning. Versioning is what lets this one ship at all.
+export const READING_SETS = ["rules-1", "cmudict-1", "cmudict-2"];
 // What this build renders when nobody says otherwise.
-export const CURRENT_READINGS = "cmudict-1";
+export const CURRENT_READINGS = "cmudict-2";
+// The sets that read words from the vendored dictionary. `cmudict-2` differs from `cmudict-1`
+// only in the stress it records per word, so the same word sounds the same in both - which is
+// what lets a take made by either be recognised as the same words (see `bindTake`).
+const DICTIONARY_SETS = new Set(["cmudict-1", "cmudict-2"]);
 
 export function checkReadings(name) {
   if (READING_SETS.includes(name)) return name;
@@ -229,7 +270,7 @@ export function pronounce(word, readings = CURRENT_READINGS) {
   // pronunciation rather than what its spelling suggests. The hand-written list stays ahead
   // of it only for readings the dictionary's first entry gets wrong for narration (`CHOSEN`),
   // and digits, which it does not list at all.
-  if (set === "cmudict-1") {
+  if (DICTIONARY_SETS.has(set)) {
     const listed = chosen(clean);
     if (speakable(listed)) return listed.slice();
   }
@@ -263,8 +304,15 @@ export function pronounce(word, readings = CURRENT_READINGS) {
 
 // Split text into words, keeping sentence punctuation so the voice can put a pause and a
 // falling pitch at the end of a sentence rather than running all of them together.
+// `stress` is the syllable the primary stress falls on (0 when nothing is known, which is also
+// what the engine did before there was a stress table). It rides on the token because it is a
+// fact about this word in this reading, next to the phonemes it qualifies - the synthesizer
+// reads both from one place and cannot be handed one word's sounds with another's metre.
 export function tokenize(text, readings = CURRENT_READINGS) {
   checkReadings(readings);
+  // Only the set that carries stress asks for it. `cmudict-1` and `rules-1` must render exactly
+  // the bytes they always have, or every take they made would stop reproducing.
+  const withStress = readings === "cmudict-2";
   const words = String(text).split(/\s+/).filter(Boolean);
   const unreadable = [];
   const tokens = words.map(raw => {
@@ -280,7 +328,10 @@ export function tokenize(text, readings = CURRENT_READINGS) {
     if (!/^[A-Za-z0-9']+$/.test(cleaned)) { unreadable.push(raw); return null; }
     let phonemes;
     try { phonemes = pronounce(cleaned, readings); } catch { unreadable.push(raw); return null; }
-    return { word: cleaned, phonemes, punctuation };
+    // `stress` is the syllable the primary stress falls on, or null for syllable one - the
+    // engine's own default, so a word the table does not list records nothing and sounds
+    // exactly as it always did. Only the set that carries stress answers this.
+    return { word: cleaned, phonemes, punctuation, ...(withStress ? { stress: stressOf(cleaned) } : {}) };
   }).filter(Boolean);
   return { tokens, unreadable };
 }

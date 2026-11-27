@@ -20,8 +20,10 @@ harness's clean-up but not from the agent itself. The offline voice does run and
 measured — see the narration rows below — but "intelligible" is not one of the measured
 facts: it is a judgement only a listener can make, and nothing here has made it. What did
 change is that the words themselves are now the dictionary's rather than a rule engine's
-guess, so what a listener has to overcome is timbre and missing stress, not a word said
-wrong. `voice/listening-test.mjs` exists so that judgement can be recorded as a number
+guess, and that the primary stress comes from the dictionary's marks instead of always
+falling on the first syllable - both read back out of the file rather than asserted. So what
+a listener has to overcome is the robotic timbre, not a word said wrong and not a flat metre
+on every long word; whether that emphasis is *audible* is still only a listener's call. `voice/listening-test.mjs` exists so that judgement can be recorded as a number
 instead of an opinion; it has not been run against a person yet. The sections below say what
 each claim rests on.
 

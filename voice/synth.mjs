@@ -141,8 +141,18 @@ export function synthesize(tokens, options = {}) {
   tokens.forEach((token, index) => {
     const units = syllables(token.phonemes);
     const declination = 1.05 - 0.15 * (index / total);
+    // Which syllable of this word carries the primary stress. `token.stress` comes from the
+    // reading table (`cmudict-2`); the fallback is the rule this engine always used, so audio
+    // from an older set is unchanged to the sample. A token that names a syllable this word
+    // does not have is read the old way rather than trusted: a stress index past the end is a
+    // fault in the record, and following it would move the emphasis onto the next word.
+    const emphasis = Number.isInteger(token.stress) && token.stress > 0 && token.stress < units.length ? token.stress : 0;
     units.forEach((unit, u) => {
-      const stressed = u === 0 && units.length > 1;
+      // A one-syllable word is left exactly as it was: nowhere else for the stress to go, and
+      // changing it would alter audio that older reading sets made. Otherwise the noted
+      // syllable, or syllable one when there is no note - which is the rule this engine used
+      // before there was a stress table, so `rules-1` and `cmudict-1` are unchanged.
+      const stressed = units.length > 1 && u === emphasis;
       for (const c of unit.onset) {
         const [kind, ms, isVoiced, place] = CONSONANTS[c] || ["fric", 70, 0, 3000];
         if (kind === "stop") {
@@ -223,13 +233,27 @@ export function effectiveVoice(options = {}) {
   };
 }
 
+// `options.notes` is a test seam and nothing else: an array aligned with every token of the
+// whole paragraph that overrides the stress index of the words it names. It exists so
+// `voice/check-stress.mjs` can ask "which stress assignment reproduces this file?" by
+// rendering each candidate through the real renderer instead of a second copy of it. When it
+// is absent - which is every shipped path - the tokens carry whatever their reading table
+// said, and the bytes are whatever they were.
 export function renderParagraph(phrases, options = {}) {
   const parts = [], segments = [];
-  let cursor = 0;
+  let cursor = 0, seen = 0;
   for (const phrase of phrases) {
     const { tokens, unreadable } = tokenize(phrase.text, effectiveVoice(options).readings);
     if (unreadable.length) throw new Error(`the offline voice cannot say ${unreadable.map(w => `"${w}"`).join(", ")}`);
     if (!tokens.length) continue;
+    if (Array.isArray(options.notes)) {
+      const from = seen;
+      tokens.forEach((t, i) => {
+        const note = options.notes[from + i];
+        if (note != null) tokens[i] = { ...t, stress: note };
+      });
+    }
+    seen += tokens.length;
     const pcm = synthesize(tokens, options);
     segments.push({ text: phrase.text, start: cursor / RATE, duration: pcm.length / RATE, words: tokens.length });
     parts.push(pcm);
@@ -245,9 +269,14 @@ export function renderParagraph(phrases, options = {}) {
 
 // 16-bit little-endian mono RIFF/WAVE, header included: the same shape `synth` asks an
 // agent for, so the file endpoint and the canvas player need to know nothing new.
+// The exact integer a float sample becomes in a WAV, in one place, so "does this render
+// reproduce that file?" can be asked of the numbers the file actually holds rather than of
+// floats that were rounded on the way out and divided back on the way in.
+export const toInt16 = v => Math.round(clamp(v, -1, 1) * 32767);
+
 export function toWav(samples, rate = RATE) {
   const data = Buffer.alloc(samples.length * 2);
-  for (let i = 0; i < samples.length; i++) data.writeInt16LE(Math.round(clamp(samples[i], -1, 1) * 32767), i * 2);
+  for (let i = 0; i < samples.length; i++) data.writeInt16LE(toInt16(samples[i]), i * 2);
   const header = Buffer.alloc(44);
   header.write("RIFF", 0, "ascii"); header.writeUInt32LE(36 + data.length, 4); header.write("WAVE", 8, "ascii");
   header.write("fmt ", 12, "ascii"); header.writeUInt32LE(16, 16); header.writeUInt16LE(1, 20); header.writeUInt16LE(1, 22);

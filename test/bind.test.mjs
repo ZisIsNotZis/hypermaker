@@ -212,6 +212,25 @@ test("recovering an imprecise rate does not accept different words", () => {
   assert.equal(r.voice, undefined, "nothing was recovered, so no matched settings are reported");
 });
 
+test("a refusal always says why, even when no phrase failed outright", () => {
+  // A subtle window the rewrite opened: now that several reading tables are tried, a take can
+  // miss the exact threshold under all of them without any single phrase reporting a problem.
+  // The first version returned `ok: false` with an empty list of reasons, which would put a
+  // refusal on a card with nothing written on it - the one failure this file exists to prevent.
+  // Found by sweeping cross-fades of one sentence with a near-variant of itself rather than by
+  // reading the code; 5-15% of the variant lands exactly in that window.
+  const real = renderParagraph([{ text: "The sea at night is never still." }]);
+  const other = renderParagraph([{ text: "The sea at night is nearly still." }]);
+  const mixed = Array.from({ length: real.samples.length }, (_, i) => real.samples[i] * 0.9 + (other.samples[i] ?? 0) * 0.1);
+  const file = join(base, "mixed.wav");
+  writeFileSync(file, toWav(mixed, real.rate));
+  const timeline = { phrases: real.segments.map(s => ({ text: s.text, start: s.start, duration: s.duration })), voice: real.voice };
+  const result = bindTake({ file, timeline });
+  assert.equal(result.ok, false, "audio that is not quite this sentence is not accepted");
+  assert.ok(result.problems.length > 0, "and the refusal carries a reason for a card to show");
+  assert.match(result.problems.join(" "), /does not reproduce from its own script|not the sound this voice makes/, `the reason names what is wrong, got ${JSON.stringify(result.problems)}`);
+});
+
 test("a script may quote its material but may not invent words", () => {
   const material = "The sea at night is never still. It carries every colour of the sky.";
   const source = wordsOf(material);
@@ -314,7 +333,10 @@ test("a reading table is named, so a take cannot be rendered with one the build 
   // A record naming an unknown table is a typo or a newer build's audio. Either way it must
   // not fall back silently to whatever this build happens to default to - that would make the
   // one field that explains the audio into a field that is ignored.
-  assert.throws(() => renderParagraph([{ text: "The sea at night is never still." }], { readings: "cmudict-2" }), /unknown reading set/, "an unknown table must be refused where it is used, not defaulted");
+  // `cmudict-2` is a real table in this build (it adds stress), so the name to refuse is one no
+  // build has. `.at(-1)` is deliberately not used here: naming a hypothetical *next* table would
+  // silently become a valid name the day that table ships, and the test would stop testing.
+  assert.throws(() => renderParagraph([{ text: "The sea at night is never still." }], { readings: "cmudict-9" }), /unknown reading set/, "an unknown table must be refused where it is used, not defaulted");
   // A timeline naming an unknown table is still checked, against the tables this build has:
   // refusing to look would strand an old workspace, and accepting without looking would be
   // the old defect. The audio decides.

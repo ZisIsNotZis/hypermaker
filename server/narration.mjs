@@ -16,7 +16,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { judge } from "../voice/render.mjs";
-import { audit } from "../voice/lexicon.mjs";
+import { audit, CURRENT_READINGS } from "../voice/lexicon.mjs";
 import { wavSamples } from "../voice/wav.mjs";
 import { appearsInOrder, bindTake, spokenWords, wordsOf } from "../voice/bind.mjs";
 
@@ -127,7 +127,13 @@ export function verifyNarration({ attemptDir, artifact, material = null, from = 
     },
     // Which card was read, when there was one. Provenance the creator asked for: reopening
     // the workspace must say both what was said and where the words came from.
-    source: from ? { id: Number(from.id), artifact: from.artifact ?? null } : null
+    source: from ? { id: Number(from.id), artifact: from.artifact ?? null } : null,
+    // The voice this build speaks with, so a take that verified under an older table can be
+    // described as older rather than as identical. Without it the card cannot tell a recording
+    // made before a pronunciation or stress fix from one made after, and the creator has no way
+    // to know which of two takes is worth regenerating. It is the build's setting, not the
+    // take's - the take's own table is under `take.voice`.
+    currentReadings: CURRENT_READINGS
   } : null;
   return { ok: problems.length === 0, problems, report, evidence, seconds, words: words.trim() };
 }
