@@ -208,8 +208,9 @@ try {
   // The pace is asked for in the card's own instruction, the way a person would write it, and
   // the card has to come back saying what was asked and what it got. This is the half of pace
   // control that is a fact about this build: whether a *model* obeys the same sentence is not
-  // established here - there is no Codex CLI on this machine - and the guide test pins only
-  // that the instruction reaches the agent's prompt.
+  // established - a real run was attempted here and every turn failed with `workspace routing
+  // discovery timed out` because this host cannot reach chatgpt.com - and the guide test pins
+  // only that the instruction reaches the agent's prompt.
   await card(voiceId).locator("[data-prompt]").click();
   await card(voiceId).locator("[data-prompt]").fill("Read this at 200 words a minute, brisk but clear.");
   await card(voiceId).locator("[data-prompt]").blur();

@@ -32,12 +32,16 @@ a person is given and the words around the old one:
 - The method guide tells an agent which setting to pass, which not to, and that a line of the
   script is a sentence with a short gap after it while a blank line adds nothing.
 
-**What is not established.** Whether a *model* reads "brisk" and passes 200. There is no Codex
-CLI on this machine, so no run has been taken where a model chose a pace; `test/guide-pace.test.mjs`
-pins the checkable half - the instruction is in the assembled prompt, with the right numbers and
-the right warning, and the guide's own "within about 1%" claim is true of the tool. There is also
-no pace control on the canvas: an agent can pass `--wpm` and the card shows the result, but a
-person cannot set it by hand yet, and the README says so rather than implying a slider exists.
+**What is not established.** Whether a *model* reads "brisk" and passes 200. A real run was
+attempted and could not proceed: `codex-cli 0.172.0` is installed locally with credentials
+present, but every turn failed with `workspace routing discovery timed out` while reconnecting
+to `chatgpt.com/backend-api`, and from this environment `chatgpt.com` answers nothing while
+`example.com` answers 200 - the backend is unreachable, not the binary missing. So the model
+half is still owed, and `test/guide-pace.test.mjs` pins only the checkable half: the instruction
+is in the assembled prompt, with the right numbers and the right warning, and the guide's own
+"within about 1%" claim is true of the tool. There is also no pace control on the canvas: an
+agent can pass `--wpm` and the card shows the result, but a person cannot set it by hand yet,
+and the README says so rather than implying a slider exists.
 
 Tests: `test/pace.test.mjs` (three: a requested pace is the pace the bytes have, the multiplier
 still means what it meant and the recorded multiplier reproduces the take, and a pace out of

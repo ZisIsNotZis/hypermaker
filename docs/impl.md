@@ -156,8 +156,13 @@ untouched. `test/pace.test.mjs` pins all three: the pace reached, the multiplier
 what it meant, and a pace outside the range refused with the limit and the pace actually
 reached.
 
-What a real model does with the instruction is **not** established. There is no Codex CLI on
-this machine, so no run has been taken where a model read the guide and chose a pace;
+What a real model does with the instruction is **not** established, and the reason is the
+environment rather than this repository. `codex-cli 0.172.0` is installed here under
+`~/.codex/packages/` with credentials present, so a real run was attempted; it failed every
+turn with `workspace routing discovery timed out` while reconnecting to
+`chatgpt.com/backend-api`, and a probe says why: from this machine `chatgpt.com` returns no
+response at all while `example.com` returns 200. The model half therefore needs a host that
+can reach that backend. What is pinned instead:
 `test/guide-pace.test.mjs` pins the weaker, checkable half - that the instruction is in the
 prompt the agent is handed, with the right numbers and the right warning about `--rate`, and
 that the guide's own "within about 1%" claim is true of the tool. A take in which a model reads
