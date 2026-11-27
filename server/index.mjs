@@ -160,10 +160,20 @@ const server = createServer(async (req, res) => { try {
     // going anywhere, so there is nothing to copy and nothing to roll back.
     const back = n.artifact ? { ...(list[index]), id: ordinal, artifact: n.artifact, file: adoptLegacy(workdir, n.id, n.artifact), sources: n.sources || [], prompt: n.promptUsed ?? null } : null;
     if (back?.file) list.splice(index, 1, back); else list.splice(index, 1);
-    // `chosen.prompt` is null for a version kept before prompts were recorded. Leave
-    // the box alone in that case: inventing the current prompt as the old film's
-    // history would be the same lie in the other direction.
-    const instruction = typeof chosen.prompt === "string" ? { prompt: chosen.prompt, promptUsed: chosen.prompt } : {};
+    // The instruction has to move with the bytes, and "no instruction recorded" is
+    // itself a fact that has to move. A version kept before prompts were recorded
+    // has `prompt: null`, and leaving `promptUsed` untouched there made the card
+    // show the old picture while still claiming the instruction of the take it had
+    // just replaced - the same lie in the other direction, and the first thing a
+    // person meets after upgrading with two vintages of version on one card.
+    //
+    // The box (`prompt`) is different: it holds the next take the person is writing,
+    // and a restore is not the moment to throw that away. It follows the chosen
+    // version when that version knows what it was asked for, and is left alone when
+    // it does not.
+    const instruction = typeof chosen.prompt === "string"
+      ? { prompt: chosen.prompt, promptUsed: chosen.prompt }
+      : { promptUsed: null };
     nodes[n.id] = nodeRecord(n.id, { ...n, ...instruction, artifact: chosen.file, sources: chosen.sources || [], versions: list, status: "idle", error: null }); save(); emit({ kind: "restored", id: n.id, version: chosen.id });
     return json(res, 200, view());
   }

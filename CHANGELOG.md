@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased — two takes can be compared, and an unknown instruction stays unknown, 2026-11-27
+
+- **Compare two takes side by side.** A `compare` button on the kept row opens both
+versions of the card at once, each pane playing its own file, captioned with which
+take it is and what it was asked for. Either side can be pointed at another version.
+Closing leaves the card exactly as it was: comparing is looking, not choosing. Before
+this the only way to compare was to swap the card and remember what it looked like.
+- **A version from before prompts were recorded no longer inherits the newer take's
+instruction.** Restoring it moved the bytes, the materials and (when known) the
+prompt, but left `promptUsed` untouched - so the card showed the old picture while
+claiming the instruction of the take it had just replaced. "No instruction recorded"
+is a fact that travels with the version like any other. The draft in the box is still
+kept, because a restore is not the moment to throw away what someone is writing.
+- **The card says so when the instruction is unknown** - `asked for: unknown (kept
+before prompts were recorded)` - instead of saying nothing, which read as agreement.
+Each such version's tooltip says the same.
+- Verified: **51/51** with a real Chromium. Both new rules are negative-controlled by
+restoring the exact behaviour committed in 4939d98, which turns one test red, and by
+hiding the unknown line, which turns the other red. The mixed-vintage case was also
+walked at the real entry in a real browser with a hand-written old workspace: opening
+on the newer take, typing a draft, clicking the old version (picture changes, badge
+changes, card says unknown, draft intact), then going forward again (its instruction
+returns to the box and the warning goes away). Two real Remotion renders were also
+compared side by side and their decoded pixels checked - green on the card, blue in
+the kept pane - so each pane really plays the file it names.
+
 ## Unreleased — a version keeps the instruction that made it, and takes are numbered, 2026-11-27
 
 - **Going back to an earlier take now brings its words back with its picture.**

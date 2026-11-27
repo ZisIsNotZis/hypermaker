@@ -392,7 +392,10 @@ if (out) writeFileSync(out, JSON.stringify({ prompt: asked, script: null, artifa
     await page.waitForTimeout(400);
     const two = await read();
     assert.match(two.meta, /v2\b/, `the second take is v2, got ${two.meta}`);
-    assert.equal(two.kept, "kept v1", "and the first is still one click away");
+    // The row also carries a compare control, so match the part that matters: the
+    // kept take is named and reachable. Pinning the whole string made an unrelated
+    // addition to the row look like a regression.
+    assert.match(two.kept, /kept v1\b/, `the first take is still one click away, got ${two.kept}`);
     assert.equal(two.keptTitle, "asked for: first take", "the kept version says what made it");
 
     await page.locator(`${sel} .versions button`).first().click();
@@ -406,6 +409,200 @@ if (out) writeFileSync(out, JSON.stringify({ prompt: asked, script: null, artifa
   } finally {
     await page.close();
     stopServer(ui);
+  }
+});
+
+// Keeping two takes is only useful if a person can choose between them, and choosing
+// by memory - watch one, swap the card, watch the other - is how the wrong take gets
+// regenerated. So the card offers a side-by-side view, and this drives it: both panes
+// show real bytes from the two files, each says which take it is and what it was asked
+// for, either side can be repointed at another version, and the card underneath is left
+// alone - comparing must never swap what the card is showing.
+// The first thing a person meets after upgrading, and the one the fix got wrong: a card
+// whose oldest version predates stored prompts sitting next to a newer one that has one.
+// Restoring the old version moved the bytes and the materials and left `promptUsed`
+// alone - so the card showed the old picture while still claiming the instruction of the
+// take it had just replaced. "No instruction recorded" is a fact that has to travel with
+// the version like any other.
+//
+// Written as a workspace on disk rather than by generating, because that is the state a
+// person actually arrives in: the old version's record has no prompt because nothing
+// recorded one at the time.
+test("restoring a version from before prompts were recorded does not inherit the newer take's instruction", async () => {
+  const legacyPort = await freePort(), legacyWorkdir = join(base, "legacy-ws");
+  mkdirSync(join(legacyWorkdir, "1", "versions"), { recursive: true });
+
+  // Two takes of one card, as the filesystem would hold them: the old one published
+  // before this feature existed, the new one after. The bytes say which is which, so a
+  // card claiming the wrong instruction is visible in the files too.
+  writeFileSync(join(legacyWorkdir, "1", "versions", "v1-old.txt"), "asked for: the old idea");
+  writeFileSync(join(legacyWorkdir, "1", "versions", "v2-new.txt"), "asked for: the new idea");
+  writeFileSync(join(legacyWorkdir, "1", "versions", "s1-from-9-poster.png"), "material");
+  const versions = [
+    // The old version does have recorded materials - provenance was shipped before
+    // prompts were - so this also checks that a version's materials travel with it
+    // while its unknown instruction stays unknown.
+    { id: 1, artifact: "versions/v1-old.txt", file: "versions/v1-old.txt", sources: [{ id: 9, type: "image", artifact: "poster.png", file: "versions/s1-from-9-poster.png" }], prompt: null },
+    { id: 2, artifact: "versions/v2-new.txt", file: "versions/v2-new.txt", sources: [], prompt: "the new idea" },
+  ];
+  writeFileSync(join(legacyWorkdir, "workspace.yml"), [
+    "1:",
+    "  x: 40",
+    "  y: 40",
+    "  inputs: []",
+    "  type: text",
+    "  method: llm",
+    '  prompt: "a draft I am writing now"',
+    '  promptUsed: "the new idea"',
+    "  quality: standard",
+    '  artifact: versions/v2-new.txt',
+    "  status: idle",
+    '  sources: [{"id":9,"type":"image","artifact":"poster.png","file":"versions/s1-from-9-poster.png"}]',
+    `  versions: ${JSON.stringify(versions)}`,
+    ""
+  ].join("\n"));
+
+  const legacy = startServer({ cwd: root, port: legacyPort, env: { CODEX_BIN: bin, HYPERMAKER_WORKDIR: legacyWorkdir, HYPERMAKER_RESET_WORKSPACE: "0" } });
+  legacy.stderr.on("data", c => process.stderr.write(c));
+  await waitReady(legacyPort);
+  const api = (method, path, payload) => fetch(`http://127.0.0.1:${legacyPort}${path}`, { method, headers: { "content-type": "application/json" }, body: JSON.stringify(payload) }).then(r => r.json());
+
+  try {
+    const before = (await api("GET", "/api/workspace")).nodes["1"];
+    assert.equal(before.promptUsed, "the new idea", "the card starts on the take that does have an instruction");
+    assert.equal(before.prompt, "a draft I am writing now", "with the next take in the box");
+
+    const after = (await api("POST", "/api/restore", { id: 1, version: 1 })).nodes["1"];
+    assert.equal(after.artifact, "versions/v1-old.txt", "the picture is the old one");
+    assert.equal(after.promptUsed, null, "and the card no longer claims the replaced take's instruction");
+    assert.equal(after.prompt, "a draft I am writing now", "while the box keeps what the person is writing - a restore is not the moment to discard it");
+    assert.equal(after.sources.length, 1, "the old version's materials still travel with it");
+
+    // Going back the other way restores the instruction it does know, in the box too.
+    const forward = (await api("POST", "/api/restore", { id: 1, version: after.versions[0].id })).nodes["1"];
+    assert.equal(forward.artifact, "versions/v2-new.txt");
+    assert.equal(forward.promptUsed, "the new idea");
+    assert.equal(forward.prompt, "the new idea");
+    assert.equal(forward.versions[0].prompt, null, "and the version left behind still records nothing rather than the wrong thing");
+  } finally {
+    stopServer(legacy);
+  }
+});
+
+// The same case on the canvas: silence there reads as agreement, so an artifact whose
+// instruction is not recorded has to say so.
+canvasTest("a card whose artifact predates stored prompts says the instruction is unknown", async () => {
+  const unknownPort = await freePort(), unknownWorkdir = join(base, "unknown-ws");
+  mkdirSync(join(unknownWorkdir, "1", "versions"), { recursive: true });
+  writeFileSync(join(unknownWorkdir, "1", "versions", "v1-old.txt"), "the old idea, rendered");
+  writeFileSync(join(unknownWorkdir, "workspace.yml"), [
+    "1:",
+    "  x: 40",
+    "  y: 40",
+    "  inputs: []",
+    "  type: text",
+    "  method: llm",
+    '  prompt: "whatever I type next"',
+    "  quality: standard",
+    '  artifact: versions/v1-old.txt',
+    "  status: idle",
+    ""
+  ].join("\n"));
+  const unknown = startServer({ cwd: root, port: unknownPort, env: { CODEX_BIN: bin, HYPERMAKER_WORKDIR: unknownWorkdir, HYPERMAKER_RESET_WORKSPACE: "0" } });
+  unknown.stderr.on("data", c => process.stderr.write(c));
+  await waitReady(unknownPort);
+  const page = await browser.newPage({ viewport: { width: 1000, height: 720 } });
+  const errors = []; page.on("pageerror", e => errors.push(String(e)));
+  try {
+    await page.goto(`http://127.0.0.1:${unknownPort}/`);
+    const sel = `.card[data-id="1"]`;
+    await page.waitForSelector(sel);
+    const shown = await page.evaluate(sel => ({
+      askedFor: document.querySelector(`${sel} .used`)?.textContent ?? null,
+      prompt: document.querySelector(`${sel} [data-prompt]`).value,
+    }), sel);
+    assert.match(shown.askedFor || "", /unknown/, `the card says the instruction is not recorded, got ${shown.askedFor}`);
+    assert.equal(shown.prompt, "whatever I type next", "and does not touch what the person is writing");
+    assert.deepEqual(errors, [], `no page errors, got ${errors.join(" | ")}`);
+  } finally {
+    await page.close();
+    stopServer(unknown);
+  }
+});
+
+canvasTest("two takes can be watched side by side without moving the card", async () => {
+  const freshAgent = join(base, "cmp-agent.mjs"), freshBin = join(base, "cmp-codex");
+  // The artifact is the text of the prompt, so each pane's bytes say which take they
+  // are; a comparison that silently showed the same file twice would read as a pass.
+  writeFileSync(freshAgent, `
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+const dir = process.env.HYPERMAKER_NODE_DIR;
+mkdirSync(dir, { recursive: true });
+const asked = readFileSync(join(dir, "prompt.txt"), "utf8").split("# USER PROMPT").pop().trim();
+const artifact = "take-" + Date.now() + ".txt";
+writeFileSync(join(dir, artifact), "asked for: " + asked);
+const out = process.argv[process.argv.indexOf("--output-last-message") + 1];
+if (out) writeFileSync(out, JSON.stringify({ prompt: asked, script: null, artifact, type: "text", method: "llm", error: null }));
+`);
+  writeFileSync(freshBin, `#!/bin/sh\nexec node ${JSON.stringify(freshAgent)} "$@"\n`);
+  chmodSync(freshBin, 0o755);
+
+  const cmpPort = await freePort(), cmpWorkdir = join(base, "cmp-ws");
+  const cmp = startServer({ cwd: root, port: cmpPort, env: { CODEX_BIN: freshBin, HYPERMAKER_WORKDIR: cmpWorkdir, HYPERMAKER_RESET_WORKSPACE: "1" } });
+  cmp.stderr.on("data", c => process.stderr.write(c));
+  await waitReady(cmpPort);
+  const api = (method, path, payload) => fetch(`http://127.0.0.1:${cmpPort}${path}`, { method, headers: { "content-type": "application/json" }, body: JSON.stringify(payload) }).then(r => r.json());
+  const ws = () => fetch(`http://127.0.0.1:${cmpPort}/api/workspace`).then(r => r.json());
+  const wait = async id => { for (let i = 0; i < 300; i++) { const n = (await ws()).nodes[id]; if (n.status !== "running") return n; await new Promise(r => setTimeout(r, 100)); } throw new Error("never settled"); };
+  const page = await browser.newPage({ viewport: { width: 1100, height: 800 } });
+  const errors = []; page.on("pageerror", e => errors.push(String(e)));
+
+  try {
+    const card = Number(Object.keys((await api("POST", "/api/node", { x: 60, y: 60, type: "text", method: "llm", prompt: "a sea film" })).nodes).at(-1));
+    await api("POST", "/api/generate", { id: card, prompt: "a sea film" });
+    await wait(card);
+    await api("POST", "/api/generate", { id: card, prompt: "a mountain film" });
+    const second = await wait(card);
+
+    await page.goto(`http://127.0.0.1:${cmpPort}/`);
+    const sel = `.card[data-id="${card}"]`;
+    await page.waitForSelector(`${sel} .versions [data-compare]`);
+
+    // The control is inside the card, so pressing it must not also count as a version
+    // restore or a card drag.
+    await page.locator(`${sel} [data-compare]`).click();
+    await page.waitForSelector(".cmp .pane section[data-side=right] pre[data-text]");
+    await page.waitForFunction(() => !document.querySelector(".cmp .pane section[data-side=right] pre").textContent.includes("loading"), null, { timeout: 8000 });
+
+    const pane = async side => page.evaluate(side => {
+      const s = document.querySelector(`.cmp .pane section[data-side=${side}]`);
+      return { caption: s.querySelector(".caption").textContent, bytes: s.querySelector("pre")?.textContent ?? (s.querySelector("video,audio,img")?.getAttribute("src") ?? null) };
+    }, side);
+    const left = await pane("left"), right = await pane("right");
+    assert.match(left.bytes, /asked for: a mountain film/, `the left pane shows the take on the card, got ${left.bytes}`);
+    assert.match(right.bytes, /asked for: a sea film/, `the right pane shows the kept take, got ${right.bytes}`);
+    assert.match(left.caption, /card/, `the left caption names the take, got ${left.caption}`);
+    assert.match(right.caption, /kept v1/, `the right caption names the take, got ${right.caption}`);
+    assert.match(right.caption, /asked for: a sea film/, "and what that take was asked for");
+
+    // Repointing the left side must repaint that pane only.
+    await page.selectOption('.cmp [data-pick="left"]', String(second.versions[0].id));
+    await page.waitForFunction(() => !document.querySelector(".cmp .pane section[data-side=left] pre").textContent.includes("loading"), null, { timeout: 8000 });
+    const swapped = await pane("left");
+    assert.match(swapped.bytes, /asked for: a sea film/, `the left pane follows its selector, got ${swapped.bytes}`);
+
+    // Escape closes it, and the card never moved: comparing is looking, not choosing.
+    await page.keyboard.press("Escape");
+    await page.waitForSelector(".cmp", { state: "detached" });
+    const after = (await ws()).nodes[card];
+    assert.equal(after.artifact, second.artifact, "the card still shows the take it showed before");
+    assert.equal(after.promptUsed, "a mountain film");
+    assert.equal(after.versions.length, 1, "and nothing was restored by looking");
+    assert.deepEqual(errors, [], `no page errors, got ${errors.join(" | ")}`);
+  } finally {
+    await page.close();
+    stopServer(cmp);
   }
 });
 
