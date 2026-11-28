@@ -1,5 +1,9 @@
 # Evidence kept outside the tests
 
+## `three-take-delivery.md`
+
+[Find a film by the picture and caption, then open the downloaded file](three-take-delivery.md) distinguishes three similar cuts and verifies standalone playback after the local server stops.
+
 ## `reopen-film.md`
 
 [Reopen a film, compare its versions, and keep editing](reopen-film.md) restarts the server and Chromium, exports each saved cut without switching, and continues editing from the reopened workspace.

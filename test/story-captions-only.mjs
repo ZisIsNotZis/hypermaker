@@ -8,7 +8,8 @@ import { createHash } from 'node:crypto';
 import { once } from 'node:events';
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { chromium } from 'playwright';
 import { harbourPng } from './harbour.mjs';
 import { parseWorkspace } from '../server/workspace.mjs';
@@ -326,11 +327,95 @@ try {
     copyFileSync(fileFor(film, continued.artifact), output);
     reopened.continued = { file: continued.artifact, sha256: sha(output), scenes: continued.film.scenes, links, play: await play(continued, true) };
     await page.screenshot({ path: join(evidence, 'canvas-continued.png') });
+
+    // Three takes, including two with identical night-ferry pictures but different
+    // second captions. Select by remembered content, not by an ordinal or a live card.
+    const compareButton = card(film).getByRole('button', { name: 'compare', exact: true });
+    await compareButton.focus();
+    await page.keyboard.press('Enter');
+    const dialog = page.getByRole('dialog', { name: 'film.mp4 — two takes' });
+    await dialog.waitFor();
+    assert.equal(await dialog.locator('summary').evaluate(el => el === document.activeElement), true);
+    for (let i = 0; i < 20; i++) {
+      await page.keyboard.press('Tab');
+      assert.equal(await dialog.evaluate(el => el.contains(document.activeElement) || document.activeElement === document.body), true,
+        'Tab never reaches a canvas control behind Compare');
+    }
+    await page.keyboard.press('Escape');
+    await dialog.waitFor({ state: 'detached' });
+    assert.equal(await compareButton.evaluate(el => el === document.activeElement), true, 'Escape closes and returns to Compare');
+    await compareButton.click();
+    const finder = page.locator('.cmp .take-finder');
+    await finder.getByText('Find a take by picture or caption', { exact: true }).waitFor();
+    assert.equal(await finder.locator('.take-row').count(), 3);
+    await page.waitForFunction(() => {
+      const images = [...document.querySelectorAll('.take-finder img')];
+      return images.length === 6 && images.every(img => img.complete && img.naturalWidth > 0);
+    }, null, { timeout: 5000 });
+    const byCaption = finder.locator('.take-row').filter({ hasText: story[1] });
+    assert.equal(await byCaption.count(), 2, 'remembering only the second caption still finds both old cuts');
+    const byPicture = finder.locator('.take-row').filter({ hasText: pictures[2] });
+    assert.equal(await byPicture.count(), 2, 'remembering only the night ferry still finds both night cuts');
+    const target = byCaption.filter({ hasText: pictures[2] });
+    assert.equal(await target.count(), 1, 'the frozen picture and old caption together identify the requested take');
+    const sceneImages = await finder.locator('.take-scene img').evaluateAll(imgs => imgs.map(img => img.getAttribute('src')));
+    assert.equal(new Set(sceneImages).size, 6, 'every picture comes from its own film version, not from the live picture card');
+    // Read the same image responses the browser received, including the old dusk image
+    // now absent from the live links. Six distinct URLs would not catch wrong pixels.
+    const expectedImages = [pictures[0], pictures[2], pictures[0], pictures[2], pictures[0], pictures[1]];
+    for (const [i, path] of sceneImages.entries()) {
+      const response = await page.request.get(`${base}${path}`);
+      assert.ok(response.ok());
+      assert.equal(createHash('sha256').update(await response.body()).digest('hex'), sha(join(out, expectedImages[i])));
+    }
+    await page.screenshot({ path: join(evidence, 'find-three-takes.png') });
+    await target.getByRole('button', { name: /Preview/ }).click();
+    assert.equal(await target.getByRole('button').getAttribute('aria-pressed'), 'true');
+    const right = page.locator('.cmp [data-side="right"]');
+    const kept = continued.versions.find(v => v.artifact === second.artifact);
+    const previewed = await play({ ...second, artifact: kept.file }, true, right.locator('video'));
+    const [download] = await Promise.all([
+      page.waitForEvent('download', { timeout: 5000 }),
+      right.getByRole('button', { name: /Download/ }).click(),
+    ]);
+    assert.equal(download.suggestedFilename(), 'film-v2.mp4');
+    const delivered = join(evidence, 'delivery', download.suggestedFilename());
+    await download.saveAs(delivered);
+    assert.equal(sha(delivered), recut.sha256);
+    assert.equal((await node(film)).artifact, continued.artifact, 'preview/export did not restore the kept cut');
+    reopened.delivery = { previewed, file: delivered, sha256: recut.sha256 };
   }
   assert.deepEqual(errors, []);
   assert.deepEqual(external, []);
   assert.deepEqual(imports, localFiles ? ['/api/upload', '/api/upload', '/api/replace'] : []);
   assert.equal(existsSync(call), false, 'the model command never ran');
+  if (reopened?.delivery) {
+    await browser.close();
+    const exited = once(app, 'exit', { signal: AbortSignal.timeout(5000) });
+    assert.ok(app.kill('SIGTERM'), 'stop the application before opening the downloaded file');
+    await exited;
+    await assert.rejects(fetch(base, { signal: AbortSignal.timeout(2000) }), err => err.cause?.code === 'ECONNREFUSED');
+    browser = await chromium.launch({ executablePath: chrome, headless: true });
+    const viewer = await browser.newPage({viewport:{width:960, height:600}});
+    const requests = [];
+    await viewer.route(/^https?:/, route => { requests.push(route.request().url()); return route.abort(); });
+    const file = pathToFileURL(resolve(reopened.delivery.file)).href;
+    await viewer.goto(file);
+    assert.equal(await viewer.locator('video').count(), 1, 'Chrome opens the MP4 without an application or HTML wrapper');
+    const playback = await viewer.locator('video').evaluate(async video => {
+      video.muted = true;
+      await video.play();
+      await new Promise((res, rej) => {
+        const timer = setTimeout(() => rej(new Error('Downloaded video did not end')), 12000);
+        video.addEventListener('ended', () => { clearTimeout(timer); res(); }, { once:true });
+      });
+      return { ended:video.ended, seconds:video.duration, width:video.videoWidth, height:video.videoHeight };
+    });
+    assert.deepEqual(playback, {ended:true, seconds:6, width:1280, height:720});
+    assert.deepEqual(requests, []);
+    reopened.delivery.standalone = { ...playback, httpRequests: requests };
+    await viewer.screenshot({ path:join(evidence, 'opened-delivered-file.png') });
+  }
   const receipt = { story, workspace: ws, engineAvailable: false, modelCalls: 0, externalBrowserRequests: external, uploads: imports, cut, recut, reopened, restored: { file: restored.artifact, sha256: cut.sha256, play: restoredPlay, links, secondStillKept: second.artifact } };
   copyFileSync(fileFor(film, restored.artifact), join(evidence, 'first.mp4'));
   copyFileSync(fileFor(film, second.artifact), join(evidence, 'recut.mp4'));

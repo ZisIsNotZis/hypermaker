@@ -109,6 +109,8 @@ npm run dev
 
 重开画布后，点 **compare** 可以查看每版所用素材并下载对应影片。点 **Use vN on canvas** 才会切换当前片，连线和草稿可接着用。[重启复跑](docs/evidence/reopen-film.md)。
 
+几版画面很像时，可以在 **Compare** 的 **Find a take by picture or caption** 按各版保存的缩略图和字幕找片。选中后在比对栏预览并下载，导出的 MP4 可独立播放。 [三版交付复验](docs/evidence/three-take-delivery.md)。
+
 ## 概念模型
 
 | 东西 | 含义 |

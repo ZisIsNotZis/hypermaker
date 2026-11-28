@@ -255,6 +255,8 @@ This needs local Chromium for rendering, but no model, speech engine, remote upl
 
 When you return to a saved canvas, open **compare** to see the pictures used in each film version and download either cut. **Use vN on canvas** switches the film and leaves the connected cards ready for your next edit. [Restart and reopen walkthrough](docs/evidence/reopen-film.md).
 
+When several cuts look alike, expand **Find a take by picture or caption** in Compare. Each take lists its saved scenes, so you can preview the one you remember and download it from its pane. The exported MP4 plays on its own. [Three-take walkthrough](docs/evidence/three-take-delivery.md).
+
 ## The mental model
 
 | Thing | Meaning |

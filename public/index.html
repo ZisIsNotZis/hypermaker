@@ -1,5 +1,9 @@
 <!doctype html><meta charset="utf-8"><title>Hypermaker</title>
-<style>*{box-sizing:border-box}html,body{margin:0;height:100%;overflow:hidden;background:#17181b;color:#eee;font:13px system-ui}header{padding:8px;background:#24262b;display:flex;gap:8px;align-items:center}header select,header input{color:#eee;background:#17191d;color-scheme:dark}header input::placeholder{color:#aab2bf}button,select,textarea,header input{font:inherit;color:#eee;background:#17191d;border:1px solid #4b505a;border-radius:4px;padding:6px}button{cursor:pointer}.viewport{height:calc(100% - 48px);position:relative;overflow:hidden;background:#17181b}.world{position:absolute;inset:0;touch-action:none;transform-origin:0 0}.edges{position:absolute;left:0;top:0;width:1px;height:1px;overflow:visible;pointer-events:none}.cards{position:absolute;inset:0;pointer-events:none}.cards .card{pointer-events:auto}.cards.probing .card,.card.dragging{pointer-events:none}.viewport{--card-width:250px}.card{position:absolute;width:var(--card-width);background:#272a30;border:1px solid #555;border-radius:6px;overflow:hidden;box-shadow:0 2px 6px #0006}.card.supplied-card :is(.selectors,[data-prompt],[data-generate]){display:none}.card.raised{border-color:#7b86a1;box-shadow:0 8px 24px #000c}.card.dragging,.card.dragging *{user-select:none!important}.card header{height:30px;padding:5px;cursor:grab;display:flex;gap:6px;align-items:center}.card header .title{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.card header .delete{margin-left:auto;color:#ff9b9b}.card main{padding:7px}.preview{aspect-ratio:4/3;contain:size;background:#111;display:flex;align-items:center;justify-content:center;overflow:auto}.preview pre{white-space:pre-wrap;overflow-wrap:anywhere;margin:0;padding:4px;font:inherit}.preview img,.preview video{max-width:100%;max-height:100%}.selectors{display:grid;grid-template-columns:1fr 1fr;gap:4px}.selectors select,textarea{width:100%;min-width:0}.selectors [data-field=method]{grid-column:1/-1;grid-row:2}textarea{height:58px;margin:6px 0;resize:vertical;overflow-x:hidden}.actions{display:flex;gap:5px}.card .actions{flex-wrap:wrap}.actions [data-edit-script]{order:1;flex-basis:100%}.edge{fill:none;stroke:#54c7ff;stroke-width:4;stroke-linecap:round;marker-end:url(#arrow);pointer-events:none}.edge-hit{fill:none;stroke:transparent;stroke-width:20;pointer-events:stroke}.meta{font-size:11px;color:#aab2bf}.error{color:#ff9b9b;font-size:11px;margin-top:4px}.protection{color:#ffd479;background:#3a3118;border:1px solid #6b5a25;border-radius:4px;font-size:11px;margin-top:5px;padding:5px 6px;overflow-wrap:anywhere}.notice{color:#ffd479;background:#3a3118;border:1px solid #6b5a25;border-radius:4px;font-size:11px;margin-top:5px;padding:5px 6px;overflow-wrap:anywhere}.banner{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);max-width:min(92vw,680px);z-index:10000;color:#ffe3a3;background:#3a3118;border:1px solid #7a6630;border-radius:6px;padding:9px 14px;font-size:13px;box-shadow:0 6px 20px #000a;overflow-wrap:anywhere}.sources{color:#8fb6cf;font-size:11px;margin-top:5px;overflow-wrap:anywhere}.used{color:#d9c58b;margin-top:4px;overflow-wrap:anywhere}.cmp{position:fixed;inset:0;background:#000c;display:flex;align-items:center;justify-content:center;z-index:9999}.cmp .panel{background:#24262b;border:1px solid #555;border-radius:8px;padding:12px;max-width:min(96vw,1100px);max-height:92vh;overflow:auto}.cmp .panel header{background:none;padding:0 0 8px}.cmp .panel header .title{font-weight:600}.cmp .panel .pane{display:flex;gap:12px}.cmp .panel .pane section{flex:1;min-width:0}.cmp .panel .pane section .caption{color:#aab2bf;font-size:11px;margin-bottom:5px;overflow-wrap:anywhere}.cmp .panel .pane section .caption b{color:#54c7ff}.cmp .panel img,.cmp .panel video{max-width:100%;max-height:52vh;display:block}.cmp .panel audio{width:100%}.cmp .panel pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:52vh;overflow:auto;margin:0}.cmp .panel .actions{padding:8px 0 0;flex-wrap:wrap}.cmp [data-compare-error]{color:#ff9b9b;margin:8px 0 0}.cmp [data-compare-error]:empty{display:none}.sources i{color:#c9d6df;font-style:normal}.narration{color:#9fd8b8;margin-top:4px;overflow-wrap:anywhere}.phrases{display:flex;flex-wrap:wrap;gap:3px;align-items:center;margin-top:4px;font-size:11px;color:#8fb6cf}.phrases button{padding:0 5px;font-size:11px;line-height:16px;border-radius:3px}.phrases button[data-playing]{border-color:#9fd8b8;color:#101a15;background:#9fd8b8}.repace{display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin-top:5px;font-size:11px;color:#9fd8b8}.repace input{width:52px;padding:2px 4px;font-size:11px}.repace button{padding:1px 6px;font-size:11px;border-radius:3px}.repace-note{color:#8fb6cf;margin-top:3px}.versions{display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin-top:5px;font-size:11px;color:#8fb6cf}.versions button{padding:1px 6px;font-size:11px;border-radius:3px}.versions button[data-current]{border-color:#54c7ff;color:#54c7ff}</style>
+<style>*{box-sizing:border-box}html,body{margin:0;height:100%;overflow:hidden;background:#17181b;color:#eee;font:13px system-ui}header{padding:8px;background:#24262b;display:flex;gap:8px;align-items:center}header select,header input{color:#eee;background:#17191d;color-scheme:dark}header input::placeholder{color:#aab2bf}button,select,textarea,header input{font:inherit;color:#eee;background:#17191d;border:1px solid #4b505a;border-radius:4px;padding:6px}button{cursor:pointer}.viewport{height:calc(100% - 48px);position:relative;overflow:hidden;background:#17181b}.world{position:absolute;inset:0;touch-action:none;transform-origin:0 0}.edges{position:absolute;left:0;top:0;width:1px;height:1px;overflow:visible;pointer-events:none}.cards{position:absolute;inset:0;pointer-events:none}.cards .card{pointer-events:auto}.cards.probing .card,.card.dragging{pointer-events:none}.viewport{--card-width:250px}.card{position:absolute;width:var(--card-width);background:#272a30;border:1px solid #555;border-radius:6px;overflow:hidden;box-shadow:0 2px 6px #0006}.card.supplied-card :is(.selectors,[data-prompt],[data-generate]){display:none}.card.raised{border-color:#7b86a1;box-shadow:0 8px 24px #000c}.card.dragging,.card.dragging *{user-select:none!important}.card header{height:30px;padding:5px;cursor:grab;display:flex;gap:6px;align-items:center}.card header .title{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.card header .delete{margin-left:auto;color:#ff9b9b}.card main{padding:7px}.preview{aspect-ratio:4/3;contain:size;background:#111;display:flex;align-items:center;justify-content:center;overflow:auto}.preview pre{white-space:pre-wrap;overflow-wrap:anywhere;margin:0;padding:4px;font:inherit}.preview img,.preview video{max-width:100%;max-height:100%}.selectors{display:grid;grid-template-columns:1fr 1fr;gap:4px}.selectors select,textarea{width:100%;min-width:0}.selectors [data-field=method]{grid-column:1/-1;grid-row:2}textarea{height:58px;margin:6px 0;resize:vertical;overflow-x:hidden}.actions{display:flex;gap:5px}.card .actions{flex-wrap:wrap}.actions [data-edit-script]{order:1;flex-basis:100%}.edge{fill:none;stroke:#54c7ff;stroke-width:4;stroke-linecap:round;marker-end:url(#arrow);pointer-events:none}.edge-hit{fill:none;stroke:transparent;stroke-width:20;pointer-events:stroke}.meta{font-size:11px;color:#aab2bf}.error{color:#ff9b9b;font-size:11px;margin-top:4px}.protection{color:#ffd479;background:#3a3118;border:1px solid #6b5a25;border-radius:4px;font-size:11px;margin-top:5px;padding:5px 6px;overflow-wrap:anywhere}.notice{color:#ffd479;background:#3a3118;border:1px solid #6b5a25;border-radius:4px;font-size:11px;margin-top:5px;padding:5px 6px;overflow-wrap:anywhere}.banner{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);max-width:min(92vw,680px);z-index:10000;color:#ffe3a3;background:#3a3118;border:1px solid #7a6630;border-radius:6px;padding:9px 14px;font-size:13px;box-shadow:0 6px 20px #000a;overflow-wrap:anywhere}.sources{color:#8fb6cf;font-size:11px;margin-top:5px;overflow-wrap:anywhere}.used{color:#d9c58b;margin-top:4px;overflow-wrap:anywhere}.cmp{position:fixed;inset:0;background:#000c;display:flex;align-items:center;justify-content:center;z-index:9999}.cmp .panel{background:#24262b;border:1px solid #555;border-radius:8px;padding:12px;max-width:min(96vw,1100px);max-height:92vh;overflow:auto}.cmp .panel header{background:none;padding:0 0 8px}.cmp .panel header .title{font-weight:600}.cmp .panel .pane{display:flex;gap:12px}.cmp .panel .pane section{flex:1;min-width:0}.cmp .panel .pane section .caption{color:#aab2bf;font-size:11px;margin-bottom:5px;overflow-wrap:anywhere}.cmp .panel .pane section .caption b{color:#54c7ff}.cmp .panel img,.cmp .panel video{max-width:100%;max-height:52vh;display:block}.cmp .panel audio{width:100%}.cmp .panel pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:52vh;overflow:auto;margin:0}.cmp .panel .actions{padding:8px 0 0;flex-wrap:wrap}.cmp [data-compare-error]{color:#ff9b9b;margin:8px 0 0}.cmp [data-compare-error]:empty{display:none}.sources i{color:#c9d6df;font-style:normal}.narration{color:#9fd8b8;margin-top:4px;overflow-wrap:anywhere}.phrases{display:flex;flex-wrap:wrap;gap:3px;align-items:center;margin-top:4px;font-size:11px;color:#8fb6cf}.phrases button{padding:0 5px;font-size:11px;line-height:16px;border-radius:3px}.phrases button[data-playing]{border-color:#9fd8b8;color:#101a15;background:#9fd8b8}.repace{display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin-top:5px;font-size:11px;color:#9fd8b8}.repace input{width:52px;padding:2px 4px;font-size:11px}.repace button{padding:1px 6px;font-size:11px;border-radius:3px}.repace-note{color:#8fb6cf;margin-top:3px}.versions{display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin-top:5px;font-size:11px;color:#8fb6cf}.versions button{padding:1px 6px;font-size:11px;border-radius:3px}.versions button[data-current]{border-color:#54c7ff;color:#54c7ff}
+.cmp{margin:0;padding:0;border:0;width:100%;height:100%;max-width:none;max-height:none;color:inherit}.cmp::backdrop{background:transparent}
+.cmp .take-finder{margin:4px 0 12px}.cmp .take-finder summary{padding:5px 0;cursor:pointer;font-weight:600}.cmp .take-list{list-style:none;padding:0;margin:0;max-height:min(232px,30vh);overflow:auto;scrollbar-gutter:stable}.cmp .take-row{display:grid;grid-template-columns:10.5em minmax(0,1fr);gap:10px;align-items:start;padding:7px 3px;border-top:1px solid #3d424a}.cmp .take-row>button{justify-self:start;max-width:100%;overflow-wrap:anywhere}.cmp .take-row>button[aria-pressed=true]{border-color:#73c7ff;color:#8bd2ff}.cmp .take-scenes{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,225px),1fr));gap:8px 12px;min-width:0}.cmp .take-scene{display:flex;gap:8px;align-items:start;min-width:0;color:#eee;overflow-wrap:anywhere}.cmp .take-scene img{width:72px;height:44px;object-fit:contain;background:#111;flex:none}.cmp .take-scene small{display:block;color:#b5bfce}.cmp .controls select{max-width:49%;min-width:0}
+@media(max-width:540px){.cmp .take-row{grid-template-columns:1fr;gap:5px}.cmp .take-list{max-height:none;overflow:visible;scrollbar-gutter:auto}}
+</style>
 <header><b>◆ HyperMaker</b><label title="Leave blank to use the model configured in Codex. Only agent cards use these settings.">Codex model <input id="model" placeholder="Configured in Codex" size="19" spellcheck="false" autocomplete="off"></label><label>Effort <select id="effort"><option value="">Configured in Codex</option><option>none</option><option>low</option><option>medium</option><option>high</option><option>xhigh</option><option>max</option><option>ultra</option></select></label><button id="add-card">+ Card</button><button id="add-file" title="Bring a file of your own onto the canvas: a picture, a recording or a clip. It becomes a card you can link to a film, just like a card you made here.">+ File</button><input id="file-input" type="file" multiple hidden aria-label="Choose one or more files to bring onto the canvas"><button id="reset" hidden>Reset</button></header>
 <div class="viewport" id="viewport"><div class="world" id="world"><svg class="edges" aria-label="Node links"><defs><marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" markerUnits="userSpaceOnUse" orient="auto"><path d="M0,0 L12,6 L0,12 Z" fill="#54c7ff"/></marker></defs></svg><div class="cards" id="cards"></div></div></div>
 <script>
@@ -258,19 +262,33 @@ function comparePane(n, file, label, side, actions) {
     :`<pre data-text="${esc(u)}">loading...</pre>`;
   return `<section data-side="${side}"><div class="caption">${label}</div>${body}${actions}</section>`;
 }
-function compare(n, id) {
+function compare(n, id, opener) {
   if (!n || !n.artifact) return;
   const kept = (n.versions || []).filter(v => v.file);
   if (!kept.length) return;
   // Newest first: the version someone just replaced is the one they most likely want
   // next to the result that replaced it.
   const options = [...kept].reverse();
+  const current = { id: 'card', file: n.artifact, film: n.film, sources: n.sources };
+  const takes = [current, ...options.slice().sort((a, b) => Number(badge(b.file) || 0) - Number(badge(a.file) || 0))];
+  const versionName = file => badge(file) ? 'v' + badge(file) : shown(file);
+  const withScenes = n.type === 'video' && takes.some(t => t.film?.scenes?.length);
+  // Use the frozen image in the film's own directory, not the preview of the
+  // live picture card. Two versions can have the same filename and different pixels.
+  const sceneSummary = take => (take.film?.scenes || []).map((scene, i) => {
+    const source = (take.sources || []).find(s => s.type === 'image' && s.id === scene.from?.id && s.artifact === scene.from?.artifact);
+    const picture = shown(scene.from?.artifact);
+    const thumbnail = source?.file ? `<img alt="" width="72" height="44" src="${esc(url({workdir:n.workdir,artifact:source.file}))}">` : '';
+    return `<div class="take-scene">${thumbnail}<span><small>Scene ${i + 1}${picture ? ` · ${esc(picture)}` : ''}</small>${scene.caption ? esc(scene.caption) : ''}</span></div>`;
+  }).join('');
+  const finder = withScenes ? `<details open class="take-finder"><summary>Find a take by picture or caption</summary><ul class="take-list">${takes.map(take => `<li class="take-row"><button data-preview-take="${esc(take.id)}" aria-pressed="false">Preview ${esc(versionName(take.file))}${take.id === 'card' ? ' (current)' : ''}</button><div class="take-scenes">${sceneSummary(take) || '<span class="meta">No scene details saved. Play this take to check it.</span>'}</div></li>`).join('')}</ul></details>` : '';
   const label = v => (badge(v.file) ? 'v' + badge(v.file) : shown(v.file) || 'kept') + (typeof v.prompt === 'string' ? ' — ' + (oneLine(v.prompt) || '(no prompt)') : '');
-  const pick = (side, chosen) => `<select data-pick="${side}">${side === 'left' ? `<option value="card">${esc('the card: ' + (badge(n.artifact) ? 'v' + badge(n.artifact) : shown(n.artifact)))}</option>` : ''}${options.map(v => `<option value="${v.id}"${v.id === chosen ? ' selected' : ''}>${esc(label(v))}</option>`).join('')}</select>`;
-  const overlay = document.createElement('div');
+  const pick = (side, chosen) => `<select data-pick="${side}" aria-label="${side === 'left' ? 'Left take' : 'Right take'}">${side === 'left' ? `<option value="card">${esc('the card: ' + (badge(n.artifact) ? 'v' + badge(n.artifact) : shown(n.artifact)))}</option>` : ''}${options.map(v => `<option value="${v.id}"${v.id === chosen ? ' selected' : ''}>${esc(label(v))}</option>`).join('')}</select>`;
+  const overlay = document.createElement('dialog');
   overlay.className = 'cmp';
+  overlay.setAttribute('aria-labelledby', 'compare-title');
   overlay.dataset.compareFor = id;
-  overlay.innerHTML = `<div class="panel"><header><span class="title">${esc(shown(n.artifact))} — two takes</span></header><div class="controls" style="display:flex;gap:8px;justify-content:space-between;margin-bottom:8px">${pick('left', null)}${pick('right', options[0].id)}</div><div class="pane"></div><p data-compare-error role="alert"></p><div class="actions"><button data-close>Close</button></div></div>`;
+  overlay.innerHTML = `<div class="panel"><header><span class="title" id="compare-title">${esc(shown(n.artifact))} — compare takes</span></header>${finder}<div class="controls" style="display:flex;gap:8px;justify-content:space-between;margin-bottom:8px">${pick('left', null)}${pick('right', options[0].id)}</div><div class="pane"></div><p data-compare-error role="alert"></p><div class="actions"><button data-close>Close</button></div></div>`;
   const pane = overlay.querySelector('.pane');
   const fileOf = value => value === 'card' ? n.artifact : (kept.find(v => String(v.id) === String(value)) || {}).file;
   const promptOf = value => value === 'card' ? n.promptUsed : (kept.find(v => String(v.id) === String(value)) || {}).prompt;
@@ -279,7 +297,6 @@ function compare(n, id) {
   // named the prompt its take was asked for and nothing about what it was made from, so
   // a film re-rendered after its poster changed read as the same film twice. This is the
   // take's own frozen record, read from the same node record as its bytes.
-  const versionName = file => badge(file) ? 'v' + badge(file) : shown(file);
   const caption = value => {
     const who = value === 'card' ? `Current on the card · ${versionName(fileOf(value))}` : `kept ${versionName(fileOf(value))}`;
     const asked = promptOf(value);
@@ -291,19 +308,42 @@ function compare(n, id) {
     const name = esc(versionName(fileOf(value)));
     return `<div class="actions"><button data-compare-download>Download ${name}</button>${value === 'card' ? '' : ` <button data-use-version>Use ${name} on canvas</button>`}</div>`;
   };
-  const paint = () => {
-    pane.innerHTML = ['left', 'right'].map(side => {
-      const value = overlay.querySelector(`[data-pick="${side}"]`).value;
-      return comparePane(n, fileOf(value), caption(value), side, paneActions(value));
-    }).join('');
+  const picker = side => overlay.querySelector(`[data-pick="${side}"]`);
+  const paint = (sides = ['left', 'right']) => {
+    const rendered = [];
+    for (const side of sides) {
+      const value = picker(side).value;
+      const html = comparePane(n, fileOf(value), caption(value), side, paneActions(value));
+      const previous = pane.querySelector(`[data-side="${side}"]`);
+      if (previous) previous.outerHTML = html;
+      else pane.insertAdjacentHTML('beforeend', html);
+      rendered.push(pane.querySelector(`[data-side="${side}"]`));
+    }
+    for (const button of overlay.querySelectorAll('[data-preview-take]')) {
+      const value = button.dataset.previewTake;
+      button.setAttribute('aria-pressed', String(value === picker(value === 'card' ? 'left' : 'right').value));
+    }
     // Text panes fetch their own bytes; a failed fetch says so instead of spinning.
-    for (const pre of pane.querySelectorAll('[data-text]')) {
+    for (const pre of rendered.flatMap(section => [...section.querySelectorAll('[data-text]')])) {
       fetch(pre.dataset.text).then(r => r.ok ? r.text() : Promise.reject(new Error(`HTTP ${r.status}`)))
         .then(t => { pre.textContent = t; }).catch(e => { pre.textContent = `could not read this version: ${e.message}`; });
     }
   };
+  const close = () => {
+    overlay.close();
+    overlay.remove();
+    opener?.focus({preventScroll:true});
+  };
   overlay.addEventListener('click', async e => {
-    if (e.target.closest('[data-close]') || e.target === overlay) { overlay.remove(); return; }
+    if (e.target.closest('[data-close]') || e.target === overlay) { close(); return; }
+    const preview = e.target.closest('[data-preview-take]');
+    if (preview) {
+      const value = preview.dataset.previewTake;
+      const side = value === 'card' ? 'left' : 'right';
+      if (picker(side).value !== value) { picker(side).value = value; paint([side]); }
+      if (window.matchMedia('(max-width:540px)').matches) pane.querySelector(`[data-side="${side}"]`).scrollIntoView({block:'nearest'});
+      return;
+    }
     const download = e.target.closest('[data-compare-download]'), use = e.target.closest('[data-use-version]');
     if (!download && !use) return;
     const side = (download || use).closest('[data-side]').dataset.side;
@@ -311,11 +351,11 @@ function compare(n, id) {
     if (download) { downloadArtifact(n, fileOf(value)); return; }
     const error = overlay.querySelector('[data-compare-error]');
     error.textContent = '';
-    const controls = [...overlay.querySelectorAll('[data-use-version], [data-pick]')];
+    const controls = [...overlay.querySelectorAll('[data-use-version], [data-pick], [data-preview-take]')];
     controls.forEach(control => { control.disabled = true; });
     try {
       await api('/api/restore', {id, version: Number(value)});
-      overlay.remove();
+      close();
       raise(id);
       $(`.card[data-id="${id}"] .preview video`)?.focus({preventScroll:true});
     } catch (err) {
@@ -323,13 +363,12 @@ function compare(n, id) {
       controls.forEach(control => { control.disabled = false; });
     }
   });
-  overlay.addEventListener('change', e => { if (e.target.closest('[data-pick]')) paint(); });
-  // Escape closes, because this covers the canvas and a person may have opened it by
-  // accident. The listener is on the overlay itself so it cannot outlive it.
-  overlay.addEventListener('keydown', e => { if (e.key === 'Escape') overlay.remove(); });
-  document.body.append(overlay);
+  overlay.addEventListener('change', e => { if (e.target.matches('[data-pick]')) paint([e.target.dataset.pick]); });
+  overlay.addEventListener('cancel', e => { e.preventDefault(); close(); });
   paint();
-  overlay.querySelector('[data-close]').focus();
+  document.body.append(overlay);
+  overlay.showModal();
+  (overlay.querySelector('summary') || overlay.querySelector('[data-close]')).focus({preventScroll:true});
 }
 // Play one phrase of the take the card is showing, and stop at its end. The player is the
 // ordinary preview element, so the sound is the same bytes a person hears with play; all
@@ -523,7 +562,7 @@ function bind(e,n){
   // Delegated for the same reason the version buttons are: the phrase chips are re-rendered
   // whenever the card syncs, so binding each one would leave listeners on detached nodes.
   e.querySelector('.narration-slot').addEventListener('click',x=>{const b=x.target.closest('[data-phrase]');if(!b)return;raise(n.id);playPhrase(e,nodeAt(n.id),+b.dataset.phrase)});
-  e.querySelector('.versions-slot').onclick=x=>{const c=x.target.closest('[data-compare]');if(c){compare(nodeAt(n.id),n.id);return}const b=x.target.closest('[data-version]');if(!b)return;raise(n.id);safe(()=>api('/api/restore',{id:n.id,version:+b.dataset.version}))};
+  e.querySelector('.versions-slot').onclick=x=>{const c=x.target.closest('[data-compare]');if(c){compare(nodeAt(n.id),n.id,c);return}const b=x.target.closest('[data-version]');if(!b)return;raise(n.id);safe(()=>api('/api/restore',{id:n.id,version:+b.dataset.version}))};
   // Delegated like the version buttons, because the control is re-rendered on every sync. A
   // pace that is not a number is not sent: the server would refuse it with a sentence about a
   // positive number of words per minute, and there is nothing a person learns from that which
