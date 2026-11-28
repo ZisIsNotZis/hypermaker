@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased — two-act drafting and configured Codex models
+
+The canvas no longer overrides your Codex model or effort unless you fill those settings in. A two-act draft failure distinguishes route discovery from a model/input rejection when the CLI provides that evidence, without logging raw provider diagnostics. **Write script locally** lets you keep the picture links and continue without a model.
+
+The new `text/two-act` method takes exactly two linked PNG or JPEG cards in act order plus a short intent, attaches their frozen copies to the configured Codex CLI request, and publishes two short English voiceover lines. **Edit script locally** switches to the local `plain` method with the draft in the prompt box, so the next Make keeps a new version without another model call. The existing narration and first cut make the two scenes, and a picture swap re-cuts only the film. The [verification record](docs/evidence/two-act-script.md) separates the simulated canvas run from the real CLI attempt that did not complete workspace discovery.
+
 ## Unreleased — the narration is understood when the machine has a speech engine, measured from a published film's own track, 2026-11-28
 
 **The open defect was that a listener could not follow the words.** A recognizer transcribed this

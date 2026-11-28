@@ -824,6 +824,11 @@ const server = createServer(async (req, res) => { try {
       id: Number(id), type: nodes[id].type, artifact: nodes[id].artifact ?? null,
       ...(nodes[id].narration?.phrases ? { phrases: nodes[id].narration.phrases } : {})
     }));
+    const inputError = chosen?.imageInputs?.(givenSources, n.prompt);
+    if (inputError) {
+      releaseClaim(claim);
+      return json(res, 409, { ...view(), error: inputError });
+    }
     // Ids, not positions: restoring a version replaces an entry, so counting would
     // hand out an id that is already in the list.
     const ordinal = Math.max(0, ...(n.versions || []).map(v => Number(v.id) || 0)) + 1;
@@ -965,7 +970,7 @@ const server = createServer(async (req, res) => { try {
           wpm: run.wpm ?? null,
           assembledPrompt: assemblePrompt({ node: run, workspace: { workdir: ws, nodes: promptNodes }, context: {} })
         })
-      : runCodex({ node: run, workspace: { workdir: ws, nodes: promptNodes, projectCwd: root }, model: b.model, effort: b.effort, useGhPrefix: b.useGhPrefix, attemptDir });
+      : runCodex({ node: run, workspace: { workdir: ws, nodes: promptNodes, projectCwd: root }, model: b.model, effort: b.effort, useGhPrefix: b.useGhPrefix, attemptDir, method: chosen });
     claim.agent = agent;
     // Stop pressed while the card was still being prepared: there was no process
     // yet, so the claim remembers the press and the run is stopped the moment it

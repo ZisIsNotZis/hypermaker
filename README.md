@@ -1,6 +1,6 @@
 **English** | [简体中文](README.zh-CN.md)
 
-> **Status: an ordinary creative session works, and is now what the tests follow (0.1.0, 2026-11-27).** You can make a film from canvas material, change the material, keep the take you approved, compare two takes, go back to one, and survive a failure, a Stop or a restart without losing the one you liked. `npm test` passes **225/225** with a usable Chromium and a speech engine installed (engine tests that need one skip, saying so, on a machine without it), and a blank canvas can make its first playable film with no model and no account at all (see **The first film needs no account**); [Verification limits](#verification-limits) separates what is real from what a fixture stands in for, says what the offline voice was **measured** to do and that a *natural* voice is still unproven, and that nothing here has been judged on *taste*. A listening sheet is kept as the listener leaves it: an answer on a line, a note that they heard nothing but machine noise, or both. Notes are kept as written and never scored - only the transcript decides what was heard, and the score says which fraction of which words it is.
+> **Status: an ordinary creative session works, and is now what the tests follow (0.1.0, 2026-11-27).** You can make a film from canvas material, change the material, keep the take you approved, compare two takes, go back to one, and survive a failure, a Stop or a restart without losing the one you liked. `npm test` passes **229/229** with a usable Chromium and a speech engine installed (engine tests that need one skip, saying so, on a machine without it), and a blank canvas can make its first playable film with no model and no account at all (see **The first film needs no account**); [Verification limits](#verification-limits) separates what is real from what a fixture stands in for, says what the offline voice was **measured** to do and that a *natural* voice is still unproven, and that nothing here has been judged on *taste*. A listening sheet is kept as the listener leaves it: an answer on a line, a note that they heard nothing but machine noise, or both. Notes are kept as written and never scored - only the transcript decides what was heard, and the score says which fraction of which words it is.
 
 <div align="center">
   <img src="docs/logo.svg" alt="Hypermaker logo" width="112" />
@@ -233,6 +233,16 @@ samples, tracking the source WAV at ~0.9997 correlation.
 - **The run lifecycle** is covered by `test/lifecycle.test.mjs` and `test/stop-ui.test.mjs`: Stop kills the whole process group (checked against an agent that leaves a writing grandchild), a failure or a Stop is persisted and survives a restart, a run cut off with the server is reported as interrupted, and a missing CLI produces an instruction naming `CODEX_BIN`. Each of those was verified by breaking the behaviour and watching the test go red.
 - `test/fake-codex.mjs` and `test/fake-agent.mjs` reproduce the contract (final artifact JSON, exit codes, error events), not the agent's judgment. Stop and a deliberately rejected model were additionally exercised through the real CLI; the rejected card carried the CLI's own message.
 
+## Write a two-act film from your pictures
+
+Use **+ File** to bring in two PNG or JPEG files. Create a text card, select `two-act`, and link the image cards to it in playback order. Write a short intent and press **Generate**. This sends frozen copies of the two images and your brief to your configured Codex CLI route; the result is one line of English voiceover per act. Choose **Edit script locally** to bring the draft into the text box, edit the two lines, and press **Make**. The draft is kept as a version and this edit does not call a model.
+
+Link the resulting text to a `readaloud` card and press **Make**. Link the voice and both pictures, in the same picture order, to a `firstcut` video card and press **Make** to play the result. To swap a scene later, drop the new picture onto its image card and press **Make** on the film again. This doesn't require re-linking the graph, drafting again or re-reading the narration.
+
+Leave **Codex model** blank and **Effort** at **Configured in Codex** to use the CLI's defaults. Launch Hypermaker from the environment where you normally run Codex (`CODEX_BIN` can point to the installed binary). If you normally pass a model explicitly, enter its exact ID in **Codex model**; use one your configured route supports for images. These settings apply only to agent methods.
+
+On this host the real image request hit route discovery and model-refresh errors and produced no script; the full canvas workflow was verified separately against a simulated CLI. If drafting fails, **Write script locally** switches to `plain` so you can replace your brief with two script lines and press **Make**. You can also start with `plain`. Neither path calls a model. See [evidence and rerun instructions](docs/evidence/two-act-script.md).
+
 ## The mental model
 
 | Thing | Meaning |
@@ -244,8 +254,8 @@ samples, tracking the source WAV at ~0.9997 correlation.
 | Artifact | The actual output shown in the card preview |
 | `workspace.yml` | The whole graph: position, inputs, type, method, prompt, quality, script, artifact per integer node id |
 | `AGENTS.md` | Node-local memory for future generations in that node; empty when nothing is worth remembering |
-| `codex.jsonl` | Raw Codex stdout/stderr for the run, kept for inspection only |
-| `codex-command.json` | The exact CLI invocation for the last run: model, flags, timestamp (the prompt itself is in `prompt.txt`) |
+| `codex.jsonl` | Codex stdout/stderr for general agent methods; `two-act` stores only a stage/outcome, elapsed-time and usage summary, not raw provider output |
+| `codex-command.json` | The CLI invocation for general methods; `two-act` records only the route kind, requested model/effort, image count and timestamp (the prompt itself is in `prompt.txt`) |
 | `versions/` | Every take that is still reachable: `v2-film.mp4` plus `v2-prompt.txt` and `v2-…` script, the frozen material copies, and nothing else |
 | `attempts/` | Working directories of recent runs, one per start. A successful run's is dropped; a failed or stopped one is kept (five at most) so you can see what it produced |
 
@@ -300,7 +310,7 @@ HYPERMAKER_CHROME=/path/to/chrome npm test
 On WSL the checkout may live on a Windows drive (`/mnt/d/…`), but the suite's scratch space must not: Chromium cannot create its profile there, so if `TMPDIR` points into the checkout every browser case fails to launch with `Target page, context or browser has been closed` — measured as 137 pass / 39 fail / 1 skip — which reads like broken code. Point it at a Linux filesystem instead:
 
 ```bash
-TMPDIR=$(mktemp -d /var/tmp/hypermaker-XXXX) npm test     # measured: 225/225 with a browser and espeak-ng
+TMPDIR=$(mktemp -d /var/tmp/hypermaker-XXXX) npm test     # measured: 229/229 with a browser and espeak-ng
 ```
 
 Two details make that one line copyable. The directory is created by the command, because `TMPDIR` naming a path that does not exist fails before any test starts. And the template is given explicitly, because bare `mktemp -d` honours an existing `TMPDIR` — if yours already points at the Windows mount, the new directory would be created there and every browser case would still fail. To keep one directory across runs instead: `mkdir -p /var/tmp/hypermaker-tmp` once, then `TMPDIR=/var/tmp/hypermaker-tmp npm test`.

@@ -8,10 +8,8 @@ import { assemblePrompt } from "../server/prompt.mjs";
 
 test("registry maps MIME extensions and exposes only filesystem methods", () => {
   assert.equal(typeForFile("picture.PNG"), "image");
-  // `plain` writes the person's own prompt; `llm` asks a model to write one. Both are filesystem
-  // methods, and the first is what a new text card starts on because the first step of a chain is
-  // usually a sentence somebody already has.
-  assert.deepEqual(methodsFor("text").map(x => x.id).sort(), ["llm", "plain"]);
+  // Text starts on the offline, user-authored method; both model paths are opt-in.
+  assert.deepEqual(methodsFor("text").map(x => x.id).sort(), ["llm", "plain", "two-act"]);
   // Three methods work with nothing installed: `readaloud` and `narration` both speak text with
   // the voice that ships in `voice/` (`readaloud` runs here, `narration` hands the job to an
   // agent), and `synth` makes tones. The two remaining speech methods name binaries

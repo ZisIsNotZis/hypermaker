@@ -55,6 +55,7 @@ test("the adapter speaks the codex exec contract the real CLI accepts", async ()
     `a real codex CLI is invoked as \`codex exec --json ...\`, got ${JSON.stringify(argv.slice(0, 4))}`);
   assert.ok(argv.includes("--ephemeral") && argv.includes("--skip-git-repo-check"), "the flags the real CLI documents are passed");
   assert.equal(argv[argv.indexOf("--model") + 1], "gpt-5.6-luna");
+  assert.equal(argv[argv.indexOf("-c") + 1], "model_reasoning_effort=low");
   // The prompt is the CLI's last argument in reality; it is excluded from the record
   // on purpose (it is long and lives in prompt.txt), so the assembled instruction is
   // checked where it is actually stored.

@@ -32,7 +32,24 @@ const snapshot = dir => {
   }
   return prints;
 };
-const modelName = (model, gh) => `${gh ? "gh/" : ""}${String(model || "gpt-5.6-luna").replace(/^gh\//, "")}`;
+// Blank canvas settings must not override the model or effort resolved by Codex.
+const modelOverride = (model, gh) => {
+  const name = typeof model === "string" ? model.trim() : "";
+  return name && gh ? `gh/${name.replace(/^gh\//, "")}` : name;
+};
+const draftMessages = {
+  discovery: "Codex could not discover its configured route or refresh its models. Changing the canvas model does not repair that connection. Continue locally, or retry after the configured CLI route works.",
+  access: "The configured Codex route rejected the request for access or quota. Use a model your existing route permits, or continue locally.",
+  model: "Codex rejected the model or its image input. Use a vision model supported by your configured route, or continue locally.",
+  timeout: "Codex did not return a script within 110 seconds. Continue locally, or check the configured CLI before retrying.",
+  failed: "Codex did not return a script. Check the configured CLI from the terminal, or continue locally."
+};
+const draftIssue = text => {
+  if (/workspace routing discovery|failed to refresh available models/i.test(text)) return "discovery";
+  if (/unauthori[sz]ed|forbidden|insufficient.quota|usage limit|quota exceeded/i.test(text)) return "access";
+  if (/model_not_found|unsupported_model|model.{0,100}(?:not supported|does not exist|not found)|(?:image|vision).{0,100}(?:not supported|unsupported)|does not support.{0,70}(?:image|vision)/i.test(text)) return "model";
+  return null;
+};
 // The real CLI exits non-zero and prints why on its event stream. "Codex exited
 // with code 1" tells a person nothing they can act on, so the last message the
 // CLI itself called an error is carried into the card as the reason.
@@ -94,24 +111,38 @@ const finalJson = file => {
 // dropped in, the versions they kept. Keeping the two apart is what makes "throw
 // away the attempt" a single delete of a directory the harness created, instead of
 // a guess about which files in a shared folder are somebody else's.
-export function generate({ node, workspace, context = {}, model, effort, useGhPrefix, onRaw, attemptDir }) {
+export function generate({ node, workspace, context = {}, model, effort, useGhPrefix, onRaw, attemptDir, method }) {
   const nodeDir = join(workspace.workdir, String(node.id)), workDir = attemptDir || nodeDir;
   mkdirSync(nodeDir, { recursive: true }); mkdirSync(workDir, { recursive: true });
-  const prompt = assemblePrompt({ node, workspace, context });
+  const imageDraft = typeof method?.imageReply === "function";
+  const images = imageDraft ? node.inputs.map(id => workspace.nodes[id]?.frozen) : [];
+  // A two-act draft is only a reply: it needs neither the repository instructions nor a writable
+  // workspace, and attaching the frozen pictures here keeps their act order without copying them
+  // into a prompt. Every other agent method keeps its existing prompt and permissions.
+  const prompt = imageDraft ? `${method.guide}\n\nCreative intent:\n${node.prompt}` : assemblePrompt({ node, workspace, context });
   // The record of how a card was made - the assembled prompt, the CLI's event stream,
   // its final message - belongs with the card and outlives the run, because it is how
   // a person checks what they were actually charged for. The agent's *output* is
   // different: it is bulky, it is scratch once published, and it lives in workDir.
-  const log = join(nodeDir, "codex.jsonl"), final = join(nodeDir, "codex-final.json"), devLog = join(workspace.projectCwd || process.cwd(), "dev.log");
+  const log = join(nodeDir, "codex.jsonl"), final = imageDraft ? join(workDir, "reply.txt") : join(nodeDir, "codex-final.json"), devLog = join(workspace.projectCwd || process.cwd(), "dev.log");
   // Fingerprinted before the harness writes prompt.txt and the log, so this describes
   // the directory as the previous run left it. Comparing against it afterwards is how
   // the check below tells "this run wrote it" from "it was already here".
   const before = snapshot(workDir);
   const configured = process.env.CODEX_BIN || "codex";
-    const command = configured.endsWith(".mjs") ? process.execPath : configured;
-    const commandArgs = configured.endsWith(".mjs") ? [configured, "--output-last-message", final] : [];
-  const args = configured.endsWith(".mjs") ? commandArgs : ["exec", "--json", "--output-last-message", final, "--model", modelName(model, useGhPrefix), "-c", `model_reasoning_effort=${effort || "medium"}`, "--sandbox", "danger-full-access", "--skip-git-repo-check", "--ephemeral", prompt];
-  let child, cancelled = false;
+  const fixture = configured.endsWith(".mjs");
+  const command = fixture ? process.execPath : configured;
+  const imageArgs = images.flatMap(file => ["--image", file]);
+  // Only what the person chose is sent. An empty choice sends neither flag, so Codex
+  // resolves its own configured model and effort instead of getting an app default.
+  const requestedModel = modelOverride(model, useGhPrefix);
+  const requestedEffort = typeof effort === "string" ? effort.trim() : "";
+  const cliArgs = ["exec", "--json", "--output-last-message", final,
+    ...(requestedModel ? ["--model", requestedModel] : []),
+    ...(requestedEffort ? ["-c", `model_reasoning_effort=${requestedEffort}`] : []),
+    "--sandbox", imageDraft ? "read-only" : "danger-full-access", "--skip-git-repo-check", "--ephemeral", ...imageArgs, ...(imageDraft ? ["--"] : []), prompt];
+  const args = !fixture ? cliArgs : imageDraft ? [configured, ...cliArgs] : [configured, "--output-last-message", final];
+  let child, cancelled = false, launchFailed = false;
   const promise = new Promise((done, fail) => {
     // detached makes the child a process-group leader, so a cancel can signal the
     // whole tree the agent spawned (shell, node, renderer), not only the CLI.
@@ -130,24 +161,63 @@ export function generate({ node, workspace, context = {}, model, effort, useGhPr
     // follow it, and the guard in `runs.mjs` puts back anything it changes - but the
     // variable handed it every name in the directory on a platter, so it is gone.
     writeFileSync(join(workDir, "prompt.txt"), prompt, "utf8");
-    child = spawn(command, args, { cwd: workspace.projectCwd || process.cwd(), env: { ...process.env, HYPERMAKER_NODE_DIR: workDir, HYPERMAKER_NODE_TYPE: node.type, HYPERMAKER_NODE_ID: String(node.id) }, stdio: ["ignore", "pipe", "pipe"], detached: true });
+    if (imageDraft && (images.length !== 2 || images.some(file => !file))) return fail(new Error("The two linked pictures could not be prepared. No model request was started."));
+    const startedAt = Date.now();
+    child = spawn(command, args, { cwd: imageDraft ? workDir : (workspace.projectCwd || process.cwd()), env: { ...process.env, HYPERMAKER_NODE_DIR: workDir, HYPERMAKER_NODE_TYPE: node.type, HYPERMAKER_NODE_ID: String(node.id) }, stdio: ["ignore", "pipe", "pipe"], detached: true });
     // What was actually invoked, kept with the card and not with the attempt: the
     // attempt directory is scratch and goes away, but "which model, which flags, on
     // what prompt" is the record a person needs when a result is not what they
     // expected. The prompt is the last argument, so it is the one thing kept out of
     // this file - prompt.txt holds it in full.
-    writeFileSync(join(nodeDir, "codex-command.json"), JSON.stringify({ command, args: args.slice(0, -1), at: new Date().toISOString() }, null, 1), "utf8");
+    const at = new Date(startedAt).toISOString();
+    const invocation = imageDraft
+      ? { route: fixture ? "simulated-cli" : "configured-codex-cli", model: requestedModel || null, effort: requestedEffort || null, imageCount: images.length, at }
+      : { command, args: args.slice(0, -1), at };
+    writeFileSync(join(nodeDir, "codex-command.json"), JSON.stringify(invocation, null, 1), "utf8");
     const commandLine = `${command} ${args.map(x => JSON.stringify(x)).join(" ")}`;
     const commandLog = `[${new Date().toISOString()}] command: ${commandLine}\n${prompt}\n`;
-    appendFileSync(devLog, commandLog); process.stdout.write(commandLog);
+    if (!imageDraft) { appendFileSync(devLog, commandLog); process.stdout.write(commandLog); }
     // The last thing the CLI said on stderr, kept in memory as well as on disk. A run that
     // dies before writing its final message still has a reason - the renderer's `this voice has
     // no way to say: ¥500` arrives exactly this way - and reading it back out of the log file
     // means guessing at the log's own format. This is the plain fact: the bytes that came out of
     // the process, in order.
-    let stderrTail = "";
+    let stderrTail = "", timedOut = false, discoveryIssue = false, failure = null, turnStarted = false, runMeter = null, pending = "";
+    let deadline, hardDeadline;
+    if (imageDraft) deadline = setTimeout(() => {
+      timedOut = true;
+      try { process.kill(-child.pid, "SIGTERM"); } catch {}
+      hardDeadline = setTimeout(() => { try { process.kill(-child.pid, "SIGKILL"); } catch {} }, 3000);
+      hardDeadline.unref();
+    }, 110_000);
+    deadline?.unref();
     const record = (stream, chunk) => {
       const raw = chunk.toString();
+      if (imageDraft) {
+        // Provider diagnostics may contain configuration or internal route details. Keep only
+        // the failure category and numeric turn usage, never the raw response or stderr.
+        if (stream === "stderr") {
+          stderrTail = (stderrTail + raw).slice(-4000);
+          discoveryIssue ||= draftIssue(stderrTail) === "discovery";
+        }
+        if (stream === "stdout") {
+          const lines = (pending + raw).split("\n");
+          pending = lines.pop().slice(-8192);
+          for (const line of lines) try {
+            const event = JSON.parse(line);
+            if (event.type === "turn.started") turnStarted = true;
+            if (event.type === "error" || event.type === "turn.failed") {
+              const issue = draftIssue(event.error?.message || event.message || "");
+              discoveryIssue ||= issue === "discovery";
+              if (issue && issue !== "discovery") failure = issue;
+            }
+            if (event.type === "turn.completed" && event.usage) runMeter = Object.fromEntries(
+              Object.entries(event.usage).filter(([key, count]) => /^(input|cached_input|output|reasoning_output)_tokens$/.test(key) && Number.isSafeInteger(count))
+            );
+          } catch {}
+        }
+        return;
+      }
       if (stream === "stderr") stderrTail = (stderrTail + raw).slice(-4000);
       appendFileSync(log, raw);
       const line = `[${new Date().toISOString()}] ${stream}: ${raw}`;
@@ -158,10 +228,40 @@ export function generate({ node, workspace, context = {}, model, effort, useGhPr
     child.stdout.on("data", chunk => record("stdout", chunk)); child.stderr.on("data", chunk => record("stderr", chunk));
     // A missing or unexecutable CLI is the most likely first-run problem, and a
     // bare `spawn codex ENOENT` is not something a person can act on.
-    child.on("error", error => fail(error.code === "ENOENT"
-      ? new Error(`Cannot run the Codex CLI (${command}): it is not installed or not on PATH. Install Codex, or set CODEX_BIN to its path.`)
-      : error));
+    child.on("error", error => {
+      launchFailed = true;
+      if (error.code === "ENOENT") return fail(new Error(`Cannot run the Codex CLI${imageDraft ? "" : ` (${command})`}: it is not installed or not on PATH. Install Codex, or set CODEX_BIN to its path.`));
+      return fail(imageDraft ? new Error("The configured Codex CLI could not be started. Check its availability, or continue locally.") : error);
+    });
     child.on("close", code => {
+      clearTimeout(deadline);
+      clearTimeout(hardDeadline);
+      if (imageDraft) {
+        // One receipt per run, written on every path out: a person reading the card later
+        // needs to know how far the run got, and "no script" alone does not say why.
+        const receipt = result => appendFileSync(log, JSON.stringify({ type: "two-act.run", route: invocation.route, elapsedMs: Date.now() - startedAt, exit: code, outcome: result, cancelled, timedOut, discoveryIssue, turnStarted, usage: runMeter }) + "\n", "utf8");
+        if (launchFailed) { receipt("cli-start"); return; } // The error handler already explained the setup problem.
+        if (cancelled) { receipt("cancelled"); return fail(new Error("Run stopped by the user")); }
+        const outcome = timedOut ? (discoveryIssue ? "discovery" : "timeout")
+          : code !== 0 ? failure || (discoveryIssue ? "discovery" : "failed")
+          : !existsSync(final) ? "empty-reply" : null;
+        if (outcome) {
+          receipt(outcome);
+          const why = draftMessages[outcome] || draftMessages.failed;
+          return fail(new Error(`${why} Nothing was published.`));
+        }
+        try {
+          const file = join(workDir, "script.txt");
+          writeFileSync(file, method.imageReply(readFileSync(final, "utf8")), "utf8");
+          const memory = join(nodeDir, "AGENTS.md");
+          if (!existsSync(memory)) writeFileSync(memory, "", "utf8");
+          receipt("drafted");
+          return done({ artifact: relative(nodeDir, file), script: null });
+        } catch (error) {
+          receipt("invalid-or-unreadable-reply");
+          return fail(error);
+        }
+      }
       if (cancelled) return fail(new Error("Run stopped by the user"));
       if (code !== 0) {
         // The node directory belongs to the agent, and a real one deleted the

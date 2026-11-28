@@ -8,6 +8,13 @@ tests and by a handful of real Codex CLI runs.
 
 ## Status
 
+**Drafting uses the configured CLI route (2026-11-28).** The canvas can send
+two linked pictures through Codex for a two-line draft. A simulation verified
+editing, playback and the fallback to local writing. The installed CLI's real
+image probe stopped during route discovery. The
+[two-act results](evidence/two-act-script.md) document both checks.
+
+
 **The optional speech engine improved transcription on the tested film (2026-11-28).** Both halves are measurements, taken from a published film's own audio track with the same recognizer, and the second half is still an open defect for anyone without an engine.
 
 The walk that proves it: `test/story-engine-voice.mjs` starts from a blank workspace, brings in two pictures with **+ File**, types a four-line two-act story, narrates it at 150 words a minute, drags both pictures and the voice onto a film card, and presses Make. The published MP4 is then decoded and **its own AAC track transcribed**: `espeak-ng (en-us) 1.52.0`, asked 150 words a minute, **reads 149.7**, and the recognizer heard **27 of 30 words (WER 0.100) with the verdict `understood`**. The same walk's narration in the built-in voice measures **WER 1.0, nothing heard**. The film also checks out as a film: h264/AAC, plays in the canvas, its track correlates 1.000 with the take it names, each act's frame scores 0.909 and 0.972 against its own picture (the other picture scores 0.507 and 0.547), and the worst caption is 13.3 characters a second where 20 is comfortable.
@@ -130,9 +137,11 @@ Two honest gaps a first-time user will meet:
 - `vendor/` is a submodule pair. Without `--recurse-submodules` the
   `.agents/skills` symlinks dangle, so the agent loses the Remotion and
   HyperFrames skill knowledge. The canvas still works; media quality suffers.
-- The default model id in the header (`gpt-5.6-luna`) is what this machine's
-  account accepts. A different account may need a different id, and the app
-  will say so on the card rather than fail silently.
+- With the model field blank and effort set to **Configured in Codex**, the
+  CLI resolves both settings. The two-picture drafting path needs a working
+  vision route. **Write script locally** preserves the linked pictures and
+  lets you continue with `plain`, `readaloud` and `firstcut`. See the
+  [route and fallback walkthrough](evidence/two-act-script.md).
 
 ## Evidence
 

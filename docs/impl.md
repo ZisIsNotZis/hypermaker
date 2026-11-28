@@ -20,7 +20,7 @@ A method may declare `requires: [path]` — the local tool without which it cann
 
 ## Codex
 
-Spawn one process per node with repository-root cwd, a run directory of its own, model/effort, optional `gh/` prefix, and closed stdin. Pass `--json` for trajectory and `--output-last-message` for final result. Tee stdout/stderr unchanged to node `codex.jsonl` and timestamped `dev.log` plus terminal. Ignore trajectory for application logic; parse only final output file. Require artifact, allow optional script, enforce node-local paths, ensure type and `AGENTS.md`, then save workspace and emit completion. Runs never block HTTP or other nodes.
+For general agent methods, spawn one process per node with repository-root cwd, a run directory of its own, and closed stdin. Pass `--model` and the effort override only when explicitly provided; blank canvas controls omit both flags. A model ID is preserved as typed (including any provider prefix). Pass `--json` for trajectory and `--output-last-message` for final result. Tee stdout/stderr unchanged to node `codex.jsonl` and timestamped `dev.log` plus terminal. Ignore trajectory for application logic; parse only final output file. Require artifact, allow optional script, enforce node-local paths, ensure type and `AGENTS.md`, then save workspace and emit completion. Runs never block HTTP or other nodes.
 
 Each run is spawned `detached`, so it leads its own process group: an agent spawns shells and renderers, and Stop must end all of them. `generate()` returns a promise carrying `cancel()`, which signals the group with SIGTERM and escalates to SIGKILL after 3 s; a test whose agent leaves a continuously-writing grandchild is what catches a child-only kill. The real CLI reports why a turn failed as JSON events, so a non-zero exit quotes its last `error`/`turn.failed` message; a missing binary (ENOENT) becomes an instruction naming `CODEX_BIN` instead of a bare errno.
 
@@ -155,6 +155,12 @@ top of it, and the timeline still records the multiplier, so `bindTake` and ever
 untouched. `test/pace.test.mjs` pins all three: the pace reached, the multiplier still meaning
 what it meant, and a pace outside the range refused with the limit and the pace actually
 reached.
+
+## Drafting two acts from picture cards
+
+The `text/two-act` method owns input validation and validates the final text before publication. `/api/generate` refuses anything without a brief and exactly two linked PNG or JPEG cards before starting a process. The Codex adapter attaches the frozen files in link order via two `--image` arguments and terminates the option list with `--`. The installed Codex CLI keeps its configured authentication and model routing. Hypermaker does not open or copy that configuration. The app passes no model or effort flag unless explicitly overridden in the canvas; `codex-command.json` records null for inherited settings, not a guessed effective model. This method runs in the attempt directory in read-only sandbox mode, asks for no tool calls, and receives voiceover lines through `--output-last-message`. The adapter validates the reply and stages a `.txt` artifact on the same publish/version path as other methods. No raw CLI output is retained for this method: the usage/elapsed receipt is explicitly labeled `simulated-cli` or `configured-codex-cli` and provider diagnostics are reduced to categories. The two-act run has a 110-second deadline and the usual process-group Stop.
+
+**Write script locally** is available if drafting fails before a draft exists; it selects `plain` and leaves the brief in the editable box for replacement. **Edit script locally** puts the existing artifact's text in the same card's prompt and selects `plain`, without publishing anything on that click. The next Make publishes the edit and keeps the draft. The user should keep one line per act: `readaloud` maps lines to timed phrases, and `firstcut` aligns the two picture scenes to that single phrase boundary. Swapping a picture on the film's input card and pressing film Make does not call either upstream method.
 
 ## Reading a take again at another pace (`/api/repace`)
 

@@ -1,5 +1,9 @@
 # Evidence kept outside the tests
 
+## `two-act-script.md`
+
+[Two pictures → editable script → two-act film](two-act-script.md) keeps two results separate: the configured Codex CLI reached a turn but did not complete workspace discovery, while a local fixture drove the complete canvas workflow through script edit, playback and picture swap. It links the replay command and records which files and media measurements prove each step.
+
 ## `voice-not-understood.md`
 
 An automatic recognizer transcribes the built-in voice's narration as **nothing at all** (zero
