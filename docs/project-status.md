@@ -158,6 +158,43 @@ Two honest gaps a first-time user will meet:
   is told which card is gone while the two-scene film keeps its bytes and its record). Without a browser the canvas cases skip and say which browser they looked for; one case that makes a directory
   read-only skips - naming the directory - on a filesystem that ignores `chmod` (WSL's
   DrvFs), so a skip there is an environment limit and not a pass.
+- **The receipt for the code in this round**: commit `be8a4857213f918c62d47c50e000bc2c7ee8109e`
+  (tree `f58d3d37`). `npm test` was run once, from a clean export of that commit, and exited **0**
+  with **192 tests, 192 pass, 0 fail, 0 cancelled, 0 skipped, 0 todo**. That is the tree those 192
+  passes describe.
+  **To re-walk it, use the one block in
+  [impl.md - Reproducing the receipt](impl.md#reproducing-the-receipt-for-a-round)**: it makes its own
+  directories, installs its own dependencies, and returns `npm test`'s exit status. This page
+  deliberately carries no second copy - the copy that used to be here assumed a scratch directory
+  that might not exist and ended in `echo`, so a reader could run it, watch it print a failure, and
+  still get exit 0.
+
+  Two runs, and they are not the same evidence, so they are not reported as one number:
+
+  | run | what it is | 192 tests |
+  | --- | --- | --- |
+  | **the receipt** | the suite against the exported commit `be8a485` | **192 pass, 0 skipped, 0 failed** |
+  | the block's trial | the documented block, pasted from a bare clone with no `node_modules`, after the fix below | **192 pass, 0 skipped, 0 failed**, exit 0 |
+
+  The trial's first result was **148 pass and 44 skipped**, and that was a defect in the *block*, not
+  in the product - worth stating because it looked like a pass: the block wrote
+  `export HYPERMAKER_CHROME=/path/to/chrome` outright, which threw away the browser the caller had
+  already set and turned every browser case into a skip. It now keeps the caller's value when one is
+  set (`${HYPERMAKER_CHROME:-...}`) and refuses a path that is not a runnable browser, and the
+  re-run from the same bare clone finished with nothing skipped. The skip count is therefore the
+  thing to read when judging whether the instructions work, and it is the reason this page keeps the
+  two runs apart instead of reporting one number.
+
+  The block's failure paths were checked as controlled failures rather than read: a wrong commit
+  exits 2 before anything is built, a scratch directory that cannot be made exits 1 and never
+  reaches the suite, and a checker that fails returns the checker's own status.
+
+  The previous rounds' receipts were also taken from two runs tailing the same log while the tree was
+  still being edited, which is not evidence about any commit.
+- The commits after `be8a485` are documentation only - `git diff --stat be8a485..HEAD` lists
+  `docs/project-status.md` and `docs/impl.md` and nothing else - so the code, the tests and the
+  counts above are unchanged by them. A document cannot name the commit that contains it; it can
+  name what changed after the verified one, which is what this line does.
 - `test/docs.test.mjs` pins the facts in these documents that a reader is misled by
   when they rot: the stated test count, the claim that audio has no real-generation
   evidence, speech being presented as working, the project being described as closed,

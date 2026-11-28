@@ -462,6 +462,72 @@ breaking the behaviour:
 
 TDD seams: workspace round trip/atomic write/path safety; registry; prompt order/direct input metadata; node/import/link persistence; async result validation/concurrency/failure; UI creation, scrolling, drag-link, unlink, persistence, controls, preview/download. Run `npm test`, `npm run test:e2e`, `node --check`, and `git diff --check`. `npm test` is 192 declared cases (the scene tests are described below): `test/repace.test.mjs` adds four for re-reading a published take at another pace (the pace reached and the earlier take kept, a no-op press making no take, the refusals, and Stop during the comparison keeping the approved bytes) and `test/repace-ui.test.mjs` adds three for the canvas walk (the control and its comparison, a linked film that is not re-cut, and no control on a card that cannot use it); `test/story-entry.test.mjs` adds three for the story's explicit agent choice (a real run with no CODEX_BIN, or one pointed at the stand-in, is refused before anything starts; an ignored CODEX_BIN is reported; the receipt records which agent ran), `test/evidence-claims.test.mjs` adds four pinning the grain of the one real-model attempt: no document may turn that attempt into a claim about the whole model backend, the route and its 451 must be named, the evidence file has to say where the run stopped, and it has to state what it does not prove, `test/pace.test.mjs` adds three for settable, measured pace and the multiplier's unchanged meaning, `test/guide-pace.test.mjs` adds two for the instruction reaching the agent's prompt and the guide's own promise being true, `test/compare-playback.test.mjs` adds one for one-sound-at-a-time in the compare panel, `test/download-name.test.mjs` adds two for the exported filename, `test/keep-card.test.mjs` adds six for the run directory and the card guard, five of which fail when the guard is disabled; `test/prepare-window.test.mjs` adds three for the run claim, the overlapping press failing with two 202s when the claim is deferred to the spawn; registry/prompt/workspace checks, three canvas-script checks, eight canvas browser cases, two media renders, one audio render, one film built from canvas material, three provenance cases, two WAV measurement cases, seven lifecycle cases, two Stop/failure UI cases, and the short-film story, which is a command rather than part of the suite. Browser tests launch Chromium through `test/browser.mjs`, honoring `HYPERMAKER_CHROME` or `CHROME_BIN` when Playwright's own browser is not installed. Every browser test asserts that the page raised no error, and the assertions are collected rather than thrown from the event listener, because a throw there surfaces after the test has ended.
 
+### Reproducing the receipt for a round
+
+The suite is run once, from a clean export of one commit, so a receipt cannot be a report about a
+working tree that moved while it ran. Paste this whole block
+into a terminal; every directory it needs is created by the block, and its exit status is `npm
+test`'s own:
+
+```sh
+# In a checkout of this repository. Change these two lines if you like; nothing else.
+COMMIT=be8a4857213f918c62d47c50e000bc2c7ee8109e
+# A Chromium, for Remotion and the browser tests. `:-` on purpose: an earlier version of this block
+# wrote `export HYPERMAKER_CHROME=/path/to/chrome` outright, which threw away the value the caller
+# already had and turned 44 real cases into skips - a run that looks like a pass and is not one.
+export HYPERMAKER_CHROME=${HYPERMAKER_CHROME:-/path/to/chrome}
+[ -x "$HYPERMAKER_CHROME" ] || { echo "HYPERMAKER_CHROME is not a runnable browser: $HYPERMAKER_CHROME" >&2; exit 1; }
+
+WORK=$(mktemp -d /var/tmp/hypermaker-verify-XXXXXX) || { echo "cannot make a workspace" >&2; exit 1; }
+# Assigned first and exported after, never `export TMPDIR=$(mktemp -d ...)`: a command substitution
+# inside `export` reports *export's* status, so a failed mktemp left TMPDIR empty and the block went
+# on to run the suite with no scratch directory at all - a supervisor reproduced it and got exit 0.
+TMPDIR=$(mktemp -d /var/tmp/hypermaker-scratch-XXXXXX) || { echo "cannot make a scratch directory" >&2; exit 1; }
+export TMPDIR
+[ -d "$TMPDIR" ] || { echo "scratch directory vanished" >&2; exit 1; }
+mkdir -p "$WORK/tree" || { echo "cannot prepare the export" >&2; exit 1; }
+
+# The export is written to a file and unpacked separately, not piped: `git archive | tar` reports
+# tar's status, so a commit that does not resolve once produced an empty tree that was then tested.
+git archive "$COMMIT" -o "$WORK/tree.tar" || { echo "cannot export $COMMIT" >&2; exit 2; }
+tar -x -C "$WORK/tree" -f "$WORK/tree.tar" || { echo "cannot unpack $COMMIT" >&2; exit 2; }
+[ -n "$(ls -A "$WORK/tree")" ] || { echo "export of $COMMIT is empty" >&2; exit 2; }
+
+# Dependencies are installed, not borrowed: the export has no node_modules, and a receipt taken by
+# symlinking someone else's install is a receipt about that install.
+( cd "$WORK/tree" && npm ci --no-audit --no-fund ) || { echo "npm ci failed" >&2; exit 2; }
+
+cd "$WORK/tree" || exit 2
+npm test                                      # this line's status is the block's status
+```
+
+It needs no `pipefail` and no particular shell: there are no pipelines left, and every failure stops
+the block rather than carrying on. The codes are two groups, and the split is what the block means
+rather than an accident: **1** means this machine could not be prepared (no runnable browser, no
+workspace directory it could make, no scratch directory - the suite never starts), and **2** means the commit or
+the install failed (bad commit, empty export, `npm ci`). A suite that runs and fails returns
+`npm test`'s own status, which is any code including 0. An earlier version of this paragraph said
+every failure was `exit 2`, which was wrong about the browser and scratch cases and would have sent
+a reader looking for a commit problem that did not exist.
+
+Two things a person will otherwise get wrong, both learned from a supervisor walking an earlier
+version of this paragraph:
+
+* **`TMPDIR` and the workspace both have to exist and be on a Linux filesystem.** Chromium cannot
+  make its profile under `/mnt/d`, and a `TMPDIR` that does not exist fails the workspace cases with
+  an error about creating a directory - which reads like a product defect and is not. The block
+  creates both with `mktemp -d`, so neither is assumed.
+* **The exit status has to be `npm test`'s.** The earlier block ended in
+  `... npm test   # note the exit status`, and the paragraph around it wrapped the command in
+  something that printed `1 failed` and still exited 0. A receipt whose failure is invisible is
+  worse than no receipt: paste the block, read `$?`, and `0` means the suite passed.
+
+`npm ci` is the one slow step (minutes on a cold cache). Two environment variables are required and
+neither is guessed: `TMPDIR` on a Linux filesystem, and `HYPERMAKER_CHROME` naming a Chromium for
+Remotion and the browser tests. Without a browser the canvas cases skip and say so; a skip is not a
+pass. If `/var/tmp` is small or full, point both `mktemp` templates somewhere roomy - Remotion writes
+real video next to its workspace, and a full scratch disk fails the media cases with `ENOSPC`, which
+looks like a code failure but is not.
 If `/tmp` is small or full, point the fixtures somewhere roomy (`TMPDIR=$(mktemp -d /var/tmp/hypermaker-XXXX) npm test` — the template is explicit so an existing `TMPDIR` cannot redirect it). Remotion writes real video next to its workspace, and a full scratch disk fails the media cases with `ENOSPC` — which looks like a code failure but is not. A directory on a Windows drive is not a substitute: Chromium cannot create its profile there. So on WSL, where the checkout itself may sit on `/mnt/d`, `TMPDIR` must point off that mount; measured from the same commit, `/mnt/d` scratch gave 137 pass / 39 fail / 1 skip with `browserType.launch: Target page, context or browser has been closed` on every browser case, and `/tmp` or `/var/tmp` gave 177/177. DrvFs also accepts `chmod` and ignores it, which is why `modesNotEnforced()` in `test/server.mjs` probes the fixture directory and lets the one read-only-workspace case skip with that reason instead of failing as though `openWorkspace` had stopped refusing.
 
 `test/media.test.mjs` is the suite whose fixture renders rather than pretends: `test/fake-remotion-codex.mjs` bundles the composition with `@remotion/bundler`, selects it, and calls `renderStill` or `renderMedia`, then the test asserts the artifact's own bytes and the preview the canvas draws. For the image case that is the PNG signature plus a loaded `<img>` at 320x180; for the video case it is an ISO base media `ftyp` box with an h264 (`avc1`) track and a `moov` box, plus a `<video>` the browser actually decodes (`readyState >= 1`, `videoWidth` 320, non-zero duration). The two cases run against separate servers on separate ports, so the still and video fixtures cannot borrow each other's environment. Both skip (with a printed reason) when no browser exists, rather than passing green with nothing rendered. The negative controls are fixtures that only write text into a `.png` or `.mp4` file: they make the tests fail with `artifact has the PNG signature` and `a text file must not pass as an ISO base media container`, so a green result is load-bearing. The fixture takes its browser from `HYPERMAKER_CHROME`/`CHROME_BIN`; it previously hard-coded `chromium.executablePath()`, a path absent on machines that never ran `npx playwright install`, so it could not run at all.
