@@ -1,5 +1,9 @@
 # Evidence kept outside the tests
 
+## `captions-only.md`
+
+[Two handwritten lines → captions-only film](captions-only.md) replays the blank canvas with no speech engine, no model and no uploads. It checks the actual video stream and caption timing, replaces only act II, then plays the restored first cut.
+
 ## `two-act-script.md`
 
 [Two pictures → editable script → two-act film](two-act-script.md) keeps two results separate: the configured Codex CLI reached a turn but did not complete workspace discovery, while a local fixture drove the complete canvas workflow through script edit, playback and picture swap. It links the replay command and records which files and media measurements prove each step.

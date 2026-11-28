@@ -1,0 +1,207 @@
+// Blank canvas → two local title cards + handwritten text → play → recut → restore.
+// No uploads, engine, agent, model downloads or account. Run from the repository root.
+import assert from 'node:assert/strict';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { chromium } from 'playwright';
+import { parseWorkspace } from '../server/workspace.mjs';
+import { freePort, startServer, stopServer, waitReady } from './server.mjs';
+
+const root = process.cwd();
+const chrome = process.env.HYPERMAKER_CHROME || process.env.CHROME_BIN;
+assert.ok(chrome && existsSync(chrome), 'set HYPERMAKER_CHROME to an existing Chromium executable');
+const out = mkdtempSync(join(tmpdir(), 'hyper-captions-'));
+const ws = join(out, 'workspace');
+const evidence = process.env.STORY_OUT || join(root, '.tmp/story-captions-only');
+mkdirSync(evidence, { recursive: true });
+const story = ['The flood washes the market road away.', 'By dawn, the village takes the high crossing.'];
+const fixture = join(out, 'no-codex.mjs'), call = join(out, 'codex-called');
+writeFileSync(fixture, `import { writeFileSync } from 'node:fs';\nwriteFileSync(${JSON.stringify(call)}, 'unexpected Codex invocation');\nprocess.exit(1);\n`);
+const env = { CODEX_BIN: fixture, HYPERMAKER_WORKDIR: ws, HYPERMAKER_RESET_WORKSPACE: '1', HYPERMAKER_CHROME: chrome, HYPERMAKER_ESPEAK: join(out, 'absent-espeak-ng') };
+const engine = spawnSync(process.execPath, ['--input-type=module', '-e', `import { engineStatus } from './voice/engine.mjs'; console.log(JSON.stringify(engineStatus().installed));`], { env: { ...process.env, ...env }, encoding: 'utf8' });
+assert.equal(engine.status, 0, engine.stderr);
+assert.equal(engine.stdout.trim(), 'false', 'the engine cannot be discovered in this fixture');
+const port = await freePort();
+const app = startServer({ cwd: root, port, env });
+const base = `http://127.0.0.1:${port}`;
+const fileFor = (id, file) => join(ws, String(id), file);
+const sha = file => createHash('sha256').update(readFileSync(file)).digest('hex');
+const tool = (name, args) => execFileSync(join(root, 'node_modules/@remotion/compositor-linux-x64-gnu', name), args);
+let browser;
+try {
+  await waitReady(port);
+  browser = await chromium.launch({ executablePath: chrome, headless: true });
+  const page = await browser.newPage({ viewport: { width: 1440, height: 970 } });
+  const errors = [], external = [], imports = [];
+  page.on('pageerror', error => errors.push(String(error)));
+  await page.route('**/*', route => {
+    const url = new URL(route.request().url());
+    if (url.origin !== base) { external.push(url.origin); return route.abort(); }
+    if (/^\/api\/(upload|replace)$/.test(url.pathname)) { imports.push(url.pathname); return route.abort(); }
+    return route.continue();
+  });
+  const nodes = async () => (await (await fetch(`${base}/api/workspace`)).json()).nodes;
+  const node = async id => (await nodes())[id];
+  const card = id => page.locator(`.card[data-id="${id}"]`);
+  async function until(check, what, ms = 10000) {
+    const deadline = performance.now() + ms;
+    do {
+      const result = await check();
+      if (result) return result;
+      await page.waitForTimeout(100);
+    } while (performance.now() < deadline);
+    assert.fail(`timed out: ${what}`);
+  }
+  async function add(x, y, type, method) {
+    const old = new Set(Object.keys(await nodes()));
+    await page.mouse.dblclick(x, y);
+    const id = Number(await until(async () => Object.keys(await nodes()).find(id => !old.has(id)), 'new card'));
+    if (type !== 'text') await card(id).getByLabel('Output type').selectOption(type);
+    await until(async () => (await node(id)).method === method, `#${id} defaults to ${method}`);
+    return id;
+  }
+  async function typeIn(id, text) {
+    const box = card(id).getByLabel('Prompt');
+    await box.fill(text);
+    await box.blur();
+    await until(async () => (await node(id)).prompt === text, `#${id} stores its text`);
+  }
+  async function make(id) {
+    const before = (await node(id)).artifact;
+    await card(id).getByRole('button', { name: 'Make', exact: true }).click({ timeout: 10000 });
+    const result = await until(async () => {
+      const n = await node(id);
+      return n.status !== 'running' && (n.error || (n.artifact && n.artifact !== before)) && n;
+    }, `#${id} makes a version`, 180000);
+    assert.equal(result.error, null, `#${id} failed: ${result.error}`);
+    return result;
+  }
+  async function link(from, to, expected) {
+    const [a, b] = await Promise.all([card(from).locator('header').boundingBox(), card(to).locator('header').boundingBox()]);
+    await page.mouse.move(a.x + 35, a.y + a.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(b.x + 35, b.y + b.height / 2, { steps: 12 });
+    await page.mouse.up();
+    await until(async () => JSON.stringify((await node(to)).inputs) === JSON.stringify(expected), `#${to} gets links ${expected}`);
+  }
+  async function play(n, throughEnd = false) {
+    const player = card(n.id).locator('video');
+    await until(async () => (await player.getAttribute('src', { timeout: 2000 }))?.includes(encodeURIComponent(n.artifact)), `player loads ${n.artifact}`);
+    const played = await player.evaluate(async (video, throughEnd) => {
+      await video.play();
+      if (throughEnd) {
+        await new Promise((resolve, reject) => {
+          const timer = setTimeout(() => reject(new Error('Video never reached its end')), 12000);
+          video.addEventListener('ended', () => { clearTimeout(timer); resolve(); }, { once: true });
+        });
+      } else await new Promise(resolve => setTimeout(resolve, 500));
+      video.pause();
+      return { at: video.currentTime, duration: video.duration, ended: video.ended, width: video.videoWidth, height: video.videoHeight };
+    }, throughEnd);
+    if (throughEnd) assert.ok(played.ended, JSON.stringify(played));
+    assert.ok(played.at >= 0.25 && played.width === 1280 && played.height === 720, JSON.stringify(played));
+    assert.ok(Math.abs(played.duration - n.film.seconds) <= 0.04, JSON.stringify(played));
+    return played;
+  }
+  function measure(n, expectedPictures, tag) {
+    const file = fileFor(n.id, n.artifact);
+    assert.equal(n.film.soundtrack, null);
+    assert.equal(n.film.audioCodec, null);
+    const probe = JSON.parse(tool('ffprobe', ['-v', 'error', '-show_streams', '-show_format', '-of', 'json', file]));
+    assert.deepEqual(probe.streams.map(s => [s.codec_type, s.codec_name]), [['video', 'h264']]);
+    assert.match(probe.format.format_name, /\bmp4\b/);
+    assert.ok(Math.abs(Number(probe.format.duration) - n.film.seconds) <= 0.04);
+    assert.deepEqual(n.film.scenes.map(s => s.from.artifact), expectedPictures);
+    assert.deepEqual(n.film.scenes.map(s => s.caption), story);
+    assert.equal(n.film.scenes[0].end, n.film.scenes[1].start);
+    assert.equal(n.film.scenes[1].end, n.film.seconds);
+    assert.equal(n.film.captions.cues.length, 2);
+    // Extract actual first/mid/last frames of each act. Midpoints go in the evidence
+    // bundle for a visual word-for-word check; staying visible at both edges is also tested.
+    const seen = [];
+    for (const [i, scene] of n.film.scenes.entries()) {
+      assert.ok(scene.shown > 0.8, `scene ${i + 1}: picture match ${scene.shown}`);
+      const cue = n.film.captions.cues[i];
+      assert.equal(cue.scene, i);
+      assert.ok(cue.seconds >= 3 && cue.charactersPerSecond <= 16, JSON.stringify(cue));
+      assert.ok(Math.abs(scene.end - scene.start - cue.seconds) <= 0.021);
+      const at = (scene.start + scene.end) / 2;
+      tool('ffmpeg', ['-v', 'error', '-y', '-ss', String(at), '-i', file, '-frames:v', '1', join(evidence, `${tag}-act-${i + 1}.png`)]);
+      const captionPixels = time => tool('ffmpeg', ['-v', 'error', '-i', file, '-ss', time.toFixed(6), '-frames:v', '1', '-vf', 'crop=1120:140:48:540,format=gray', '-c:v', 'rawvideo', '-f', 'image2pipe', '-']).filter(v => v >= 225).length;
+      const onScreen = [scene.start, at, scene.end - 0.037].map(captionPixels);
+      assert.ok(onScreen.every(white => white > 600), `act ${i + 1}: bright caption pixels at start/mid/end: ${onScreen}`);
+      seen.push({ picture: scene.from, text: scene.caption, start: scene.start, end: scene.end, match: scene.shown, cue, captionPixels: onScreen });
+    }
+    return { artifact: n.artifact, sha256: sha(file), seconds: n.film.seconds, streams: probe.streams.map(s => s.codec_type), scenes: seen };
+  }
+
+  await page.goto(base);
+  await page.locator('#cards').waitFor();
+  assert.deepEqual(Object.keys(await nodes()), []);
+  const text = await add(75, 150, 'text', 'plain');
+  const a = await add(400, 150, 'image', 'titlecard');
+  const b = await add(725, 150, 'image', 'titlecard');
+  const film = await add(1050, 150, 'video', 'firstcut');
+  await card(film).getByText(/No speech engine needed/).waitFor({ timeout: 5000 });
+  await typeIn(text, story.join('\n'));
+  const script = await make(text);
+  assert.equal(readFileSync(fileFor(text, script.artifact), 'utf8').trim(), story.join('\n'));
+  await typeIn(a, 'Market road closed\nThe river has cut the valley in two.');
+  await typeIn(b, 'High bridge open\nThe first walkers cross above the flood.');
+  const firstImage = await make(a), secondImage = await make(b);
+  const links = [text, a, b];
+  for (const [i, id] of links.entries()) await link(id, film, links.slice(0, i + 1));
+  await card(film).locator('.method-slot').filter({ hasText: /Captions only \(no audio\)/ }).waitFor({ timeout: 5000 });
+  const first = await make(film);
+  const cut = measure(first, [firstImage.artifact, secondImage.artifact], 'first');
+  cut.play = await play(first, true);
+  await card(film).locator('.film').filter({ hasText: /captions only \(no audio\)/ }).waitFor({ timeout: 5000 });
+  await page.screenshot({ path: join(evidence, 'canvas-first.png') });
+
+  // Edit only act II's picture card. Recut, then use the visible kept-version button.
+  await typeIn(b, 'Crossing at sunrise\nLanterns go out as the last walker reaches the ridge.');
+  const replacement = await make(b);
+  assert.notEqual(sha(fileFor(b, replacement.artifact)), sha(fileFor(b, secondImage.artifact)));
+  const second = await make(film);
+  const recut = measure(second, [firstImage.artifact, replacement.artifact], 'recut');
+  assert.notEqual(recut.sha256, cut.sha256);
+  assert.equal(sha(join(evidence, 'recut-act-1.png')), sha(join(evidence, 'first-act-1.png')));
+  assert.notEqual(sha(join(evidence, 'recut-act-2.png')), sha(join(evidence, 'first-act-2.png')));
+  recut.play = await play(second);
+  assert.deepEqual(second.inputs, links);
+  const old = second.versions.find(v => v.artifact === first.artifact);
+  assert.ok(old, 'the earlier cut is offered as a kept version');
+  assert.equal(sha(fileFor(film, old.file)), cut.sha256);
+  const diskNode = parseWorkspace(readFileSync(join(ws, 'workspace.yml'), 'utf8'))[film];
+  assert.deepEqual(diskNode.versions.find(v => v.id === old.id).film, first.film);
+  await page.reload();
+  await card(film).locator(`[data-version="${old.id}"]`).click({ timeout: 5000 });
+  const restored = await until(async () => { const n = await node(film); return n.artifact === old.file && n; }, 'the canvas restores the old MP4');
+  assert.deepEqual(restored.inputs, links);
+  assert.deepEqual(restored.film, first.film);
+  assert.deepEqual(restored.sources, first.sources);
+  assert.equal(restored.script, first.script);
+  assert.ok(existsSync(fileFor(film, restored.script)));
+  assert.equal(sha(fileFor(film, restored.artifact)), cut.sha256);
+  assert.ok(restored.versions.some(v => v.artifact === second.artifact));
+  const restoredPlay = await play(restored);
+  await page.screenshot({ path: join(evidence, 'canvas-restored.png') });
+  assert.deepEqual(errors, []);
+  assert.deepEqual(external, []);
+  assert.deepEqual(imports, []);
+  assert.equal(existsSync(call), false, 'the model command never ran');
+  const receipt = { story, workspace: ws, engineAvailable: false, modelCalls: 0, externalBrowserRequests: external, uploads: imports, cut, recut, restored: { file: restored.artifact, sha256: cut.sha256, play: restoredPlay, links, secondStillKept: second.artifact } };
+  copyFileSync(fileFor(film, restored.artifact), join(evidence, 'first.mp4'));
+  copyFileSync(fileFor(film, second.artifact), join(evidence, 'recut.mp4'));
+  writeFileSync(join(evidence, 'receipt.json'), JSON.stringify(receipt, null, 2) + '\n');
+  console.log(JSON.stringify(receipt, null, 2));
+} catch (error) {
+  console.error(app.log());
+  throw error;
+} finally {
+  await browser?.close();
+  stopServer(app);
+}

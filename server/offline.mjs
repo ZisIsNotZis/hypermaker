@@ -23,7 +23,7 @@
 //   * a film is checked by `verifyFilm`, which is a real video stream, a real duration, and an
 //     embedded track that is loud *and* correlated with the narration the take says it used. A
 //     render that came out silent is refused, which is the failure a real agent produced once
-//     and every cheaper check passed.
+//     and every cheaper check passed. A captions-only cut instead must have no audio stream.
 //
 // A refusal is a sentence the person can act on, and it never publishes: the error goes back
 // through the same branch that keeps the previous take on the card.
@@ -263,10 +263,33 @@ export async function titleCard({ attemptDir, sources = [], prompt = "", width =
 //
 // The `public/` and `build/` directories are inside the run directory, so nothing is written
 // next to what a person keeps and the whole attempt is dropped with the run.
+const CUT_FPS = 30;
+const SILENT_MIN_SECONDS = 3;
+const SILENT_MAX_SECONDS = 7;
+const SILENT_CPS = 16;
+const SILENT_MAX_CHARACTERS = SILENT_CPS * SILENT_MAX_SECONDS;
+
+function planSilentCut({ text, pictures }) {
+  const lines = readFileSync(text.frozen, "utf8").split(/\r\n|[\n\r\u2028\u2029]/).map(line => line.trim()).filter(Boolean);
+  if (lines.length !== 2) throw new Error("A captions-only film needs two nonblank script lines, one for each picture. Edit the linked text card, then press Make again. Nothing was rendered.");
+  let nextFrame = 0;
+  const scenes = lines.map((caption, index) => {
+    if (caption.length > SILENT_MAX_CHARACTERS) {
+      throw new Error(`Caption ${index + 1} is too long to read in one act. Shorten line ${index + 1} to ${SILENT_MAX_CHARACTERS} characters or fewer, then press Make again. Nothing was rendered.`);
+    }
+    const start = nextFrame / CUT_FPS;
+    nextFrame += Math.ceil(Math.max(SILENT_MIN_SECONDS, caption.length / SILENT_CPS) * CUT_FPS);
+    return { index, start, end: nextFrame / CUT_FPS, picture: pictures[index], phrases: [], caption };
+  });
+  return { scenes, seconds: nextFrame / CUT_FPS, frames: nextFrame, title: lines[0] };
+}
+
 export async function firstCut({ attemptDir, sources = [], cancelRef = {} }) {
-  const audio = sources.find(s => s.type === "audio" && s.frozen && existsSync(s.frozen));
-  if (!audio) {
-    throw new Error("A film needs a soundtrack: link an audio card with the narration, then press Generate. Nothing was rendered.");
+  const audio = sources.find(s => s.type === "audio" && s.frozen && existsSync(s.frozen)) ?? null;
+  // The absence of an audio link is a choice; an unreadable linked take is not.
+  const silent = !sources.some(s => s.type === "audio");
+  if (!silent && !audio) {
+    throw new Error("The linked soundtrack could not be read. Remake or unlink the audio card, then press Make again. Nothing was rendered.");
   }
   // A picture source this run *names* but cannot read is refused rather than skipped. The press is
   // already refused for a linked card whose file is gone (see `/api/generate`), and this is the same
@@ -280,23 +303,29 @@ export async function firstCut({ attemptDir, sources = [], cancelRef = {} }) {
     throw new Error(`The picture ${named} could not be read, so this film would be made with ${unreadable.length === 1 ? "a scene" : "scenes"} missing. Regenerate or unlink ${unreadable.length === 1 ? "that picture" : "those pictures"}, then press again. Nothing was rendered.`);
   }
   const posters = wanted.filter(s => existsSync(s.frozen));
-  const words = sources.find(s => s.type === "text" && s.frozen && existsSync(s.frozen));
+  const texts = sources.filter(s => s.type === "text");
+  const words = texts.find(s => s.frozen && existsSync(s.frozen));
+  if (silent && (texts.length !== 1 || !words || posters.length !== 2 || sources.length !== 3)) {
+    throw new Error("For a captions-only film, link one script card and exactly two pictures in act order. For a narrated film, link an audio card. Nothing was rendered.");
+  }
+  const silentCut = silent ? planSilentCut({ text: words, pictures: posters }) : null;
   const chrome = chromePath();
   if (!chrome) throw new Error("Rendering a film needs a browser for Remotion. Set HYPERMAKER_CHROME (or CHROME_BIN) to a Chromium build and press Generate again. Nothing was rendered.");
   if (!existsSync(chrome)) throw new Error(`HYPERMAKER_CHROME points at ${chrome}, which does not exist, so Remotion cannot start. Nothing was rendered.`);
 
-  const { rate, samples } = wavSamples(readFileSync(audio.frozen));
-  const seconds = samples.length / rate;
-  const fps = 30, durationInFrames = Math.max(1, Math.ceil(seconds * fps));
+  const wav = audio ? wavSamples(readFileSync(audio.frozen)) : null;
+  const rate = wav?.rate ?? null;
+  const seconds = silentCut ? silentCut.seconds : wav.samples.length / rate;
+  const fps = CUT_FPS, durationInFrames = silentCut?.frames ?? Math.max(1, Math.ceil(seconds * fps));
   // The phrases are the take's own measured times. An older take has none; then the film is one
   // scene with the take's first line as its caption, which is exactly the film this method made
   // before there were scenes - stated as such rather than inferred.
-  const phrases = Array.isArray(audio.phrases) ? audio.phrases : [];
-  const title = words ? (readFileSync(words.frozen, "utf8").split(/\r?\n/).map(l => l.trim()).filter(Boolean)[0] || "").slice(0, 90) : "";
+  const phrases = Array.isArray(audio?.phrases) ? audio.phrases : [];
+  const title = silentCut?.title ?? (words ? (readFileSync(words.frozen, "utf8").split(/\r?\n/).map(l => l.trim()).filter(Boolean)[0] || "").slice(0, 90) : "");
   // A picture that was already rendered as a scene and now differs from the one the film was cut
   // from is a different question - the cut uses the bytes it was given, and the record says which
   // take. What it must not do is decide by itself that fewer pictures are wanted.
-  const scenes = planScenes({ pictures: posters, phrases, seconds });
+  const scenes = silentCut?.scenes ?? planScenes({ pictures: posters, phrases, seconds });
   // More than one picture and no measured times: a cut nobody can justify. Distributing the
   // pictures evenly would put a seam in the middle of a spoken sentence and present it as a scene,
   // so it is refused with the thing that would fix it.
@@ -307,7 +336,7 @@ export async function firstCut({ attemptDir, sources = [], cancelRef = {} }) {
 
   const publicDir = join(attemptDir, "public");
   mkdirSync(publicDir, { recursive: true });
-  copyFileSync(audio.frozen, join(publicDir, "track.wav"));
+  if (audio) copyFileSync(audio.frozen, join(publicDir, "track.wav"));
   // Every picture is copied under a name derived from its place, so the composition can name them
   // without a path from the workspace leaking into published bytes.
   const sceneFiles = shownScenes.map((scene, i) => {
@@ -320,8 +349,7 @@ export async function firstCut({ attemptDir, sources = [], cancelRef = {} }) {
 
   // The composition is written out per run rather than shipped as a template, because every part
   // of it is a fact about this attempt: which pictures, when each is on screen, and which words are
-  // under them. React escapes nothing in a text node built from a template, so text is escaped here.
-  const escape = text => JSON.stringify(String(text)).slice(1, -1).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  // under them. Caption text enters the component as JSON data, never as JSX markup.
   const entry = join(attemptDir, "first-cut.jsx");
   // A scene is one picture, but the voice inside it is usually several sentences. A single caption
   // for the whole scene is unreadable when the scene holds eight seconds of speech: either it is
@@ -376,8 +404,9 @@ export async function firstCut({ attemptDir, sources = [], cancelRef = {} }) {
   // "when scene 2 starts" has one answer in this program rather than two.
   writeFileSync(entry, [
     "import React from 'react';",
-    "import { AbsoluteFill, Audio, Composition, Img, Sequence, interpolate, registerRoot, staticFile, useCurrentFrame } from 'remotion';",
+    `import { AbsoluteFill, ${audio ? 'Audio, ' : ''}Composition, Img, Sequence, interpolate, registerRoot, staticFile, useCurrentFrame } from 'remotion';`,
     `const SCENES = ${JSON.stringify(sequence, null, 2)};`,
+    `const SILENT = ${silent};`,
     "// A cue is one measured phrase of the narration, on screen while it is spoken. The size steps",
     "// down for a long phrase, because a two-line caption at 44px runs off a 1280px frame and a",
     "// caption nobody can finish reading is not a caption. Nothing is ever shortened: the words on",
@@ -385,7 +414,7 @@ export async function firstCut({ attemptDir, sources = [], cancelRef = {} }) {
     "const captionSize = text => text.length > 110 ? 32 : text.length > 76 ? 36 : text.length > 44 ? 40 : 44;",
     "const Scene = ({ file, cues, length, placement }) => {",
     "  const frame = useCurrentFrame();",
-    "  const fade = interpolate(frame, [0, 10], [0, 1], { extrapolateRight: 'clamp' });",
+    "  const fade = SILENT ? 1 : interpolate(frame, [0, 10], [0, 1], { extrapolateRight: 'clamp' });",
     "  const cue = cues.find(c => frame >= c.from && frame < c.from + c.duration) || cues[cues.length - 1];",
     "  // A picture that is not frame-shaped is shown WHOLE, with dark bars, because cropping a portrait",
     "  // to 16:9 took the heads and feet off a real one. Frame-shaped pictures still fill the frame.",
@@ -393,13 +422,13 @@ export async function firstCut({ attemptDir, sources = [], cancelRef = {} }) {
     "    {file ? <Img src={staticFile(file)} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: placement === 'contain' ? 'contain' : 'cover' }} />",
     "      : <AbsoluteFill style={{ background: 'radial-gradient(circle at 30% 20%, #1d2733, #0d0f13 70%)' }} />}",
     "    <AbsoluteFill style={{ justifyContent: 'flex-end', padding: 56, background: 'linear-gradient(to top, rgba(0,0,0,0.78), rgba(0,0,0,0))', opacity: fade }}>",
-    "      {cue ? <div style={{ color: '#f5f7fa', fontFamily: 'Arial, Helvetica, sans-serif', fontSize: captionSize(cue.text), lineHeight: 1.22, maxWidth: '88%', textShadow: '0 2px 12px rgba(0,0,0,0.75)' }}>{cue.text}</div> : null}",
+    "      {cue ? <div style={{ color: '#f5f7fa', fontFamily: 'Arial, Helvetica, sans-serif', fontSize: captionSize(cue.text), lineHeight: 1.22, maxWidth: '88%', textShadow: '0 2px 12px rgba(0,0,0,0.75)', ...(SILENT ? { alignSelf: 'flex-start', overflowWrap: 'anywhere', background: 'rgba(0,0,0,0.85)', padding: '6px 14px' } : {}) }}>{cue.text}</div> : null}",
     "    </AbsoluteFill>",
     "  </AbsoluteFill>;",
     "};",
     "const Film = () => <AbsoluteFill style={{ background: '#0d0f13' }}>",
     "  {SCENES.map((scene, i) => <Sequence key={i} from={scene.from} durationInFrames={scene.duration}><Scene file={scene.file} cues={scene.cues} length={scene.duration} placement={scene.placement?.fit} /></Sequence>)}",
-    "  <Audio src={staticFile('track.wav')} />",
+    ...(audio ? ["  <Audio src={staticFile('track.wav')} />"] : []),
     "</AbsoluteFill>;",
     `const Root = () => <Composition id="Film" component={Film} width={1280} height={720} fps={${fps}} durationInFrames={${durationInFrames}} />;`,
     "registerRoot(Root);",
@@ -423,7 +452,7 @@ export async function firstCut({ attemptDir, sources = [], cancelRef = {} }) {
   try {
     const serveUrl = await bundle({ entryPoint: entry, publicDir, rspack: true, outDir: buildDir });
     const composition = await selectComposition({ serveUrl, id: "Film", ...browserArgs });
-    await renderMedia({ serveUrl, composition, codec: "h264", outputLocation: artifact, audioCodec: "aac", concurrency: 1, cancelSignal, ...browserArgs });
+    await renderMedia({ serveUrl, composition, codec: "h264", outputLocation: artifact, ...(silent ? { muted: true } : { audioCodec: "aac" }), concurrency: 1, cancelSignal, ...browserArgs });
   } catch (error) {
     if (cancelRef.stopped) throw new StoppedError();
     throw new Error(`the film did not render: ${error.message}`);
@@ -445,9 +474,9 @@ export async function firstCut({ attemptDir, sources = [], cancelRef = {} }) {
   const provenance = [
     "// Written by the server for this take and published beside the film it rendered.",
     "// To re-render the same picture: bundle this file with a publicDir holding",
-    `// track.wav${sceneFiles.filter(Boolean).length ? ` and ${sceneFiles.filter(Boolean).join(", ")}` : ""}, then render composition Film.`,
-    `// soundtrack: ${basename(audio.frozen)} (${seconds.toFixed(2)} s at ${rate} Hz)`,
-    `// ${fps} fps, ${durationInFrames} frames, 1280x720, h264 with an AAC track`,
+    `// ${[...(audio ? ["track.wav"] : []), ...sceneFiles.filter(Boolean)].join(", ")}, then render composition Film.`,
+    audio ? `// soundtrack: ${basename(audio.frozen)} (${seconds.toFixed(2)} s at ${rate} Hz)` : "// captions only: no soundtrack",
+    `// ${fps} fps, ${durationInFrames} frames, 1280x720, h264 ${audio ? "with an AAC track" : "with no audio stream"}`,
     ...shownScenes.map((s, i) => `// scene ${i + 1}: ${s.start.toFixed(2)}-${s.end.toFixed(2)} s${sceneFiles[i] ? ` over ${sceneFiles[i]}` : ", no picture"}${placements[i] ? ` (${placements[i].source.width}x${placements[i].source.height}, ${placements[i].fit}, ${Math.round(placements[i].kept * 100)}% of it on screen)` : ""}${s.caption ? ` - "${s.caption}"` : ""}`),
     // The cues are the part a viewer actually reads, so the record names them with the time each is
     // on screen - the same facts the readability number in the card is computed from.

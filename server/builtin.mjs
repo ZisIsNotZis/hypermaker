@@ -84,7 +84,7 @@ export function runBuiltin({ kind, node, sources, prompt, attemptDir, projectRoo
           title: film.title || null,
           // Which narration this is a film of, by card and by the file it froze: two takes of one
           // narration card are told apart here, and nowhere else on the film's own record.
-          soundtrack: { id: film.soundtrack.id, artifact: film.soundtrack.artifact, file: film.soundtrack.file ?? null },
+          soundtrack: film.soundtrack ? { id: film.soundtrack.id, artifact: film.soundtrack.artifact, file: film.soundtrack.file ?? null } : null,
           poster: film.poster ? { id: film.poster.id, artifact: film.poster.artifact, file: film.poster.file ?? null } : null,
           // What the words under each scene measured: one cue per spoken phrase, how long it is on
           // screen, and how fast it has to be read. A film whose caption is on screen for eight

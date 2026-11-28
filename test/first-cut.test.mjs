@@ -133,6 +133,10 @@ test("a blank canvas makes a playable film from one sentence, with no model and 
   assert.equal(cut.film.soundtrack.id, audio, "the film records which audio card it was made from");
   assert.equal(cut.film.soundtrack.artifact, spoken.artifact, "and which take of that card");
 
+  const rejectedAsSilent = verifyFilm({ file: join(workdir, String(film), cut.artifact), projectRoot: root, silent: true, expectedSeconds: cut.film.seconds, scenes: [{}, {}] });
+  assert.equal(rejectedAsSilent.ok, false);
+  assert.match(rejectedAsSilent.problems.join('; '), /must not contain or reference a soundtrack/, "an audio stream is never accepted for a captions-only cut");
+
   // 6. And no agent was asked for any of it.
   assert.equal(existsSync(called), false, "the agent path was never entered for a first film");
 });
@@ -166,14 +170,27 @@ test("a first read refuses what it cannot say, and publishes nothing", async t =
   assert.match(tooFast.error, /reads this script at \d+ words per minute/, `and the pace it does reach: ${tooFast.error}`);
 });
 
-test("a first film refuses a film it cannot show carries its narration", async t => {
+test("a captions-only cut refuses malformed input before rendering", async () => {
+  const attemptDir = mkdtempSync(join(base, "captions-input-"));
+  const words = join(attemptDir, "script.txt");
+  const pictures = [1, 2].map(id => ({ id, type: "image", frozen: words })); // Only existence is needed before script validation.
+  const sources = [{ id: 3, type: "text", frozen: words }, ...pictures];
+  writeFileSync(words, 'First scene only.\n');
+  await assert.rejects(firstCut({ attemptDir, sources }), /needs two nonblank script lines/);
+  writeFileSync(words, ['x'.repeat(113), 'Second scene.'].join('\n'));
+  await assert.rejects(firstCut({ attemptDir, sources }), /Shorten line 1 to 112 characters/);
+  await assert.rejects(firstCut({ attemptDir, sources: [...sources, { id: 4, type: "audio" }] }), /linked soundtrack could not be read/);
+  assert.equal(existsSync(join(attemptDir, "public")), false, "no render is prepared for refused input");
+});
+
+test("a first film with no links explains what it needs before rendering", async t => {
   if (skip) return t.skip(skip);
-  // A card with no soundtrack is refused before anything is rendered.
+  // With no soundtrack, a blank film card still needs a script and two pictures.
   const lone = latest(await post("/api/node", { x: 40, y: 760, type: "video", prompt: "" }));
   await post("/api/generate", { id: lone });
   const refused = await settle(lone);
   assert.equal(refused.artifact, null);
-  assert.match(refused.error, /needs a soundtrack/, `the refusal says what is missing: ${refused.error}`);
+  assert.match(refused.error, /link one script card and exactly two pictures/i, `the refusal says what is missing: ${refused.error}`);
 });
 
 test("a server-read take can be re-read at another pace, and a film keeps the take it was made from", async t => {

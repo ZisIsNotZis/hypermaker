@@ -33,7 +33,7 @@ const stacking={next:1};
 function raise(id){id=+id;if(!order.has(id)||[...order.entries()].sort((a,b)=>b[1]-a[1])[0]?.[0]===id){paintOrder();return}const level=stacking.next++;order.set(id,level);paintOrder(level)}
 function paintOrder(top=Math.max(0,...order.values())){document.querySelectorAll('.card').forEach(k=>{const level=order.get(+k.dataset.id)||0,front=level===top&&top>0;k.style.zIndex=level?String(level):'';k.classList.toggle('raised',front)})}
 function nodeAt(id){return state.nodes[id]}
-function preview(n){if(!n.artifact)return'<i class="meta">no artifact yet — write a prompt and press Generate</i>';const u=url(n);return n.type==='text'?'<pre>loading...</pre>':n.type==='image'?`<img alt="${esc(n.artifact)}" src="${u}">`:n.type==='audio'?`<audio controls src="${u}"></audio>`:`<video controls src="${u}"></video>`}async function text(el,n){if(n.type==='text'&&n.artifact)el.innerHTML='<pre>'+esc(await(await fetch(url(n))).text())+'</pre>'}
+function preview(n){if(!n.artifact)return n.method==='firstcut'?'<i class="meta">no film yet — link your material and press Make</i>':'<i class="meta">no artifact yet — write a prompt and press Generate</i>';const u=url(n);return n.type==='text'?'<pre>loading...</pre>':n.type==='image'?`<img alt="${esc(n.artifact)}" src="${u}">`:n.type==='audio'?`<audio controls src="${u}"></audio>`:`<video controls src="${u}"></video>`}async function text(el,n){if(n.type==='text'&&n.artifact)el.innerHTML='<pre>'+esc(await(await fetch(url(n))).text())+'</pre>'}
 // What an artifact was built from, snapshotted when it was generated. The links on
 // the canvas cannot answer this after an input card is relinked or deleted, which
 // is exactly when a person wants to know how a finished film was made.
@@ -105,7 +105,7 @@ const re=v.repace&&typeof v.repace==='object'?v.repace:null;const reLine=re?`<di
 // evidence rather than a claim the render made. `matched 1.000` is the part that distinguishes a
 // film carrying its own voice from one with an audio track that happens to exist - the silent
 // track a real agent once produced had every cheaper fact right.
-function filmLine(n){const f=n.film;if(!f||typeof f!=='object')return'';const sound=f.soundtrack?` · from ${esc(shown(f.soundtrack.artifact)||'a narration')}${badge(f.soundtrack.artifact)?` (v${badge(f.soundtrack.artifact)})`:''}`:'';const poster=f.poster?` · over ${esc(shown(f.poster.artifact)||'a poster')}${badge(f.poster.artifact)?` (v${badge(f.poster.artifact)})`:''}`:'';// A take says what its own measurement was, never what today's check would have measured. A film
+function filmLine(n){const f=n.film;if(!f||typeof f!=='object')return'';if(f.soundtrack===null)return `<div class="meta film">film: ${esc(f.seconds)}s · captions only (no audio)</div>${sceneLine(f)}`;const sound=f.soundtrack?` · from ${esc(shown(f.soundtrack.artifact)||'a narration')}${badge(f.soundtrack.artifact)?` (v${badge(f.soundtrack.artifact)})`:''}`:'';const poster=f.poster?` · over ${esc(shown(f.poster.artifact)||'a poster')}${badge(f.poster.artifact)?` (v${badge(f.poster.artifact)})`:''}`:'';// A take says what its own measurement was, never what today's check would have measured. A film
 // made by the earlier check has a correlation and no window count: that number was the best
 // agreement a search found, and it covered one sampled window rather than the whole take. Calling
 // it `worst window` would hand an old take a claim nobody made about it - a supervisor opened an
@@ -149,7 +149,7 @@ function sceneLine(f) {
   // single-quoted expression broke the whole canvas script once, and a canvas that will not parse
   // looks exactly like a product with no controls at all.
   const why = ["Each scene's frame was decoded from the published film and compared with the picture that scene says it shows, so a film showing the first picture for its whole length is refused rather than accepted."];
-  if (f.scenes.some(s => s.caption)) why.push("Each scene is captioned with the narration's own phrases, one cue per measured phrase, so the words on screen are the words being said.");
+  if (f.scenes.some(s => s.caption)) why.push(f.soundtrack === null ? 'Each scene shows one line of the linked script, in order, for the full scene.' : "Each scene is captioned with the narration's own phrases, one cue per measured phrase, so the words on screen are the words being said.");
   if (captionLine) why.push("The reading rate is measured from each cue's own on-screen time.");
   const count = `${esc(f.scenes.length)} scene${f.scenes.length === 1 ? '' : 's'}`;
   // What each scene kept of the picture it was given. A portrait shown whole is the good case; a
@@ -389,7 +389,7 @@ function shell(n){const e=document.createElement('article');e.className='card';e
 // `synth` method the README recommends, and the server would run `bark.cpp` behind a
 // dropdown that said otherwise. `sync` now calls this too, guarded on the type it was
 // built for so an unchanged card does not re-fetch on every reload.
-function fillMethods(e,n){const node=nodeAt(n.id);if(!node)return;const key=node.type+'|'+node.method;if(e.dataset.methods===key)return;methods(n.type).then(ms=>{const live=nodeAt(n.id);if(!live)return;const s=e.querySelector('[data-field=method]');if(!s)return;e.dataset.methods=live.type+'|'+live.method;// A method whose tool is not installed stays selectable - the guide is still the truth
+function fillMethods(e,n){const node=nodeAt(n.id);if(!node)return;const key=node.type+'|'+node.method;if(e.dataset.methods===key){if(node.method==='firstcut'&&state.methods?.[node.type])fillMethodNotice(e,node,state.methods[node.type]);return}methods(n.type).then(ms=>{const live=nodeAt(n.id);if(!live)return;const s=e.querySelector('[data-field=method]');if(!s)return;e.dataset.methods=live.type+'|'+live.method;// A method whose tool is not installed stays selectable - the guide is still the truth
 // for someone who has it - but it is marked, so nobody picks it expecting a render.
 s.innerHTML=ms.map(m=>`<option value="${esc(m.id)}"${m.available===false?' data-unavailable="1"':''}>${esc(m.id)}${m.available===false?' (needs a local install)':''}</option>`).join('');s.value=live.method||ms[0]?.id||'';const g=e.querySelector('[data-generate]');if(g){g.disabled=live.status==='running'||!s.value;const word=live.status==='running'?'Generating…':(ms.find(m=>m.id===live.method)?.builtin?'Make':'Generate');if(g.textContent!==word)g.textContent=word}
   // The method list is also the only place the canvas learns whether this card's press spends a
@@ -412,7 +412,15 @@ function suppliedNotice(e,n){const slot=e.querySelector('.method-slot');if(slot)
 // decoration - one of them needs an account and a route and the others do not - so it is stated once
 // in words, and the press says it too.
 function methodKind(m){if(!m)return'';return m.builtin?'runs here, no model':(m.available===false?'needs a local install':'sends this card to a model')}
-function fillMethodNotice(e,n,ms){const m=ms.find(x=>x.id===n.method);const slot=e.querySelector('.method-slot');if(!slot)return;const kind=m&&m.available===false?`<div class="meta">${esc(m.id)} needs ${esc((m.requires||[]).join(', '))} on this machine; nothing will generate until it exists. Pick another method, or install one that works here.</div>`:m?`<div class="meta method-kind">${esc(m.id)}: ${esc(methodKind(m))}${m.hint?` — ${esc(m.hint)}`:''}${m.builtin?'':` <span title="A method that is not built in writes this card with a model, which needs Codex configured on this machine. ${esc(m.id)} is a choice, not a requirement: the built-in methods make a first film with nothing installed.">·</span>`}</div>`:'';slot.innerHTML=kind;const g=e.querySelector('[data-generate]');if(g)g.title=m?(m.builtin?'Generate: the server makes this artifact itself, with no model.':'Generate: this runs a model through Codex to make this artifact.'):''}
+function firstCutHint(n) {
+  const inputs = (n.inputs || []).map(id => state.nodes[id]).filter(Boolean);
+  if (inputs.some(card => card.type === 'audio')) return 'Narrated cut: uses the linked audio as its soundtrack.';
+  if (inputs.length === 3 && inputs.filter(card => card.type === 'text').length === 1 && inputs.filter(card => card.type === 'image').length === 2) {
+    return 'Captions only (no audio): each picture gets one line from the linked script.';
+  }
+  return 'No speech engine needed for a captioned film: link a text card with two lines and two pictures in act order. For narration, link an audio card.';
+}
+function fillMethodNotice(e,n,ms){const m=ms.find(x=>x.id===n.method);const hint=m?.builtin==='firstcut'?firstCutHint(n):m?.hint;const slot=e.querySelector('.method-slot');if(!slot)return;const kind=m&&m.available===false?`<div class="meta">${esc(m.id)} needs ${esc((m.requires||[]).join(', '))} on this machine; nothing will generate until it exists. Pick another method, or install one that works here.</div>`:m?`<div class="meta method-kind">${esc(m.id)}: ${esc(methodKind(m))}${hint?` — ${esc(hint)}`:''}${m.builtin?'':` <span title="A method that is not built in writes this card with a model, which needs Codex configured on this machine. ${esc(m.id)} is a choice, not a requirement: the built-in methods make a first film with nothing installed.">·</span>`}</div>`:'';if(slot.dataset.notice!==kind){slot.dataset.notice=kind;slot.innerHTML=kind}const g=e.querySelector('[data-generate]');if(g)g.title=m?(m.builtin?'Generate: the server makes this artifact itself, with no model.':'Generate: this runs a model through Codex to make this artifact.'):''}
 function sync(e,n){if(n.status==='running'&&!n.notice)clearNotice(e);if(e.querySelector('.title').textContent!==(shown(n.artifact)||'New node'))e.querySelector('.title').textContent=shown(n.artifact)||'New node';const m=e.querySelector('.meta');const want=`#${n.id} ${badge(n.artifact)?('v'+badge(n.artifact)+' '):''}${n.status}`;if(m.textContent!==want)m.textContent=want;const c=e.querySelector('[data-cancel]');c.hidden=n.status!=='running';c.disabled=n.status!=='running';// The button's word follows the method, because the act it performs does: a built-in card is made
 // here and an agent card spends a model. A person should not have to read the guide to know which
 // press costs an account.
@@ -433,7 +441,7 @@ const rl=e.querySelector('.repace-slot');if(rl){const key=`${n.artifact}|${n.sta
 // `shell()` builds it, so this only corrects a card whose notice changed: appending a
 // second div on every sync would stack one per refresh.
 const pr=e.querySelector('.protection');if(n.notice&&pr&&pr.textContent!==n.notice)pr.textContent=n.notice;else if(n.notice&&!pr){const x=document.createElement('div');x.className='protection';x.textContent=n.notice;e.querySelector('main').append(x)}else if(!n.notice&&pr)pr.remove();
-if(e.dataset.shown!==`${n.artifact}|${n.error}`){e.dataset.shown=`${n.artifact}|${n.error}`;const p=e.querySelector('.preview');p.innerHTML=preview(n);text(p,n);e.querySelector('.error')?.remove();if(n.error){const x=document.createElement('div');x.className='error';x.textContent=n.error;e.querySelector('main').append(x)}watchPhrases(e,n)}else if(e.querySelector('.preview audio')&&e.querySelector('[data-phrase]'))watchPhrases(e,n)}
+const previewKey=`${n.artifact}|${n.error}|${n.artifact?'':n.method}`;if(e.dataset.shown!==previewKey){e.dataset.shown=previewKey;const p=e.querySelector('.preview');p.innerHTML=preview(n);text(p,n);e.querySelector('.error')?.remove();if(n.error){const x=document.createElement('div');x.className='error';x.textContent=n.error;e.querySelector('main').append(x)}watchPhrases(e,n)}else if(e.querySelector('.preview audio')&&e.querySelector('[data-phrase]'))watchPhrases(e,n)}
 function render(){const root=$('#cards'),seen=new Set();for(const n of Object.values(state.nodes)){seen.add(n.id);if(!order.has(n.id)){order.set(n.id,stacking.next++);paintOrder()}let e=root.querySelector(`[data-id="${n.id}"]`);if(!e){e=shell(n);root.append(e)}else sync(e,n);e.style.left=(n.x||0)+'px';e.style.top=(n.y||0)+'px'}for(const k of [...root.children])if(!seen.has(+k.dataset.id))k.remove();for(const id of [...order.keys()])if(!seen.has(id))order.delete(id);draw()}
 function bind(e,n){
   e.addEventListener('pointerdown',()=>raise(n.id));

@@ -573,7 +573,7 @@ const server = createServer(async (req, res) => { try {
     // publishes rather than overwrites, that is enough: the file it points at is not
     // going anywhere, so there is nothing to copy and nothing to roll back.
     const backAdopt = n.artifact ? adoptLegacy(workdir, n.id, n.artifact) : null;
-    const back = n.artifact ? { ...(list[index]), id: ordinal, artifact: n.artifact, file: backAdopt.file, sources: n.sources || [], prompt: n.promptUsed ?? null, narration: n.narration ?? null } : null;
+    const back = n.artifact ? { id: ordinal, artifact: n.artifact, file: backAdopt.file, sources: n.sources || [], prompt: n.promptUsed ?? null, narration: n.narration ?? null, ...(n.film ? { film: n.film, script: n.script } : {}) } : null;
     if (back?.file) list.splice(index, 1, back); else list.splice(index, 1);
     // The instruction has to move with the bytes, and "no instruction recorded" is
     // itself a fact that has to move. A version kept before prompts were recorded
@@ -592,7 +592,10 @@ const server = createServer(async (req, res) => { try {
     // The narration evidence is provenance for the bytes, so it moves with them: restoring a
     // spoken take must restore what was measured about it, and restoring a tone take must
     // not leave the previous narration's numbers describing it.
-    nodes[n.id] = nodeRecord(n.id, { ...n, ...instruction, artifact: chosen.file, sources: chosen.sources || [], narration: chosen.narration ?? null, versions: list, status: "idle", error: null }); save();
+    // Restoring a cut must restore the scene plan and soundtrack state of those bytes,
+    // not leave the new cut's record beside the previous movie.
+    const restoredFilm = n.type === "video" ? { film: chosen.film ?? null, script: chosen.script ?? null } : {};
+    nodes[n.id] = nodeRecord(n.id, { ...n, ...instruction, ...restoredFilm, artifact: chosen.file, sources: chosen.sources || [], narration: chosen.narration ?? null, versions: list, status: "idle", error: null }); save();
     // Only now that no record names the old path may it go: the copy is already
     // safe under versions/ and the card has already moved somewhere else.
     if (backAdopt?.retire) rmSync(join(workdir, String(n.id), backAdopt.retire), { force: true });
@@ -940,7 +943,7 @@ const server = createServer(async (req, res) => { try {
     // The card was moved onto the published copy above, so this is already a name
     // nothing writes to. Referencing it by the same path is what keeps the kept
     // version and the card from being two different files.
-    const kept = n.artifact ? { id: ordinal, artifact: n.artifact, file: n.artifact, sources: n.sources || [], prompt: n.promptUsed ?? null, narration: n.narration ?? null } : null;
+    const kept = n.artifact ? { id: ordinal, artifact: n.artifact, file: n.artifact, sources: n.sources || [], prompt: n.promptUsed ?? null, narration: n.narration ?? null, ...(n.film ? { film: n.film, script: n.script } : {}) } : null;
     // Freezing the copies is this run's own bookkeeping, so its number must not be
     // reused - but publishing picks its own free name, above.
     // The card keeps pointing at the published artifact while the run works; only a
@@ -992,24 +995,20 @@ const server = createServer(async (req, res) => { try {
       const material = run.type === "audio" && (run.method === "narration" || chosen?.builtin === "readaloud") ? materialText({ node: run, workspace: { workdir: ws, nodes: promptNodes } }) : null;
       const narration = material ? verifyNarration({ attemptDir, artifact: result.artifact, material: material.text, from: result.from ?? material.from }) : null;
       if (narration && !narration.ok) throw new Error(`This take is not a narration: ${narration.problems.join("; ")}`);
-      // A film claims to carry a narration. The container is not the claim: the embedded track
-      // has to be loud and it has to be *this* take's narration, and the film has to last at
-      // least as long as the sentence it says. Same rule as a narration's: the check runs before
-      // anything is published, so a silent film is an error card and never an artifact.
-      // `result.scenes` is the cut's own plan - which picture is on screen between which two
-      // seconds - so the check measures the film against what the cut says it shows, not against a
-      // plan this line re-derived. A film whose second scene shows the first picture passes every
-      // other check: it is a real film with the right voice, and the only thing wrong with it is
-      // the thing a viewer would notice first.
+      // The built-in cut either carries its frozen narration or is explicitly captions-only.
+      // Both branches still check the real video and each scene against the frozen picture.
+      const silent = chosen?.builtin === "firstcut" && result.film?.soundtrack === null;
       const film = chosen?.builtin === "firstcut"
-        ? verifyFilm({ file: result.artifact, soundtrackFile: runSources.find(s => s.type === "audio")?.frozen ?? null, projectRoot: root, scenes: result.scenes ?? null, placements: result.placements ?? null })
+        ? verifyFilm({ file: result.artifact, soundtrackFile: runSources.find(s => s.type === "audio")?.frozen ?? null, projectRoot: root, scenes: result.scenes ?? null, placements: result.placements ?? null, silent, expectedSeconds: result.film?.frames / result.film?.fps })
         : null;
       if (film && !film.ok) throw new Error(`This film is not the one it claims to be: ${film.problems.join("; ")}`);
-      // And the words under it have to be readable at the pace it speaks them. This is a check of
-      // its own, not part of the film's, because it is about a different person: the sound and the
-      // pictures are for the ear and the eye, and this is about whether the eye can keep up.
       const captions = chosen?.builtin === "firstcut" ? verifyCaptions({ cues: result.cues ?? null }) : null;
-      if (captions && !captions.ok) throw new Error(`The words under this film cannot be read at the pace it speaks them: ${captions.problems.join("; ")}. Read the narration more slowly (Read again with a lower pace), or split the sentence into shorter lines, then press Make again. Nothing was published.`);
+      if (silent && captions?.evidence?.cues !== 2) throw new Error("The captions-only cut did not make one caption for each picture. Nothing was published.");
+      if (captions && !captions.ok) {
+        const fix = silent ? "Shorten the affected script line" : "Read the narration more slowly (Read again with a lower pace), or split the sentence into shorter lines";
+        const issue = silent ? "The film's captions are too fast to read" : "The words under this film cannot be read at the pace it speaks them";
+        throw new Error(`${issue}: ${captions.problems.join("; ")}. ${fix}, then press Make again. Nothing was published.`);
+      }
       // A picture is checked before it is published, for the same reason: a method that reports
       // success and leaves an empty or wrong-sized file must be an error card now rather than a
       // film that fails its scene check later with a sentence about the wrong card.

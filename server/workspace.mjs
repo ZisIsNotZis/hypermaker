@@ -61,7 +61,7 @@ export function serializeWorkspace(nodes = {}) {
       // `prompt` is part of a version for the same reason `sources` is: two takes of
       // one card are told apart by what they were asked for, and a version that
       // only remembered its bytes could not say which of two prompts made it.
-      const compact = node.versions.map(v => ({ id: v.id, artifact: v.artifact ?? null, file: v.file ?? null, sources: compactSources(v.sources), prompt: v.prompt ?? null, ...(v.narration ? { narration: v.narration } : {}) }));
+      const compact = node.versions.map(v => ({ id: v.id, artifact: v.artifact ?? null, file: v.file ?? null, sources: compactSources(v.sources), prompt: v.prompt ?? null, ...(v.narration ? { narration: v.narration } : {}), ...(v.film ? { film: v.film } : {}), ...(v.script ? { script: v.script } : {}) }));
       lines.push(`  versions: ${JSON.stringify(compact)}`);
     }
     return `${id}:\n${lines.join("\n")}`;

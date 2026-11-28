@@ -436,11 +436,20 @@ function everyPart(heard, wanted, rate, lag, { seconds = 0.25, hopSeconds = 0.1,
   return { worst, failed, missing, loudest, pauseBelow, windows: parts.length, skipped, spoken: parts.length - skipped, firstFailure };
 }
 
+function videoEvidence(video, seconds) {
+  const [num, den] = String(video.r_frame_rate || "").split("/").map(Number);
+  return {
+    seconds: Number(seconds.toFixed(2)), videoCodec: video.codec_name,
+    width: Number(video.width), height: Number(video.height),
+    fps: Number.isFinite(num) && Number.isFinite(den) && den > 0 ? Number((num / den).toFixed(3)) : null,
+  };
+}
+
 // `scenes` is what the cut says it shows and where. It is optional so that a film made before
 // scenes existed is still measured by everything above; a film that claims scenes is also measured
 // on its pictures, because "the right narration over a real video stream" is true of a film that
 // shows the first picture for its whole length.
-export function verifyFilm({ file, soundtrackFile, projectRoot, scenes = null, placements = null }) {
+export function verifyFilm({ file, soundtrackFile, projectRoot, scenes = null, placements = null, silent = false, expectedSeconds = null }) {
   const problems = [];
   if (!file || !existsSync(file)) return { ok: false, problems: [`${file || "no film"} is not a file`], evidence: null };
   const ffmpeg = tool(projectRoot, "ffmpeg"), ffprobe = tool(projectRoot, "ffprobe");
@@ -459,6 +468,23 @@ export function verifyFilm({ file, soundtrackFile, projectRoot, scenes = null, p
   const seconds = Number(probe.format?.duration);
   if (!video) problems.push("the file has no video stream");
   if (!Number.isFinite(seconds) || seconds <= 0) problems.push("the file reports no usable duration");
+  // Captions-only is an explicit plan, never an exception for missing narration.
+  if (silent) {
+    if (soundtrackFile || audio) problems.push("a captions-only film must not contain or reference a soundtrack");
+    if (!video || video.codec_name !== "h264" || !String(probe.format?.format_name || "").split(",").includes("mp4")) problems.push("the captions-only cut is not an H.264 MP4");
+    if (!Number.isFinite(expectedSeconds) || expectedSeconds <= 0 || Math.abs(seconds - expectedSeconds) > 0.04) {
+      problems.push(`the captions-only film reports ${seconds}s instead of the planned ${expectedSeconds}s, so the captions may be cut short`);
+    }
+    if (!Array.isArray(scenes) || scenes.length !== 2) problems.push("the captions-only cut must have two planned picture scenes");
+    if (problems.length) return { ok: false, problems, evidence: null };
+    const pictures = verifyScenes({ file, scenes, tool: ffmpeg, ffprobe, placements });
+    if (!pictures.problems.length && pictures.evidence?.length !== 2) pictures.problems.push("both captions-only scenes must be checked against their pictures");
+    return {
+      ok: pictures.problems.length === 0,
+      problems: pictures.problems,
+      evidence: { ...videoEvidence(video, seconds), audioCodec: null, scenes: pictures.evidence }
+    };
+  }
   // The film has to be at least as long as what it says out loud. A film shorter than its own
   // soundtrack is the complaint the first agent take produced: a fixed 90 frames under a 6 s
   // narration cut the sentence in half.
@@ -553,14 +579,8 @@ export function verifyFilm({ file, soundtrackFile, projectRoot, scenes = null, p
     ok: true,
     problems: [],
     evidence: {
-      seconds: Number(seconds.toFixed(2)),
-      videoCodec: video.codec_name,
+      ...videoEvidence(video, seconds),
       audioCodec: audio.codec_name,
-      width: Number(video.width),
-      height: Number(video.height),
-      // ffprobe reports a frame rate as a rational string (`30/1`); it is divided here rather than
-      // printed, and a rate it cannot express is `null` rather than a plausible-looking zero.
-      fps: (() => { const [num, den] = String(video.r_frame_rate || "").split("/").map(Number); return Number.isFinite(num) && Number.isFinite(den) && den > 0 ? Number((num / den).toFixed(3)) : null; })(),
       peak,
       // The *worst* speaking window's agreement, not the best one: a film whose middle is perfect
       // and whose end is silent must not report a good number. Kept on the card because it is the

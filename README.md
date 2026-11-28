@@ -1,6 +1,6 @@
 **English** | [简体中文](README.zh-CN.md)
 
-> **Status: an ordinary creative session works, and is now what the tests follow (0.1.0, 2026-11-27).** You can make a film from canvas material, change the material, keep the take you approved, compare two takes, go back to one, and survive a failure, a Stop or a restart without losing the one you liked. `npm test` passes **229/229** with a usable Chromium and a speech engine installed (engine tests that need one skip, saying so, on a machine without it), and a blank canvas can make its first playable film with no model and no account at all (see **The first film needs no account**); [Verification limits](#verification-limits) separates what is real from what a fixture stands in for, says what the offline voice was **measured** to do and that a *natural* voice is still unproven, and that nothing here has been judged on *taste*. A listening sheet is kept as the listener leaves it: an answer on a line, a note that they heard nothing but machine noise, or both. Notes are kept as written and never scored - only the transcript decides what was heard, and the score says which fraction of which words it is.
+> **Status: an ordinary creative session works, and is now what the tests follow (0.1.0, 2026-11-27).** You can make a film from canvas material, change the material, keep the take you approved, compare two takes, go back to one, and survive a failure, a Stop or a restart without losing the one you liked. `npm test` passes **230/230** with a usable Chromium and a speech engine installed (engine tests that need one skip, saying so, on a machine without it), and a blank canvas can make its first playable film with no model and no account at all (see **The first film needs no account**); [Verification limits](#verification-limits) separates what is real from what a fixture stands in for, says what the offline voice was **measured** to do and that a *natural* voice is still unproven, and that nothing here has been judged on *taste*. A listening sheet is kept as the listener leaves it: an answer on a line, a note that they heard nothing but machine noise, or both. Notes are kept as written and never scored - only the transcript decides what was heard, and the score says which fraction of which words it is.
 
 <div align="center">
   <img src="docs/logo.svg" alt="Hypermaker logo" width="112" />
@@ -243,6 +243,15 @@ Leave **Codex model** blank and **Effort** at **Configured in Codex** to use the
 
 On this host the real image request hit route discovery and model-refresh errors and produced no script; the full canvas workflow was verified separately against a simulated CLI. If drafting fails, **Write script locally** switches to `plain` so you can replace your brief with two script lines and press **Make**. You can also start with `plain`. Neither path calls a model. See [evidence and rerun instructions](docs/evidence/two-act-script.md).
 
+## Make a two-act film without a speech engine
+
+1. In a `plain` text card, write two short lines, one per act, and press **Make**.
+2. Make two `titlecard` image cards locally (one per scene), or use picture cards already on your canvas. Link the text and both pictures to a `firstcut` video card, with the pictures in act order. Do not link an audio card.
+3. The video card says **Captions only (no audio)**. Press **Make**, then play or download the MP4. The captions are part of the picture; no separate subtitle file is needed. Each line has at least three seconds on screen; keep each line within 112 characters.
+4. Change the second image card and press **Make** on the video again. Use the **kept** version button to bring back the original movie; the newer picture link stays in place for your next cut.
+
+This needs local Chromium for rendering, but no model, speech engine, image upload or account. If you already have a usable speech engine and want narration, make a `readaloud` take and link that audio to the video instead. [Replay the offline canvas walkthrough](docs/evidence/captions-only.md).
+
 ## The mental model
 
 | Thing | Meaning |
@@ -310,7 +319,7 @@ HYPERMAKER_CHROME=/path/to/chrome npm test
 On WSL the checkout may live on a Windows drive (`/mnt/d/…`), but the suite's scratch space must not: Chromium cannot create its profile there, so if `TMPDIR` points into the checkout every browser case fails to launch with `Target page, context or browser has been closed` — measured as 137 pass / 39 fail / 1 skip — which reads like broken code. Point it at a Linux filesystem instead:
 
 ```bash
-TMPDIR=$(mktemp -d /var/tmp/hypermaker-XXXX) npm test     # measured: 229/229 with a browser and espeak-ng
+TMPDIR=$(mktemp -d /var/tmp/hypermaker-XXXX) npm test     # measured: 230/230 with a browser and espeak-ng
 ```
 
 Two details make that one line copyable. The directory is created by the command, because `TMPDIR` naming a path that does not exist fails before any test starts. And the template is given explicitly, because bare `mktemp -d` honours an existing `TMPDIR` — if yours already points at the Windows mount, the new directory would be created there and every browser case would still fail. To keep one directory across runs instead: `mkdir -p /var/tmp/hypermaker-tmp` once, then `TMPDIR=/var/tmp/hypermaker-tmp npm test`.

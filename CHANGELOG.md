@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased — two-act captions without narration
+
+- `firstcut` can make an MP4 with burnt captions and no audio stream from two handwritten lines and two local picture cards. Linking audio still requests the existing checked narrated cut.
+- A restored film brings back its original scene record, frozen sources and composition alongside its playable MP4. Current links are unchanged.
+- The [offline canvas walkthrough](docs/evidence/captions-only.md) renders, plays, changes act II and restores the first cut without a model, engine or image upload.
+
 ## Unreleased — two-act drafting and configured Codex models
 
 The canvas no longer overrides your Codex model or effort unless you fill those settings in. A two-act draft failure distinguishes route discovery from a model/input rejection when the CLI provides that evidence, without logging raw provider diagnostics. **Write script locally** lets you keep the picture links and continue without a model.

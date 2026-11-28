@@ -445,6 +445,19 @@ next line of the parent executes, and a run's own type and id are therefore also
 the environment (`HYPERMAKER_NODE_TYPE`, `HYPERMAKER_NODE_ID`) rather than re-derived by
 reading that file; reading it early made a test pick the wrong fixture intermittently.
 
+In `firstcut`, an audio link still selects the narrated path; an invalid linked take never falls
+back to silence. With no audio link, the built-in cut accepts exactly one frozen script and two
+frozen images. The two nonblank lines become full-scene burnt captions, in picture-link order.
+At 30 fps, each act gets at least three seconds and enough whole frames to stay at or below
+16 characters per second. Lines over 112 characters are refused (a seven-second cap per act).
+The render has no audio component. Before publication, `verifyFilm` checks an H.264 MP4 with
+no audio stream, the planned duration and each scene against its frozen image; `verifyCaptions`
+checks the planned cue rates. This path never needs a voice or model.
+
+A kept `firstcut` version carries its film record and composition path as well as its frozen
+sources and MP4; restoring swaps them together. Older kept versions without records still play,
+but the card will not attach measurements from a different cut.
+
 ## Provenance of an artifact
 
 A node's `sources` records what a finished artifact was built from: `{id, type, artifact}`
