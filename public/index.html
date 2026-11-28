@@ -105,7 +105,32 @@ function filmLine(n){const f=n.film;if(!f||typeof f!=='object')return'';const so
 // been checked. Only a take whose record carries `windows` was measured that way, so only that
 // take is described that way; an older one says what it has and that the stronger check is what a
 // new cut would get. Both are honest, and neither rewrites history.
-const cover=f.spokenWindows!=null?` of ${f.spokenWindows}/${f.windows} windows`:null;const m=f.correlation==null?'unmeasured':f.windows?`worst window ${Number(f.correlation).toFixed(3)}${cover}`:`matched ${Number(f.correlation).toFixed(3)} (one sampled window; a new cut is checked over every tenth of a second)`;return `<div class="meta film" title="Measured from the published file: the video stream, its duration, and how well the embedded audio matches the narration it was given. ${f.windows?'Every tenth of a second the narration speaks was compared, and the number is the worst of them; a pause written in the script is not counted as speech.':'This take was measured by an earlier check: one sampled window of the take, which is why it carries no coverage figure.'}">film: ${esc(f.seconds)}s, ${esc(f.width)}x${esc(f.height)}, ${esc(f.videoCodec||'video')}+${esc(f.audioCodec||'no audio')} · ${esc(m)}${sound}${poster}</div>`}
+const cover=f.spokenWindows!=null?` of ${f.spokenWindows}/${f.windows} windows`:null;const m=f.correlation==null?'unmeasured':f.windows?`worst window ${Number(f.correlation).toFixed(3)}${cover}`:`matched ${Number(f.correlation).toFixed(3)} (one sampled window; a new cut is checked over every tenth of a second)`;return `<div class="meta film" title="Measured from the published file: the video stream, its duration, and how well the embedded audio matches the narration it was given. ${f.windows?'Every tenth of a second the narration speaks was compared, and the number is the worst of them; a pause written in the script is not counted as speech.':'This take was measured by an earlier check: one sampled window of the take, which is why it carries no coverage figure.'}">film: ${esc(f.seconds)}s, ${esc(f.width)}x${esc(f.height)}, ${esc(f.videoCodec||'video')}+${esc(f.audioCodec||'no audio')} · ${esc(m)}${sound}${poster}</div>${sceneLine(f)}`}
+// A film of more than one scene says so, and says what was measured about the pictures rather than
+// only about the sound. A take made before scenes existed carries no `scenes`, and then this says
+// nothing at all - the same rule as the sound sentence above: a card never claims a check that was
+// not made about the take it is describing.
+//
+// Each scene names the picture by the CARD it came from, not only by filename. Every picture card
+// publishes the same name (`card.png`, `v1-card.png`), so a two-scene film read `over card.png (v1)`
+// twice and a person could not tell the two pictures apart - found by walking the real entry and
+// reading the card, not by reading this function. The card number is the thing that distinguishes
+// them, and it is what the person would click to go and look.
+function sceneLine(f) {
+  if (!Array.isArray(f.scenes) || !f.scenes.length) return '';
+  const measured = f.scenes.filter(s => typeof s.shown === 'number' && Number.isFinite(s.shown));
+  const worst = measured.length ? Math.min(...measured.map(s => s.shown)) : null;
+  const names = f.scenes.map((s, i) => {
+    const from = s.from
+      ? `#${esc(s.from.id)}${shown(s.from.artifact) ? ` ${esc(shown(s.from.artifact))}` : ''}${badge(s.from.artifact) ? ` (v${badge(s.from.artifact)})` : ''}`
+      : 'no picture';
+    const when = `${Number(s.start).toFixed(1)}-${Number(s.end).toFixed(1)}s`;
+    const how = typeof s.shown === 'number' && Number.isFinite(s.shown) ? `, match ${s.shown.toFixed(3)}` : '';
+    return `scene ${i + 1} ${when} over ${from}${how}`;
+  }).join(' · ');
+  const sentence = worst == null ? 'its pictures were not compared' : `worst picture match ${worst.toFixed(3)}`;
+  return `<div class="meta scenes" title="Each scene's frame was decoded from the published film and compared with the picture that scene says it shows, so a film showing the first picture for its whole length is refused rather than accepted.${f.scenes.some(s => s.caption) ? ' Each scene is captioned with its own words.' : ''}">${esc(f.scenes.length)} scene${f.scenes.length === 1 ? '' : 's'}: ${names} · ${esc(sentence)}</div>`;
+}
 // The control a person was missing: ask for the same words at another pace, without pressing
 // Generate. Pressing Generate is a different act - it re-runs the agent and re-decides the script,
 // the voice and the reading table - and a writer who has approved a take and only wants it slower
@@ -448,13 +473,140 @@ window.addEventListener('pointercancel',()=>{if(drag){drag.e.classList.remove('d
 function toView(e){const r=$('#viewport').getBoundingClientRect();return{x:e.clientX-r.left,y:e.clientY-r.top}}const worldPoint=p=>({x:(p.x-ox)/scale,y:(p.y-oy)/scale});
 // Pan and zoom used to call an undefined setView(), so the canvas never moved.
 function setView(){const w=$('#world');w.style.transform=`translate(${ox}px,${oy}px) scale(${scale})`}
-function draw(){const s=$('.edges');s.querySelectorAll('.edge,.edge-hit').forEach(x=>x.remove());Object.values(state.nodes).forEach(t=>(t.inputs||[]).forEach(id=>{const a=state.nodes[id];if(!a)return;const sx=a.x+250,sy=a.y+15,tx=t.x,ty=t.y+15,m=(sx+tx)/2,d=`M${sx} ${sy} C${m} ${sy},${m} ${ty},${tx} ${ty}`;for(const c of['edge','edge-hit']){const p=document.createElementNS('http://www.w3.org/2000/svg','path');p.classList.add(c);p.setAttribute('d',d);if(c==='edge-hit'){p.dataset.source=id;p.dataset.target=t.id;p.oncontextmenu=e=>{e.preventDefault();e.stopPropagation();safe(()=>api('/api/unlink',{source:id,target:t.id}))}}s.append(p)}}))}
-// A link that runs behind a card body is still removable: probe with the cards out
-// of the hit test, then restore them. Card controls keep their own native menu, so
-// right-clicking Delete, Generate, a select or the prompt never unlinks anything.
-function unlinkUnderCursor(x,y){const cards=$('#cards');cards.classList.add('probing');const hit=document.elementsFromPoint(x,y).map(e=>e.closest('.edge-hit')).find(Boolean);cards.classList.remove('probing');if(!hit)return false;const source=hit.dataset.source,target=hit.dataset.target;safe(()=>api('/api/unlink',{source,target}));return true}
-const ownsMenu=e=>!!e.closest('.edge-hit,button,select,textarea,input,pre,a');
-document.addEventListener('contextmenu',e=>{if(ownsMenu(e.target))return;if(!unlinkUnderCursor(e.clientX,e.clientY))return;e.preventDefault();e.stopPropagation()},true);
+// Links are drawn from *different* points on a card's edge, not from one point for every link.
+//
+// A supervisor hit this with real cards: four links leaving the same card edge towards four cards
+// at the same height drew one line, so right-clicking it to remove one link was a guess - the line
+// they could see was four links and the menu removed whichever happened to be on top. Moving the
+// second picture card down made the links visibly separate, which is how the workaround was found.
+// The fix is in the drawing rather than in the gesture: each link gets its own anchor, spread down
+// the source's right edge and up the target's left edge, so two links are two lines everywhere
+// except inside a card, where nothing is drawn anyway.
+//
+// The spread is bounded to the header band (the top ~30px a card always has) so an anchor is never
+// below the visible card top on a source with a short body, and it is measured in world units so
+// it does not change with zoom.
+function linkEnds(a, t, index, count) {
+  // Fan symmetrically around the header line: one link starts at the header, two straddle it.
+  const step = 9, spread = (count - 1) * step;
+  const offset = index * step - spread / 2;
+  return { sx: a.x + 250, sy: a.y + 15 + offset, tx: t.x, ty: t.y + 15 + offset };
+}
+function draw() {
+  const s = $('.edges');
+  s.querySelectorAll('.edge,.edge-hit').forEach(x => x.remove());
+  // Each target's links are numbered so the anchors of one card's incoming links fan out together,
+  // and each source's outgoing links likewise. Numbering per (target) is what makes the four links
+  // into one film card separate at the film's edge, which is where the right-click lands.
+  const incoming = new Map();
+  Object.values(state.nodes).forEach(t => {
+    const ids = (t.inputs || []).filter(id => state.nodes[id]);
+    ids.forEach((id, i) => {
+      const a = state.nodes[id];
+      const { sx, sy, tx, ty } = linkEnds(a, t, i, ids.length);
+      const m = (sx + tx) / 2, d = `M${sx} ${sy} C${m} ${sy},${m} ${ty},${tx} ${ty}`;
+      for (const c of ['edge', 'edge-hit']) {
+        const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        p.classList.add(c);
+        p.setAttribute('d', d);
+        if (c === 'edge-hit') {
+          // A hit path carries WHICH link it is, and nothing else. It must not carry its own
+          // `oncontextmenu`: that handler fires for the path under the pointer, so with overlapping
+          // strokes it answered by paint order and the nearest-curve decision below never ran.
+          // That was a real defect a supervisor reproduced twice - their click at (1327,164) was
+          // nearer picture #4, and #1 was unlinked anyway - because the per-path handler won before
+          // the document-level one was consulted. One listener, at the document, or the rule is not
+          // a rule.
+          p.dataset.source = id;
+          p.dataset.target = t.id;
+        }
+        s.append(p);
+      }
+    });
+    incoming.set(t.id, ids.length);
+  });
+}
+// WHICH LINK a right-click means, decided by distance rather than by paint order.
+//
+// Two supervisor reports, in order. First: several links from one card towards cards at the same
+// height drew as one line, so there was nothing to aim at - fixed by fanning the anchors out.
+// Second, and this one is the sharper defect: with the lines visibly separated, right-clicking the
+// *middle* of the link to picture #4 removed the link to the text card #1. The gesture was picking
+// `elementsFromPoint()[0]`, i.e. whichever 20 px-wide hit path happened to be painted last, and
+// near the middle of the canvas those curves cross and sit within a few px of each other. A person
+// aiming at a line was therefore choosing by paint order, which is not something anyone can see.
+//
+// The rule now is the one a drawing program uses: the link nearest the pointer wins, measured along
+// its own path, and a hit that is further away than `LINK_REACH` screen px is no link at all. The
+// path is sampled rather than solved analytically - the curves are short, `getPointAtLength` is
+// already how every other test reads them, and a sample every 4 px cannot miss by more than 2 px
+// on a curve whose tightest bend is a 250 px card edge.
+//
+// When two candidates are within a pixel of each other the pointer really is on both, and the
+// answer must not be arbitrary: the winner is reported in a line above the canvas before the link
+// goes, and the person can move a few pixels. That is stated rather than guessed at, because a
+// silent choice between two links is the thing that was reported.
+const LINK_REACH = 14;
+function nearestLink(x, y) {
+  const cards = $('#cards');
+  // A link that runs behind a card body is still removable, so the cards come out of the hit test
+  // for the measurement and go straight back. This is done by class rather than by removing the
+  // paths, so nothing the person is looking at flickers.
+  cards.classList.add('probing');
+  const candidates = [...document.querySelectorAll('.edge-hit')];
+  let best = null;
+  for (const path of candidates) {
+    const ctm = path.getScreenCTM();
+    if (!ctm) continue;
+    const total = path.getTotalLength(), step = Math.max(2, 4 / Math.max(scale, .35));
+    let nearest = Infinity;
+    for (let at = 0; at <= total; at += step) {
+      const p = path.getPointAtLength(at);
+      const sx = p.x * ctm.a + ctm.e, sy = p.y * ctm.d + ctm.f;
+      const d = Math.hypot(sx - x, sy - y);
+      if (d < nearest) nearest = d;
+    }
+    if (nearest <= LINK_REACH && (!best || nearest < best.distance)) best = { path, distance: nearest };
+  }
+  cards.classList.remove('probing');
+  return best ? { source: Number(best.path.dataset.source), target: Number(best.path.dataset.target), distance: best.distance } : null;
+}
+// What is about to be removed is said before it is removed: the source card's own name and the
+// target's. A right-click that unlinks silently gives a person nothing to check against.
+function linkSentence(link) {
+  const from = state.nodes[link.source], to = state.nodes[link.target];
+  const name = node => node ? (shown(node.artifact) || `${node.type || 'card'} #${node.id}`) : 'a missing card';
+  return `${name(from)} (card #${link.source}) → this card's input`;
+}
+function unlinkUnderCursor(x, y) {
+  const cards = $('#cards'); cards.classList.add('probing'); const hit = document.elementsFromPoint(x, y).map(e => e.closest('.edge-hit')).find(Boolean); cards.classList.remove('probing'); const link = nearestLink(x, y);
+  if (!link) return false;
+  safe(() => api('/api/unlink', { source: link.source, target: link.target }).then(() => {
+    note(`Removed the link from card #${link.source}${state.nodes[link.source]?.artifact ? ` (${shown(state.nodes[link.source].artifact)})` : ''}.`);
+  }));
+  return true;
+}
+// The line under the canvas that says what happened. It exists because every correction in this
+// section came from a person not being able to tell what the canvas was about to do.
+function note(text) {
+  let line = $('#canvas-note');
+  if (!line) {
+    line = document.createElement('div');
+    line.id = 'canvas-note';
+    line.className = 'meta';
+    line.style.cssText = 'position:absolute;left:12px;bottom:12px;padding:6px 10px;background:rgba(20,22,26,.92);border:1px solid #4b505a;border-radius:4px;max-width:70%;z-index:20';
+    $('#viewport').append(line);
+  }
+  line.textContent = text;
+  clearTimeout(note.timer);
+  note.timer = setTimeout(() => line.remove(), 6000);
+}
+const ownsMenu = e => !!e.closest('.edge-hit,button,select,textarea,input,pre,a');
+document.addEventListener('contextmenu', e => {
+  // The native menu belongs to anything that is not canvas background, and to a card's own controls.
+  if (e.target.closest('button,select,textarea,input,pre,a')) return;
+  if (unlinkUnderCursor(e.clientX, e.clientY)) { e.preventDefault(); e.stopPropagation(); }
+}, true);
 $('#viewport').ondblclick=e=>{if(e.target.closest('.card'))return;const p=worldPoint(toView(e));api('/api/node',{x:p.x,y:p.y,type:'text',quality:'standard'})};
 let panning=null;const stage=document.body;stage.addEventListener('pointerdown',e=>{if(e.button!==0||e.target.closest('.card,header'))return;const p=toView(e);panning={x:p.x,y:p.y,ox,oy}});window.addEventListener('pointermove',e=>{if(!panning)return;const p=toView(e);ox=panning.ox+p.x-panning.x;oy=panning.oy+p.y-panning.y;setView()});window.addEventListener('pointerup',()=>panning=null);
 $('#viewport').onwheel=e=>{if(e.target.closest('textarea,pre'))return;e.preventDefault();const p=toView(e),w=worldPoint(p),next=Math.max(.35,Math.min(2,scale*(e.deltaY<0?1.1:.9)));ox=p.x-w.x*next;oy=p.y-w.y*next;scale=next;setView()};

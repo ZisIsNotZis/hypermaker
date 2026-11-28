@@ -17,12 +17,194 @@
 // install, the same binaries `test/film.test.mjs` uses, so a person and a test measure with one
 // tool.
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { basename, join } from "node:path";
+import { tmpdir } from "node:os";
 import { wavSamples } from "../voice/wav.mjs";
 import { correlation } from "../voice/bind.mjs";
 
 const tool = (projectRoot, name) => join(projectRoot || process.cwd(), "node_modules/@remotion/compositor-linux-x64-gnu", name);
+
+// SCENES. One picture is one scene, and the cut between two of them is a measured fact about the
+// narration rather than a number someone typed.
+//
+// Why this exists at all: a film was one still with a title over it, and a second picture could
+// not be reached without a model - an image card's only methods handed the work to an agent, and
+// the model route on this machine does not answer. "Continue with independently editable scenes"
+// is the next thing the project index asks for, and it is exactly the thing that needs a rule
+// rather than a feature: what decides when the picture changes?
+//
+// The rule: the narration's own measured phrase times. Phrase boundaries are where the voice
+// actually stops and starts, so a cut there lands between sentences instead of in the middle of
+// one. Scenes are apportioned by *spoken duration* - not by phrase count - so that a scene holding
+// three short lines is not given the same screen time as one holding a long one.
+const captionOf = (phrases, limit = 120) => {
+  const words = phrases.map(p => String(p.text || "").trim()).filter(Boolean).join(" ");
+  if (words.length <= limit) return words;
+  const cut = words.slice(0, limit);
+  return `${cut.slice(0, Math.max(0, cut.lastIndexOf(" ")))}…`;
+};
+
+// `pictures` are the linked image sources in link order; `phrases` are the narration's measured
+// phrases; `seconds` is the film's real length. The result is one entry per scene with the times
+// the cutter and the checker must agree on, which is why it lives here rather than in the cutter:
+// a plan the checking code re-derives is a plan that can disagree with the one that was rendered.
+export function planScenes({ pictures = [], phrases = [], seconds = 0 }) {
+  if (!pictures.length) return [];
+  const usable = phrases.filter(p => Number.isFinite(Number(p.start)) && Number.isFinite(Number(p.duration)) && String(p.text || "").trim());
+  // More than one picture without measured phrase times is a cut nobody can justify. Distributing
+  // the narration evenly instead would put a cut in the middle of a sentence and call it a scene,
+  // and the film would look deliberate. Refusing is the honest answer, and the person can fix it
+  // by regenerating the narration (every take this build publishes carries its phrase times).
+  if (pictures.length > 1 && usable.length < 2) return null;
+  if (!usable.length) {
+    // One picture, no phrase times: the whole film is one scene, which is what a film of a take
+    // that predates phrase records is.
+    return [{ index: 0, start: 0, end: Number(seconds) || 0, picture: pictures[0], phrases: [], caption: "" }];
+  }
+  const total = usable.reduce((sum, p) => sum + Math.max(0, Number(p.duration)), 0) || 1;
+  const count = Math.min(pictures.length, usable.length);
+  // Boundaries at equal spoken durations: the k-th cut is the phrase start nearest k*T/count.
+  const bounds = [0];
+  for (let k = 1; k < count; k++) {
+    const target = (total * k) / count;
+    let acc = 0, best = 1, bestGap = Infinity;
+    for (let i = 1; i < usable.length; i++) {
+      acc += Math.max(0, Number(usable[i - 1].duration));
+      const gap = Math.abs(acc - target);
+      if (gap < bestGap) { bestGap = gap; best = i; }
+    }
+    bounds.push(Math.max(best, bounds[bounds.length - 1] + 1));
+  }
+  bounds.push(usable.length);
+  // A picture nobody is given time for is not a scene. When there are more pictures than phrases
+  // the extra ones are dropped rather than shown for a frame, and the count says so.
+  const scenes = [];
+  for (let k = 0; k < count; k++) {
+    const group = usable.slice(bounds[k], bounds[k + 1]);
+    if (!group.length) continue;
+    const start = k === 0 ? 0 : Number(group[0].start);
+    const end = k === count - 1 ? Number(seconds) || start : Number(usable[bounds[k + 1]]?.start ?? seconds) || start;
+    scenes.push({ index: scenes.length, start, end, picture: pictures[Math.min(k, pictures.length - 1)], phrases: group, caption: captionOf(group) });
+  }
+  return scenes.map((s, i) => ({ ...s, index: i }));
+}
+
+// One frame of the film as a small grid of colours, and one picture as the same grid. `cover`
+// rather than `stretch`, because that is what the composition does with a poster whose aspect is
+// not the frame's: scaling differently on each side would compare two different crops and call a
+// correct film wrong.
+function asGrid(tool, file, { at = null, scratch, crop } = {}) {
+  const out = join(scratch, `f${Math.random().toString(36).slice(2)}.rgb`);
+  const filters = [crop ? "crop=iw:ih*2/3:0:0" : null, "scale=32:18:force_original_aspect_ratio=increase", "crop=32:18"].filter(Boolean).join(",");
+  const args = ["-hide_banner", "-loglevel", "error", "-y"];
+  if (at != null) args.push("-ss", Number(at).toFixed(3));
+  args.push("-i", file, "-frames:v", "1", "-vf", filters, "-pix_fmt", "rgb24", "-c:v", "rawvideo", "-f", "image2", out);
+  execFileSync(tool, args, { stdio: "pipe" });
+  return readFileSync(out);
+}
+
+// Does the film show the picture each scene says it does?
+//
+// Measured on pixels, at the middle of each scene, with the caption band cropped off, against the
+// frozen poster bytes the run was given rather than against anything the renderer wrote. A film that
+// shows scene one's picture for the whole length is the failure this is for: every cheaper check
+// passes it, because the film is a real h264 file carrying the right narration.
+//
+// A FIXED THRESHOLD WAS NOT ENOUGH, and that is the shape of this function rather than a detail.
+// The first version refused a scene below 0.8 agreement with its own picture. Then a real two-scene
+// film was re-cut with its second picture replaced, and the replacement - a different sentence drawn
+// by the same server-run method, so the same layout with different words - measured 0.865 against
+// the *first* picture and 0.95 against its own. The two populations were 0.065 apart while the
+// threshold sat 0.065 below the honest one: a scene showing the wrong picture would have passed.
+// Two pictures made by one method look alike; no absolute number can tell "this scene's picture"
+// from "that scene's picture" when both are 32x18 gradients of the same layout.
+//
+// So the question asked is the relative one, which is the question a viewer asks: *is this scene
+// showing the picture it names, rather than one of the other pictures in this film?* Each scene's
+// frame is compared with every distinct picture the film uses, and it must rank as its own best
+// match by a margin. Absolute agreement is still reported and still has a floor, but the ranking is
+// what decides, because that is the comparison with any margin at all in it.
+//
+// When a film has only one picture the ranking is vacuous - there is nothing to confuse it with - so
+// the absolute floor alone decides, and it is stated as such rather than pretended to be stronger.
+function verifyScenes({ file, scenes, tool }) {
+  const usable = scenes.filter(s => s.picture && (s.picture.frozen || s.picture.file) && existsSync(s.picture.frozen || s.picture.file));
+  if (!usable.length) return { problems: [], evidence: null };
+  const scratch = mkdtempSync(join(tmpdir(), "hypermaker-scenes-"));
+  const problems = [], measured = [];
+  try {
+    // Each distinct picture once: a picture used by two scenes is one candidate, not two.
+    const pictures = new Map();
+    for (const scene of usable) {
+      const path = scene.picture.frozen || scene.picture.file;
+      if (!pictures.has(path)) pictures.set(path, asGrid(tool, path, { scratch, crop: true }));
+    }
+    for (const scene of usable) {
+      const mid = (Number(scene.start) + Number(scene.end)) / 2;
+      const own = scene.picture.frozen || scene.picture.file;
+      const frame = asGrid(tool, file, { at: mid, scratch, crop: true });
+      // Every candidate, in one pass, so the ranking is over the same pixels the ratio uses.
+      const scores = [...pictures].map(([path, grid]) => ({ path, score: correlation(frame, grid) })).sort((a, b) => b.score - a.score);
+      const mine = scores.find(s => s.path === own).score;
+      const best = scores[0];
+      const rival = best.path === own ? (scores[1] ?? null) : best;
+      const margin = rival ? mine - rival.score : null;
+      measured.push({ scene: scene.index, at: Number(mid.toFixed(2)), agreement: Number(mine.toFixed(3)), ...(rival ? { rivalAgreement: Number(rival.score.toFixed(3)), margin: Number(margin.toFixed(3)) } : {}) });
+      if (rival) {
+        // Its own picture has to be the best match, by a visible distance. 0.02 is well below the
+        // 0.065 that two genuinely different pictures measured, and well above encoder noise, which
+        // on a correct scene measured 0.000 - the same picture through h264 and as a PNG agree to
+        // three places.
+        // Pictures are named by the CARD they came from, not only by filename. Every picture card
+        // publishes the same name (`card.png`), so a sentence naming the file alone read `shows
+        // card.png rather than the picture it was cut from (card.png)` - true, useless, and found by
+        // reading the refusal rather than the check.
+        const card = path => scenes.find(s => (s.picture?.frozen || s.picture?.file) === path)?.picture;
+        if (best.path !== own) {
+          const shownBy = card(best.path), wanted = card(own);
+          problems.push(`at ${mid.toFixed(2)}s scene ${scene.index + 1} shows the picture from card #${shownBy?.id ?? "?"} rather than the one it was cut from, card #${wanted?.id ?? "?"} (agreement ${best.score.toFixed(3)} against ${mine.toFixed(3)})`);
+        } else if (margin < 0.02) {
+          const rivalBy = card(rival.path);
+          problems.push(`at ${mid.toFixed(2)}s scene ${scene.index + 1} cannot be told apart from card #${rivalBy?.id ?? "?"}'s picture in the same film (${mine.toFixed(3)} against ${rival.score.toFixed(3)}), so it cannot be shown to show the picture it names`);
+        }
+      } else if (mine < 0.8) {
+        problems.push(`at ${mid.toFixed(2)}s scene ${scene.index + 1} does not show the picture it was cut from (agreement ${mine.toFixed(2)} with ${basename(own)})`);
+      }
+    }
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+  return { problems, evidence: measured };
+}
+
+// A picture that a film is about to use has to be a real picture, and it has to be the size the
+// film will show it in.
+//
+// Both halves are things a person meets rather than things a renderer asserts. A method that exits
+// successfully and leaves a zero-byte or 1x1 file would be published as "your picture", and the
+// first film made from it would fail its scene check several minutes later with a sentence about
+// the *film* - sending someone to look at the wrong card. The size matters for the same reason: a
+// 320x180 picture stretched to fill 1280x720 is a decision, not an accident, but a film that puts
+// one in a scene is making it silently, so a mismatch is named here while it is still one card's
+// problem.
+export function verifyPicture({ file, projectRoot, width = null, height = null }) {
+  if (!file || !existsSync(file)) return { ok: false, problems: [`${file || "no picture"} is not a file`], evidence: null };
+  const ffprobe = tool(projectRoot, "ffprobe");
+  if (!existsSync(ffprobe)) return { ok: false, problems: ["this project's Remotion install has no ffprobe, so the picture cannot be measured; nothing was published"], evidence: null };
+  let probe;
+  try { probe = JSON.parse(execFileSync(ffprobe, ["-v", "error", "-print_format", "json", "-show_streams", file], { encoding: "utf8" })); }
+  catch (error) { return { ok: false, problems: [`ffprobe could not read the picture (${error.message.split("\n")[0]}), so it is not a decodable image`], evidence: null }; }
+  const stream = (probe.streams || []).find(s => s.codec_type === "video");
+  if (!stream) return { ok: false, problems: ["the file holds no picture stream"], evidence: null };
+  const at = { width: Number(stream.width), height: Number(stream.height), codec: stream.codec_name };
+  if (!(at.width > 1) || !(at.height > 1)) return { ok: false, problems: [`the picture is ${at.width}x${at.height}, which is not a picture`], evidence: at };
+  const problems = [];
+  if (width != null && height != null && (at.width !== width || at.height !== height)) {
+    problems.push(`the picture came out ${at.width}x${at.height} where the card asked for ${width}x${height}, so it would be stretched in a film`);
+  }
+  return { ok: !problems.length, problems, evidence: at };
+}
 
 // Two wrong ways to make fact 3, both found by walking the real entry rather than by reading it.
 // The shape of this file is the answer to them, not a matter of taste:
@@ -123,7 +305,11 @@ function everyPart(heard, wanted, rate, lag, { seconds = 0.25, hopSeconds = 0.1,
   return { worst, failed, missing, loudest, pauseBelow, windows: parts.length, skipped, spoken: parts.length - skipped, firstFailure };
 }
 
-export function verifyFilm({ file, soundtrackFile, projectRoot }) {
+// `scenes` is what the cut says it shows and where. It is optional so that a film made before
+// scenes existed is still measured by everything above; a film that claims scenes is also measured
+// on its pictures, because "the right narration over a real video stream" is true of a film that
+// shows the first picture for its whole length.
+export function verifyFilm({ file, soundtrackFile, projectRoot, scenes = null }) {
   const problems = [];
   if (!file || !existsSync(file)) return { ok: false, problems: [`${file || "no film"} is not a file`], evidence: null };
   const ffmpeg = tool(projectRoot, "ffmpeg"), ffprobe = tool(projectRoot, "ffprobe");
@@ -226,6 +412,12 @@ export function verifyFilm({ file, soundtrackFile, projectRoot }) {
     // refusal that quotes 0.998 next to "part of the take is missing" reads as a contradiction.
     return { ok: false, problems: [refusal], evidence: { peak, correlation: Number(parts.worst.score.toFixed(3)), alignment: Number(anchor.toFixed(3)), disagreements: parts.failed.slice(0, 12), windows: parts.windows, spokenWindows: parts.spoken } };
   }
+  // The sound is this narration, all of it. Now the pictures, when the take claims scenes: one
+  // check per scene, at its middle, against the frozen bytes of the picture that scene names.
+  // A film that shows scene one's picture for its whole length passes every check above - it is
+  // a real film carrying the right voice - so this is the only thing that can see it.
+  const pictures = scenes ? verifyScenes({ file, scenes, tool: ffmpeg }) : { problems: [], evidence: null };
+  if (pictures.problems.length) return { ok: false, problems: pictures.problems, evidence: { peak, correlation: Number(parts.worst.score.toFixed(3)), scenes: pictures.evidence } };
   return {
     ok: true,
     problems: [],
@@ -250,7 +442,11 @@ export function verifyFilm({ file, soundtrackFile, projectRoot }) {
       // rather than leaving a person to wonder whether one lucky sample decided it.
       windows: parts.windows,
       spokenWindows: parts.spoken,
-      soundtrackSeconds: Number((soundtrackSeconds ?? 0).toFixed(2))
+      soundtrackSeconds: Number((soundtrackSeconds ?? 0).toFixed(2)),
+      // What each scene was measured to show. `null` for a film made before scenes existed, which
+      // is how the card knows not to promise a picture check nobody made - the same rule as an old
+      // take's sentence about its own measurement.
+      scenes: pictures.evidence
     }
   };
 }

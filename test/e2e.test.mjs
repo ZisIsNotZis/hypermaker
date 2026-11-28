@@ -85,6 +85,95 @@ canvasTest("double-click creates a card, typing persists, and Generate produces 
   await page.close();
 });
 
+canvasTest("the link under the pointer and the link nearest to it can differ, and the nearest one is what a right-click removes", async () => {
+  // A supervisor reported this twice from a real two-scene film, and the second report is why this
+  // test is shaped as it is.
+  //
+  //   1. Four links left the film card's edge at the same point and drew as one line, so a
+  //      right-click on "the line" removed whichever link happened to be on top. Fanning the anchors
+  //      along the edge makes them separate lines.
+  //   2. Even with the lines apart, right-clicking nearer picture #4's line unlinked text card #1 -
+  //      measured at (1327,164) on their canvas. Two causes: the pick was paint order rather than
+  //      distance, and every hit path carried its own `oncontextmenu`, so the path under the pointer
+  //      answered before a smarter rule ran.
+  //
+  // Testing this honestly turned out to be most of the work, and two earlier versions of this test
+  // were wrong in a way worth recording:
+  //   * clicking exactly *on* a line proves nothing - measured on that layout, at every curve's
+  //     midpoint the topmost stroke is the right one, so a paint-order bug passes;
+  //   * scanning along a line can never disagree, because the line's distance to itself is zero, so
+  //     that search found nothing and the test failed on its own precondition rather than on the
+  //     product.
+  // What does distinguish the rules is a point where one stroke is under the pointer and a different
+  // curve is nearer - which needs a screen area free of cards, so the links spread out instead of
+  // being packed into three short parallel runs. Hence sources in a column, one target far right.
+  // The point is found by measurement and its disagreement asserted before the click, and with the
+  // per-path handler restored this test fails - the only reason to believe it tests anything.
+  const page = await blankPage({ width: 1400, height: 1000 });
+  for (const y of [100, 380, 660]) await post("/api/node", { x: 20, y, type: "text" });
+  const sources = Object.keys((await workspace()).nodes).map(Number);
+  await post("/api/node", { x: 900, y: 380, type: "video" });
+  const target = Math.max(...Object.keys((await workspace()).nodes).map(Number));
+  for (const source of sources) await post("/api/link", { source, target });
+  await page.reload();
+  await page.waitForFunction(() => document.querySelectorAll(".edge").length === 3);
+
+  // The fan: each link leaves its own point on the source's edge, far enough apart to aim at.
+  const starts = await edgeEnds(page);
+  assert.equal(new Set(starts.map(s => Math.round(s.start.y))).size, 3, `each link leaves from its own point, got ${JSON.stringify(starts.map(s => Math.round(s.start.y)))}`);
+
+  // Find a point where the two rules name different links, by scanning the card-free band.
+  const found = await page.evaluate(() => {
+    const paths = [...document.querySelectorAll(".edge-hit")].map(p => {
+      const ctm = p.getScreenCTM(), total = p.getTotalLength();
+      const samples = Array.from({ length: 801 }, (_, i) => { const q = p.getPointAtLength(total * i / 800); return { x: q.x * ctm.a + ctm.e, y: q.y * ctm.d + ctm.f }; });
+      return { source: Number(p.dataset.source), samples };
+    });
+    const nearestAt = (x, y) => paths.map(s => ({ source: s.source, d: Math.min(...s.samples.map(q => Math.hypot(q.x - x, q.y - y))) })).sort((a, b) => a.d - b.d);
+    let scanned = 0, withHit = 0;
+    for (let x = 300; x <= 890; x += 3) {
+      for (let y = 100; y <= 700; y += 2) {
+        scanned++;
+        const hits = [...document.elementsFromPoint(x, y)].map(e => e.closest && e.closest('.edge-hit')).filter(Boolean).map(h => Number(h.dataset.source));
+        if (!hits.length) continue;
+        withHit++;
+        const nearest = nearestAt(x, y)[0];
+        if (hits[0] !== nearest.source && nearest.d <= 10) return { x, y, topmost: hits[0], nearest: nearest.source, d: nearest.d, hits, scanned, withHit };
+      }
+    }
+    return { scanned, withHit, none: true };
+  });
+  assert.ok(!found.none, `the layout must contain a point where the stroke under the pointer and the nearest curve disagree, or this test proves nothing; scanned ${found.scanned} points, ${found.withHit} of them on a stroke`);
+
+  const before = [...(await workspace()).nodes[target].inputs];
+  assert.equal(before.length, 3);
+  // A real right-click, the way the supervisor made it - not a call to the selection function. The
+  // broken layer was the event wiring, so a test of the picker alone would pass with the bug standing.
+  await page.mouse.click(found.x, found.y, { button: "right" });
+  await page.waitForTimeout(400);
+  const after = [...(await workspace()).nodes[target].inputs];
+  assert.deepEqual(after, before.filter(id => id !== found.nearest),
+    `at (${found.x},${found.y}) the nearest link is #${found.nearest} (${found.d.toFixed(2)}px) and the strokes under the pointer start with #${found.topmost}; the nearest must go. Inputs were ${JSON.stringify(before)}, are ${JSON.stringify(after)}`);
+  // What went is said on the canvas, so nobody has to infer it from the line count.
+  const said = await page.locator("#canvas-note").innerText();
+  assert.match(said, new RegExp(`#${found.nearest}\\b`), `the canvas says which link went: ${said}`);
+
+  // The remaining links are still individually removable at their own midpoints - the ordinary case
+  // has to keep working, not just the awkward one.
+  for (const victim of after) {
+    const aim = await page.evaluate(s => {
+      const path = [...document.querySelectorAll(".edge-hit")].find(p => Number(p.dataset.source) === s);
+      const ctm = path.getScreenCTM();
+      const point = path.getPointAtLength(path.getTotalLength() / 2);
+      return { x: point.x * ctm.a + ctm.e, y: point.y * ctm.d + ctm.f };
+    }, victim);
+    await page.mouse.click(aim.x, aim.y, { button: "right" });
+    await page.waitForTimeout(300);
+  }
+  assert.deepEqual((await workspace()).nodes[target].inputs, [], "every link was removable by right-clicking its own line");
+  await page.close();
+});
+
 canvasTest("drag links two cards and right-click removes the link", async () => {
   const page = await blankPage();
   await page.mouse.dblclick(120, 120); await page.waitForTimeout(150);

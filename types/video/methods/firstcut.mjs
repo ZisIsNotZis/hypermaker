@@ -17,8 +17,10 @@ export const method = {
   id: "firstcut",
   builtin: "firstcut",
   guide: [
-    "The server cuts one film from the linked material: the narration as the soundtrack, the poster as the picture, and the first line of the linked text as the title.",
-    "The duration is the narration's own length. Nothing is handed to a model for this method, and no agent runs."
+    "The server cuts one film from the linked material: the narration as the soundtrack, and each linked picture as one scene, in link order.",
+    "Scenes are apportioned by how long the narration speaks and cut at its measured phrase boundaries, so no cut falls inside a sentence; each scene is captioned with its own words.",
+    "The duration is the narration's own length. One picture is a film of one scene, and still works. More than one picture needs a narration with measured phrase times, which every take this build reads has.",
+    "Nothing is handed to a model for this method, and no agent runs."
   ].join("\n"),
   tools: ["Remotion 4", "@remotion/bundler", "@remotion/renderer", "Playwright Chromium"]
 };

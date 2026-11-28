@@ -8,7 +8,7 @@ import { assemblePrompt, materialText } from "./prompt.mjs";
 import { generate as runCodex } from "./codex.mjs";
 import { verifyNarration } from "./narration.mjs";
 import { readTake, renderAt, reproducesPrevious, writeScript, stopped, isStopped } from "./repace.mjs";
-import { verifyFilm } from "./film.mjs";
+import { verifyFilm, verifyPicture } from "./film.mjs";
 import { runBuiltin } from "./builtin.mjs";
 import { beginRun, damageReason, endRun, guardCard, guardName, guardNotice, keepCard, pruneRuns, recoverRun, runsRoot } from "./runs.mjs";
 
@@ -256,6 +256,21 @@ function pruneEmpty(dir) {
 // version that only remembered `poster.png` described whatever the poster holds
 // *today*, not what this render saw. Copy the material bytes alongside the
 // version and point the recorded source at that copy.
+// What a film's record says about its scenes: the cut's own plan plus, per scene, the agreement
+// measured on that scene's frame. The picture itself is deliberately dropped - the record names
+// which picture by card and take (that is `sources`), and copying a frozen path into the card's
+// record would describe a file inside a run directory that no longer exists.
+function sceneRecord(planned = null, measured = null) {
+  if (!Array.isArray(planned) || !planned.length) return {};
+  return { scenes: planned.map((scene, i) => ({
+    index: i,
+    start: Number(Number(scene.start).toFixed(2)),
+    end: Number(Number(scene.end).toFixed(2)),
+    from: scene.picture ? { id: scene.picture.id ?? null, artifact: scene.picture.artifact ?? null } : null,
+    caption: scene.caption || "",
+    ...(measured ? { shown: Number(measured.find(m => m.scene === i)?.agreement ?? NaN) } : {})
+  })) };
+}
 function freezeSources(workdir, id, sources = []) {
   if (!sources.length) return [];
   const dir = join(workdir, String(id));
@@ -668,7 +683,15 @@ const server = createServer(async (req, res) => { try {
     // workspace.yml has no `id` field of its own (the map key is the id), so
     // using s.id wrote `null` for every source of a workspace loaded from disk -
     // which is exactly the ordinary case after a restart.
-    const givenSources = givenInputs.filter(id => nodes[id]).map(id => ({ id: Number(id), type: nodes[id].type, artifact: nodes[id].artifact ?? null }));
+    // A narration's measured phrase times travel with it. They decide where a scene can be cut
+    // without slicing a sentence in half, and they belong to *this* take: a card re-read at
+    // another pace has different times, so reading them from the card later would cut the film to
+    // a take it does not carry. This is a fact about the bytes this run was given, not new
+    // material, and the prompt that goes to an agent is untouched.
+    const givenSources = givenInputs.filter(id => nodes[id]).map(id => ({
+      id: Number(id), type: nodes[id].type, artifact: nodes[id].artifact ?? null,
+      ...(nodes[id].narration?.phrases ? { phrases: nodes[id].narration.phrases } : {})
+    }));
     // Ids, not positions: restoring a version replaces an entry, so counting would
     // hand out an id that is already in the list.
     const ordinal = Math.max(0, ...(n.versions || []).map(v => Number(v.id) || 0)) + 1;
@@ -703,6 +726,25 @@ const server = createServer(async (req, res) => { try {
       const names = drafts.map(s => `#${s.id}`).join(", ");
       return json(res, 409, { ...view(), error: `Generate ${names} first, or unlink ${drafts.length > 1 ? "them" : "it"}: ${drafts.length > 1 ? "those cards have" : "that card has"} no result yet, so this run has no material to use.` });
     }
+    // A linked card that *names* an artifact the disk no longer has. This is the quieter half of
+    // the same problem, and a supervisor found it by deleting one picture's published file and
+    // pressing Make: the run went ahead, the missing picture was silently left out of the frozen
+    // material, and a two-scene film was published as a one-scene film over the take that was on
+    // the card. Nothing failed, so nothing said anything - the picture was not "missing" from the
+    // run's point of view, it simply was not there.
+    //
+    // The refusal names the card and what the card claims to hold, because that is what a person
+    // has to act on: the link is still there, so the fix is to regenerate that card or unlink it,
+    // and the take already on the canvas is not replaced by a quietly smaller film.
+    const gone = givenSources
+      .map(source => ({ source, path: join(ws, String(source.id), source.artifact || "") }))
+      .filter(({ source, path }) => source.artifact && !existsSync(path));
+    if (gone.length) {
+      releaseClaim(claim);
+      const named = gone.map(({ source }) => `#${source.id} (${source.type}, ${basename(source.artifact)})`).join(", ");
+      const one = gone.length === 1;
+      return json(res, 409, { ...view(), error: `${named} ${one ? "is" : "are"} linked to this card but ${one ? "its file is" : "their files are"} no longer in the workspace, so this run would be made without ${one ? "it" : "them"}. Regenerate ${one ? "that card" : "those cards"} or unlink ${one ? "it" : "them"}, then press again. Nothing was started and the take on this card is unchanged.` });
+    }
     // This run gets a directory of its own - and it is *not* inside the card. It used to
     // be, under `<card>/attempts/`, which put the agent's working directory inside the
     // directory holding a creator's own files; a probe found that an agent which tidied
@@ -715,7 +757,10 @@ const server = createServer(async (req, res) => { try {
     const runSources = freezeSources(ws, n.id, givenSources)
       // A source with no file has none because the card upstream holds nothing yet;
       // `frozen` is a path to a copy, and there is no copy to point at.
-      .map(({ id, type, artifact, file }) => ({ id, type, artifact, file, frozen: file ? join(ws, String(n.id), file) : null }));
+      // The rest of the source travels untouched: `phrases` is a fact about the bytes this run was
+      // given, and a spread that dropped it would make the cut claim a narration has no phrase
+      // times when it has them - which it did, until the film refused to cut and said so.
+      .map(source => ({ ...source, frozen: source.file ? join(ws, String(n.id), source.file) : null }));
     // The second layer: a snapshot of every file the card held, taken once this run's
     // frozen material copies exist and before the agent starts. A path in a prompt is a
     // request, and `--sandbox danger-full-access` means an agent that ignores it can
@@ -814,10 +859,22 @@ const server = createServer(async (req, res) => { try {
       // has to be loud and it has to be *this* take's narration, and the film has to last at
       // least as long as the sentence it says. Same rule as a narration's: the check runs before
       // anything is published, so a silent film is an error card and never an artifact.
+      // `result.scenes` is the cut's own plan - which picture is on screen between which two
+      // seconds - so the check measures the film against what the cut says it shows, not against a
+      // plan this line re-derived. A film whose second scene shows the first picture passes every
+      // other check: it is a real film with the right voice, and the only thing wrong with it is
+      // the thing a viewer would notice first.
       const film = chosen?.builtin === "firstcut"
-        ? verifyFilm({ file: result.artifact, soundtrackFile: runSources.find(s => s.type === "audio")?.frozen ?? null, projectRoot: root })
+        ? verifyFilm({ file: result.artifact, soundtrackFile: runSources.find(s => s.type === "audio")?.frozen ?? null, projectRoot: root, scenes: result.scenes ?? null })
         : null;
       if (film && !film.ok) throw new Error(`This film is not the one it claims to be: ${film.problems.join("; ")}`);
+      // A picture is checked before it is published, for the same reason: a method that reports
+      // success and leaves an empty or wrong-sized file must be an error card now rather than a
+      // film that fails its scene check later with a sentence about the wrong card.
+      const picture = chosen?.builtin === "titlecard"
+        ? verifyPicture({ file: result.artifact, projectRoot: root, width: result.picture?.width ?? null, height: result.picture?.height ?? null })
+        : null;
+      if (picture && !picture.ok) throw new Error(`This picture is not the one it claims to be: ${picture.problems.join("; ")}`);
       // Before anything is published, the card is put back the way the run found it.
       // This is the check that matters to a person: the run was given their material to
       // read, and if it deleted or changed a file in the card's directory anyway, the
@@ -896,8 +953,16 @@ const server = createServer(async (req, res) => { try {
       // streams, its length, how well the embedded track matched). Keeping only the second threw
       // away the frame count the published composition names, so a person reading the record could
       // not tie the source to the film - which is the whole point of publishing the source.
-      const filmRecord = film ? { ...(result.film || {}), ...film.evidence } : null;
-      await finishIn(ws, n.id, { ...result, artifact: published || result.artifact, script: publishedScript ?? priorScript, sources, narration: narration?.evidence ?? null, film: filmRecord, promptUsed: asked, versions: previous, status: "idle", error: null });
+      // The scenes travel with the film because they are what the card can say about its own
+      // picture: which scene, which seconds, which words under it. They come from the cut
+      // (`result.scenes`), not from the measurement, so a film whose pictures were not measured -
+      // a pre-scene take - has none and says nothing about them.
+      const filmRecord = film ? { ...(result.film || {}), ...film.evidence, ...sceneRecord(result.scenes, film.evidence?.scenes) } : null;
+      // A picture's record is what its own bytes measured - the size a film will show it in - plus
+      // the words it was drawn from. The asked-for size is not repeated beside the measured one: the
+      // check refuses a mismatch, so there would be two numbers that can only ever agree.
+      const pictureRecord = picture?.ok ? { ...(result.picture || {}), ...picture.evidence } : null;
+      await finishIn(ws, n.id, { ...result, artifact: published || result.artifact, script: publishedScript ?? priorScript, sources, narration: narration?.evidence ?? null, film: filmRecord, picture: pictureRecord, promptUsed: asked, versions: previous, status: "idle", error: null });
       // After the save, not before: the sweep asks the record what is still reachable,
       // so running it first deleted the script and the per-take prompt this run had
       // just written - the files that say what produced the take now on the card.

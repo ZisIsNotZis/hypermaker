@@ -11,7 +11,7 @@
 // claims before publishing; nothing here publishes.
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { firstCut, readAloud, scriptFor, StoppedError } from "./offline.mjs";
+import { firstCut, readAloud, scriptFor, titleCard, StoppedError } from "./offline.mjs";
 
 // The pace a card is asking for, or null for the voice's own ordinary speed.
 //
@@ -49,11 +49,21 @@ export function runBuiltin({ kind, node, sources, prompt, attemptDir, projectRoo
       const take = await readAloud({ projectRoot, attemptDir, script, wpm: paceAsked(wpm), cancelRef });
       return { artifact: take.artifact, script: take.script, timeline: take.timeline, scriptWords: script, from };
     }
+    if (kind === "titlecard") {
+      // One picture from this card's words, rendered by the server. Its size is the frame the film
+      // will show it in, so a scene is not a letterboxed mistake.
+      const picture = await titleCard({ attemptDir, sources, prompt, cancelRef });
+      return { artifact: picture.artifact, script: picture.script, picture: { width: picture.width, height: picture.height, title: picture.title } };
+    }
     if (kind === "firstcut") {
       const film = await firstCut({ attemptDir, sources, cancelRef });
       return {
         artifact: film.artifact,
         script: film.script,
+        // The cut's own plan, handed to the check and to the card unchanged. The check measures the
+        // film against *this*, so there is one answer in the program to "when is scene 2 on
+        // screen" rather than a plan here and a re-derived one there.
+        scenes: film.scenes,
         film: {
           seconds: Number(film.seconds.toFixed(2)),
           frames: film.frames,

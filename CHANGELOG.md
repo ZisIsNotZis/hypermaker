@@ -1,5 +1,70 @@
 # Changelog
 
+## Unreleased — a film can have more than one picture, and a picture that has gone is refused instead of quietly dropped, 2026-11-28
+
+**The next step the project index named was continuing with independently editable scenes, and the
+release build could not reach one.** A film was one still with a title over it. A video card did lay
+its linked pictures one after another, but an image card's only methods handed the work to an
+agent, and the model route on this machine does not answer - so a second picture cost a model, and
+there was no way to pay it. The pictures a film could show were the ones a person happened to have
+on disk.
+
+Two changes close that. `titlecard` is a picture method the server runs: one 1280x720 frame drawn
+from the card's words, with colours derived from the words, rendered through the project's own
+Remotion install and byte-identical when rendered again (measured 1.4 s). A blank canvas now goes
+sentence → spoken take → two pictures → film of two scenes with no account and no network.
+
+Linked pictures are scenes. They appear in link order, each is shown for the speech that belongs to
+it, and every cut sits on a phrase boundary the voice actually made - `planScenes` apportions the
+narration by *spoken duration* and picks existing phrase starts as boundaries, so a change of
+picture never splits a sentence. Each scene is captioned with its own words rather than the take's
+first line. More pictures than phrase times is refused rather than cut at an even split, because an
+even split looks deliberate and is not.
+
+The film check now measures the pictures too. Each scene's frame is decoded from the published file
+(through the bundled ffmpeg's `image2` muxer - it has no `rawvideo` muxer, which is why this is
+written the way it is) and correlated against the bytes of the picture that scene names, with the
+caption band cropped off. A film showing the first picture for its whole length is a real h264 file
+of the right duration carrying the whole narration, so every earlier check passes it; this one
+refuses it and names the scene.
+
+The first version of that check used a fixed 0.8 agreement and was too weak - found by walking a
+real re-cut rather than by reading it. Replacing one picture of a two-scene film and re-cutting it
+measured the replacement at 0.950 against its own scene and 0.865 against the other picture, so the
+two pictures of one film sat 0.065 apart and a swapped scene would have passed. Two pictures made by
+one method share a layout and differ only in words and hue; no absolute number separates them. Each
+scene's frame is now compared with every picture the film uses and must rank as its own by a margin,
+with the absolute number kept as a floor and still reported. The control is that mix-up: with the
+ranking removed the test accepts the film (`a film playing the first picture in its second scene was
+accepted`), and with it the film is refused and both cards are named. A take made before scenes existed carries no scene record and the
+card promises nothing about its pictures.
+
+**A supervisor found the defect worth more than the feature.** They copied a real two-scene
+workspace, removed one picture's published file, left the link in place, and pressed Make. The run
+went ahead, the frozen material silently lacked that picture, and a one-scene film was published
+over the two-scene take. Nothing failed, so nothing said anything. The press now refuses before
+anything is created and names the card and the file (`#4 (image, v1-card.png) is linked to this
+card but its file is no longer in the workspace`), states that the take on the card is unchanged,
+and gives the two ways forward. A second guard sits in the cut itself, so an unreadable picture it
+was handed is an error rather than a smaller film - with the press-level refusal removed, the test
+still fails on that guard.
+
+The same supervisor then could not remove one of the film's links without moving a card first, and that took three rounds to get right.
+
+Four links leaving one card towards four cards at the same height were drawn from the same point on the card's edge, so they were one line - right-clicking it removed whichever link happened to be on top, which the person had no way of knowing. Links now leave their source at points fanned around the header line, in world units so zoom does not change the fan.
+
+That was not enough, and the supervisor said so with the coordinates: right-clicking nearer picture #4's line at (1327,164) still unlinked text card #1. The pick was paint order - `elementsFromPoint()[0]`, whichever 20 px hit stroke was painted last - and every hit path also carried its own `oncontextmenu`, so the path under the pointer answered before any smarter rule could run. The pick is now the curve nearest the pointer by sampled distance, the per-path handler is gone, and the canvas says which link went.
+
+Most of the work was the test, and two earlier versions of it were wrong in ways worth writing down. Clicking exactly on a line proves nothing: measured at each curve's midpoint, the topmost stroke is the right one, so a paint-order build passes. Scanning along a line can never disagree either, since a line is zero px from itself - the second version failed on its own precondition. The shipped test finds a point where one stroke is under the pointer while a different curve is nearer (which needs a card-free band, hence sources in a column), asserts that disagreement, clicks it for real and requires the nearest link to go. It fails on the paint-order build at `at (804,454) the nearest link is #2 (9.00px) and the strokes under the pointer start with #3 ... Inputs were [1,2,3], are [1,2]`, and passes on the shipped one.
+
+That supervisor also caught the test's description being wrong: `test/scenes-canvas.test.mjs`
+claimed it used no HTTP shortcuts while every link was a `fetch('/api/link')`. A test that wired the
+graph over HTTP would pass with the drag gesture broken, and would be evidence for a path nobody
+walks. It now creates each card by double-clicking where it should stay, links by dragging title
+bars, and asserts the dragged card returns to its place - all with the mouse.
+
+`test/scenes.test.mjs` and `test/scenes-canvas.test.mjs`; `npm test` is **191/191** with a browser.
+
 ## Unreleased — the film check hears the whole narration, and an old take keeps its old measurement, 2026-11-28
 
 **A correct film was refused at the entry, and then a wrong one was accepted. Both were in the same
