@@ -1,5 +1,9 @@
 # Evidence kept outside the tests
 
+## `reopen-film.md`
+
+[Reopen a film, compare its versions, and keep editing](reopen-film.md) restarts the server and Chromium, exports each saved cut without switching, and continues editing from the reopened workspace.
+
 ## `local-picture-cut.md`
 
 [Local pictures → handwritten captions → replace act II](local-picture-cut.md) uses the file chooser twice, plays both versions through to the end, and checks that replacing the second picture and restoring the first film do not change the links.

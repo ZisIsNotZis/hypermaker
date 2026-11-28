@@ -1,5 +1,5 @@
 <!doctype html><meta charset="utf-8"><title>Hypermaker</title>
-<style>*{box-sizing:border-box}html,body{margin:0;height:100%;overflow:hidden;background:#17181b;color:#eee;font:13px system-ui}header{padding:8px;background:#24262b;display:flex;gap:8px;align-items:center}header select,header input{color:#eee;background:#17191d;color-scheme:dark}header input::placeholder{color:#aab2bf}button,select,textarea,header input{font:inherit;color:#eee;background:#17191d;border:1px solid #4b505a;border-radius:4px;padding:6px}button{cursor:pointer}.viewport{height:calc(100% - 48px);position:relative;overflow:hidden;background:#17181b}.world{position:absolute;inset:0;touch-action:none;transform-origin:0 0}.edges{position:absolute;left:0;top:0;width:1px;height:1px;overflow:visible;pointer-events:none}.cards{position:absolute;inset:0;pointer-events:none}.cards .card{pointer-events:auto}.cards.probing .card,.card.dragging{pointer-events:none}.viewport{--card-width:250px}.card{position:absolute;width:var(--card-width);background:#272a30;border:1px solid #555;border-radius:6px;overflow:hidden;box-shadow:0 2px 6px #0006}.card.supplied-card :is(.selectors,[data-prompt],[data-generate]){display:none}.card.raised{border-color:#7b86a1;box-shadow:0 8px 24px #000c}.card.dragging,.card.dragging *{user-select:none!important}.card header{height:30px;padding:5px;cursor:grab;display:flex;gap:6px;align-items:center}.card header .title{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.card header .delete{margin-left:auto;color:#ff9b9b}.card main{padding:7px}.preview{aspect-ratio:4/3;contain:size;background:#111;display:flex;align-items:center;justify-content:center;overflow:auto}.preview pre{white-space:pre-wrap;overflow-wrap:anywhere;margin:0;padding:4px;font:inherit}.preview img,.preview video{max-width:100%;max-height:100%}.selectors{display:grid;grid-template-columns:1fr 1fr;gap:4px}.selectors select,textarea{width:100%;min-width:0}.selectors [data-field=method]{grid-column:1/-1;grid-row:2}textarea{height:58px;margin:6px 0;resize:vertical;overflow-x:hidden}.actions{display:flex;gap:5px}.card .actions{flex-wrap:wrap}.actions [data-edit-script]{order:1;flex-basis:100%}.edge{fill:none;stroke:#54c7ff;stroke-width:4;stroke-linecap:round;marker-end:url(#arrow);pointer-events:none}.edge-hit{fill:none;stroke:transparent;stroke-width:20;pointer-events:stroke}.meta{font-size:11px;color:#aab2bf}.error{color:#ff9b9b;font-size:11px;margin-top:4px}.protection{color:#ffd479;background:#3a3118;border:1px solid #6b5a25;border-radius:4px;font-size:11px;margin-top:5px;padding:5px 6px;overflow-wrap:anywhere}.notice{color:#ffd479;background:#3a3118;border:1px solid #6b5a25;border-radius:4px;font-size:11px;margin-top:5px;padding:5px 6px;overflow-wrap:anywhere}.banner{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);max-width:min(92vw,680px);z-index:10000;color:#ffe3a3;background:#3a3118;border:1px solid #7a6630;border-radius:6px;padding:9px 14px;font-size:13px;box-shadow:0 6px 20px #000a;overflow-wrap:anywhere}.sources{color:#8fb6cf;font-size:11px;margin-top:5px;overflow-wrap:anywhere}.used{color:#d9c58b;margin-top:4px;overflow-wrap:anywhere}.cmp{position:fixed;inset:0;background:#000c;display:flex;align-items:center;justify-content:center;z-index:9999}.cmp .panel{background:#24262b;border:1px solid #555;border-radius:8px;padding:12px;max-width:min(96vw,1100px);max-height:92vh;overflow:auto}.cmp .panel header{background:none;padding:0 0 8px}.cmp .panel header .title{font-weight:600}.cmp .panel .pane{display:flex;gap:12px}.cmp .panel .pane section{flex:1;min-width:0}.cmp .panel .pane section .caption{color:#aab2bf;font-size:11px;margin-bottom:5px;overflow-wrap:anywhere}.cmp .panel .pane section .caption b{color:#54c7ff}.cmp .panel img,.cmp .panel video{max-width:100%;max-height:52vh;display:block}.cmp .panel audio{width:100%}.cmp .panel pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:52vh;overflow:auto;margin:0}.cmp .panel .actions{padding:8px 0 0}.sources i{color:#c9d6df;font-style:normal}.narration{color:#9fd8b8;margin-top:4px;overflow-wrap:anywhere}.phrases{display:flex;flex-wrap:wrap;gap:3px;align-items:center;margin-top:4px;font-size:11px;color:#8fb6cf}.phrases button{padding:0 5px;font-size:11px;line-height:16px;border-radius:3px}.phrases button[data-playing]{border-color:#9fd8b8;color:#101a15;background:#9fd8b8}.repace{display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin-top:5px;font-size:11px;color:#9fd8b8}.repace input{width:52px;padding:2px 4px;font-size:11px}.repace button{padding:1px 6px;font-size:11px;border-radius:3px}.repace-note{color:#8fb6cf;margin-top:3px}.versions{display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin-top:5px;font-size:11px;color:#8fb6cf}.versions button{padding:1px 6px;font-size:11px;border-radius:3px}.versions button[data-current]{border-color:#54c7ff;color:#54c7ff}</style>
+<style>*{box-sizing:border-box}html,body{margin:0;height:100%;overflow:hidden;background:#17181b;color:#eee;font:13px system-ui}header{padding:8px;background:#24262b;display:flex;gap:8px;align-items:center}header select,header input{color:#eee;background:#17191d;color-scheme:dark}header input::placeholder{color:#aab2bf}button,select,textarea,header input{font:inherit;color:#eee;background:#17191d;border:1px solid #4b505a;border-radius:4px;padding:6px}button{cursor:pointer}.viewport{height:calc(100% - 48px);position:relative;overflow:hidden;background:#17181b}.world{position:absolute;inset:0;touch-action:none;transform-origin:0 0}.edges{position:absolute;left:0;top:0;width:1px;height:1px;overflow:visible;pointer-events:none}.cards{position:absolute;inset:0;pointer-events:none}.cards .card{pointer-events:auto}.cards.probing .card,.card.dragging{pointer-events:none}.viewport{--card-width:250px}.card{position:absolute;width:var(--card-width);background:#272a30;border:1px solid #555;border-radius:6px;overflow:hidden;box-shadow:0 2px 6px #0006}.card.supplied-card :is(.selectors,[data-prompt],[data-generate]){display:none}.card.raised{border-color:#7b86a1;box-shadow:0 8px 24px #000c}.card.dragging,.card.dragging *{user-select:none!important}.card header{height:30px;padding:5px;cursor:grab;display:flex;gap:6px;align-items:center}.card header .title{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.card header .delete{margin-left:auto;color:#ff9b9b}.card main{padding:7px}.preview{aspect-ratio:4/3;contain:size;background:#111;display:flex;align-items:center;justify-content:center;overflow:auto}.preview pre{white-space:pre-wrap;overflow-wrap:anywhere;margin:0;padding:4px;font:inherit}.preview img,.preview video{max-width:100%;max-height:100%}.selectors{display:grid;grid-template-columns:1fr 1fr;gap:4px}.selectors select,textarea{width:100%;min-width:0}.selectors [data-field=method]{grid-column:1/-1;grid-row:2}textarea{height:58px;margin:6px 0;resize:vertical;overflow-x:hidden}.actions{display:flex;gap:5px}.card .actions{flex-wrap:wrap}.actions [data-edit-script]{order:1;flex-basis:100%}.edge{fill:none;stroke:#54c7ff;stroke-width:4;stroke-linecap:round;marker-end:url(#arrow);pointer-events:none}.edge-hit{fill:none;stroke:transparent;stroke-width:20;pointer-events:stroke}.meta{font-size:11px;color:#aab2bf}.error{color:#ff9b9b;font-size:11px;margin-top:4px}.protection{color:#ffd479;background:#3a3118;border:1px solid #6b5a25;border-radius:4px;font-size:11px;margin-top:5px;padding:5px 6px;overflow-wrap:anywhere}.notice{color:#ffd479;background:#3a3118;border:1px solid #6b5a25;border-radius:4px;font-size:11px;margin-top:5px;padding:5px 6px;overflow-wrap:anywhere}.banner{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);max-width:min(92vw,680px);z-index:10000;color:#ffe3a3;background:#3a3118;border:1px solid #7a6630;border-radius:6px;padding:9px 14px;font-size:13px;box-shadow:0 6px 20px #000a;overflow-wrap:anywhere}.sources{color:#8fb6cf;font-size:11px;margin-top:5px;overflow-wrap:anywhere}.used{color:#d9c58b;margin-top:4px;overflow-wrap:anywhere}.cmp{position:fixed;inset:0;background:#000c;display:flex;align-items:center;justify-content:center;z-index:9999}.cmp .panel{background:#24262b;border:1px solid #555;border-radius:8px;padding:12px;max-width:min(96vw,1100px);max-height:92vh;overflow:auto}.cmp .panel header{background:none;padding:0 0 8px}.cmp .panel header .title{font-weight:600}.cmp .panel .pane{display:flex;gap:12px}.cmp .panel .pane section{flex:1;min-width:0}.cmp .panel .pane section .caption{color:#aab2bf;font-size:11px;margin-bottom:5px;overflow-wrap:anywhere}.cmp .panel .pane section .caption b{color:#54c7ff}.cmp .panel img,.cmp .panel video{max-width:100%;max-height:52vh;display:block}.cmp .panel audio{width:100%}.cmp .panel pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:52vh;overflow:auto;margin:0}.cmp .panel .actions{padding:8px 0 0;flex-wrap:wrap}.cmp [data-compare-error]{color:#ff9b9b;margin:8px 0 0}.cmp [data-compare-error]:empty{display:none}.sources i{color:#c9d6df;font-style:normal}.narration{color:#9fd8b8;margin-top:4px;overflow-wrap:anywhere}.phrases{display:flex;flex-wrap:wrap;gap:3px;align-items:center;margin-top:4px;font-size:11px;color:#8fb6cf}.phrases button{padding:0 5px;font-size:11px;line-height:16px;border-radius:3px}.phrases button[data-playing]{border-color:#9fd8b8;color:#101a15;background:#9fd8b8}.repace{display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin-top:5px;font-size:11px;color:#9fd8b8}.repace input{width:52px;padding:2px 4px;font-size:11px}.repace button{padding:1px 6px;font-size:11px;border-radius:3px}.repace-note{color:#8fb6cf;margin-top:3px}.versions{display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin-top:5px;font-size:11px;color:#8fb6cf}.versions button{padding:1px 6px;font-size:11px;border-radius:3px}.versions button[data-current]{border-color:#54c7ff;color:#54c7ff}</style>
 <header><b>◆ HyperMaker</b><label title="Leave blank to use the model configured in Codex. Only agent cards use these settings.">Codex model <input id="model" placeholder="Configured in Codex" size="19" spellcheck="false" autocomplete="off"></label><label>Effort <select id="effort"><option value="">Configured in Codex</option><option>none</option><option>low</option><option>medium</option><option>high</option><option>xhigh</option><option>max</option><option>ultra</option></select></label><button id="add-card">+ Card</button><button id="add-file" title="Bring a file of your own onto the canvas: a picture, a recording or a clip. It becomes a card you can link to a film, just like a card you made here.">+ File</button><input id="file-input" type="file" multiple hidden aria-label="Choose one or more files to bring onto the canvas"><button id="reset" hidden>Reset</button></header>
 <div class="viewport" id="viewport"><div class="world" id="world"><svg class="edges" aria-label="Node links"><defs><marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" markerUnits="userSpaceOnUse" orient="auto"><path d="M0,0 L12,6 L0,12 Z" fill="#54c7ff"/></marker></defs></svg><div class="cards" id="cards"></div></div></div>
 <script>
@@ -242,15 +242,21 @@ function used(n){if(!n.artifact||!n.method)return'';const asked=typeof n.promptU
 // The left pane starts on the artifact the card is showing and the right on the most
 // recently replaced version, because that is the comparison that just became possible:
 // "the one I have, and the one I had". Either side can be pointed at any version.
-function comparePane(n, file, label, side) {
-  const u='/api/file?path='+encodeURIComponent(n.workdir+'/'+file);
+function downloadArtifact(n, file = n.artifact) {
+  const a = document.createElement('a');
+  a.href = url({workdir:n.workdir,artifact:file});
+  a.download = saveAs(file);
+  a.click();
+}
+function comparePane(n, file, label, side, actions) {
+  const u=url({workdir:n.workdir,artifact:file});
   const body=n.type==='image'?`<img alt="${esc(file)}" src="${u}">`
     :n.type==='audio'?`<audio controls src="${u}"></audio>`
     :n.type==='video'?`<video controls src="${u}"></video>`
     // Text needs no player, and fetching it keeps the pane honest: the bytes shown
     // are the bytes in that file, not a remembered rendering.
     :`<pre data-text="${esc(u)}">loading...</pre>`;
-  return `<section data-side="${side}"><div class="caption">${label}</div>${body}</section>`;
+  return `<section data-side="${side}"><div class="caption">${label}</div>${body}${actions}</section>`;
 }
 function compare(n, id) {
   if (!n || !n.artifact) return;
@@ -264,7 +270,7 @@ function compare(n, id) {
   const overlay = document.createElement('div');
   overlay.className = 'cmp';
   overlay.dataset.compareFor = id;
-  overlay.innerHTML = `<div class="panel"><header><span class="title">${esc(shown(n.artifact))} — two takes</span></header><div class="controls" style="display:flex;gap:8px;justify-content:space-between;margin-bottom:8px">${pick('left', null)}${pick('right', options[0].id)}</div><div class="pane"></div><div class="actions"><button data-close>Close</button></div></div>`;
+  overlay.innerHTML = `<div class="panel"><header><span class="title">${esc(shown(n.artifact))} — two takes</span></header><div class="controls" style="display:flex;gap:8px;justify-content:space-between;margin-bottom:8px">${pick('left', null)}${pick('right', options[0].id)}</div><div class="pane"></div><p data-compare-error role="alert"></p><div class="actions"><button data-close>Close</button></div></div>`;
   const pane = overlay.querySelector('.pane');
   const fileOf = value => value === 'card' ? n.artifact : (kept.find(v => String(v.id) === String(value)) || {}).file;
   const promptOf = value => value === 'card' ? n.promptUsed : (kept.find(v => String(v.id) === String(value)) || {}).prompt;
@@ -273,23 +279,49 @@ function compare(n, id) {
   // named the prompt its take was asked for and nothing about what it was made from, so
   // a film re-rendered after its poster changed read as the same film twice. This is the
   // take's own frozen record, read from the same node record as its bytes.
+  const versionName = file => badge(file) ? 'v' + badge(file) : shown(file);
   const caption = value => {
-    const who = value === 'card' ? 'on the card' : (badge(fileOf(value)) ? 'kept v' + badge(fileOf(value)) : 'kept ' + shown(fileOf(value)));
+    const who = value === 'card' ? `Current on the card · ${versionName(fileOf(value))}` : `kept ${versionName(fileOf(value))}`;
     const asked = promptOf(value);
     const from = sourceList(sourcesOf(value));
     return `<b>${esc(who)}</b>${typeof asked === 'string' ? ' — asked for: ' + esc(oneLine(asked) || '(nothing)') : ''}${from ? `<div class="sources">made from ${from}</div>` : ''}`;
   };
+  const paneActions = value => {
+    if (n.type !== 'video') return '';
+    const name = esc(versionName(fileOf(value)));
+    return `<div class="actions"><button data-compare-download>Download ${name}</button>${value === 'card' ? '' : ` <button data-use-version>Use ${name} on canvas</button>`}</div>`;
+  };
   const paint = () => {
-    const left = overlay.querySelector('[data-pick="left"]').value, right = overlay.querySelector('[data-pick="right"]').value;
-    pane.innerHTML = comparePane(n, fileOf(left), caption(left, 'left'), 'left') + comparePane(n, fileOf(right), caption(right, 'right'), 'right');
+    pane.innerHTML = ['left', 'right'].map(side => {
+      const value = overlay.querySelector(`[data-pick="${side}"]`).value;
+      return comparePane(n, fileOf(value), caption(value), side, paneActions(value));
+    }).join('');
     // Text panes fetch their own bytes; a failed fetch says so instead of spinning.
     for (const pre of pane.querySelectorAll('[data-text]')) {
       fetch(pre.dataset.text).then(r => r.ok ? r.text() : Promise.reject(new Error(`HTTP ${r.status}`)))
         .then(t => { pre.textContent = t; }).catch(e => { pre.textContent = `could not read this version: ${e.message}`; });
     }
   };
-  overlay.addEventListener('click', e => {
-    if (e.target.closest('[data-close]') || e.target === overlay) overlay.remove();
+  overlay.addEventListener('click', async e => {
+    if (e.target.closest('[data-close]') || e.target === overlay) { overlay.remove(); return; }
+    const download = e.target.closest('[data-compare-download]'), use = e.target.closest('[data-use-version]');
+    if (!download && !use) return;
+    const side = (download || use).closest('[data-side]').dataset.side;
+    const value = overlay.querySelector(`[data-pick="${side}"]`).value;
+    if (download) { downloadArtifact(n, fileOf(value)); return; }
+    const error = overlay.querySelector('[data-compare-error]');
+    error.textContent = '';
+    const controls = [...overlay.querySelectorAll('[data-use-version], [data-pick]')];
+    controls.forEach(control => { control.disabled = true; });
+    try {
+      await api('/api/restore', {id, version: Number(value)});
+      overlay.remove();
+      raise(id);
+      $(`.card[data-id="${id}"] .preview video`)?.focus({preventScroll:true});
+    } catch (err) {
+      error.textContent = `Could not switch versions: ${err.message}`;
+      controls.forEach(control => { control.disabled = false; });
+    }
   });
   overlay.addEventListener('change', e => { if (e.target.closest('[data-pick]')) paint(); });
   // Escape closes, because this covers the canvas and a person may have opened it by
@@ -485,7 +517,7 @@ function bind(e,n){
   // Stop is the one control that has to work while the card is running, so it is
   // a separate button rather than the disabled Generate turning into something else.
   e.querySelector('[data-cancel]').onclick=()=>{const x=e.querySelector('[data-cancel]');x.disabled=true;safe(()=>fetch('/api/cancel',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id:n.id})}).then(r=>r.json()).then(load))};
-  e.querySelector('[data-download]').onclick=()=>{raise(n.id);const a=document.createElement('a');a.href=url(nodeAt(n.id));a.download=saveAs(nodeAt(n.id).artifact);a.click()};
+  e.querySelector('[data-download]').onclick=()=>{raise(n.id);downloadArtifact(nodeAt(n.id))};
   // Restore is delegated: the version buttons are re-rendered whenever the card
   // syncs, so binding each one would leave listeners on detached nodes.
   // Delegated for the same reason the version buttons are: the phrase chips are re-rendered

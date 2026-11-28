@@ -1,9 +1,11 @@
 // Blank canvas → two pictures + handwritten text → play → recut → restore.
 // Default: generated title cards. --local-files: choose and replace ordinary local PNGs.
+// Add --restart to close both processes, reopen, and finish through video compare.
 // No engine, model, account or remote requests. Run from the repository root.
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { once } from 'node:events';
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -13,12 +15,14 @@ import { parseWorkspace } from '../server/workspace.mjs';
 import { freePort, startServer, stopServer, waitReady } from './server.mjs';
 
 const localFiles = process.argv.includes('--local-files');
+const restart = process.argv.includes('--restart');
+assert.ok(!restart || localFiles, 'use --restart with --local-files');
 const root = process.cwd();
 const chrome = process.env.HYPERMAKER_CHROME || process.env.CHROME_BIN;
 assert.ok(chrome && existsSync(chrome), 'set HYPERMAKER_CHROME to an existing Chromium executable');
 const out = mkdtempSync(join(tmpdir(), 'hyper-captions-'));
 const ws = join(out, 'workspace');
-const evidence = process.env.STORY_OUT || join(root, localFiles ? '.tmp/story-local-pictures' : '.tmp/story-captions-only');
+const evidence = process.env.STORY_OUT || join(root, restart ? '.tmp/story-reopen' : localFiles ? '.tmp/story-local-pictures' : '.tmp/story-captions-only');
 mkdirSync(evidence, { recursive: true });
 const story = localFiles ? ['The harbour wakes before the sun.', 'The last boat crosses as the lights come on.']
   : ['The flood washes the market road away.', 'By dawn, the village takes the high crossing.'];
@@ -29,12 +33,12 @@ if (localFiles) for (const [i, drawing] of ['dawn', 'dusk', 'nightferry'].entrie
 }
 const fixture = join(out, 'no-codex.mjs'), call = join(out, 'codex-called');
 writeFileSync(fixture, `import { writeFileSync } from 'node:fs';\nwriteFileSync(${JSON.stringify(call)}, 'unexpected Codex invocation');\nprocess.exit(1);\n`);
-const env = { CODEX_BIN: fixture, HYPERMAKER_WORKDIR: ws, HYPERMAKER_RESET_WORKSPACE: '1', HYPERMAKER_CHROME: chrome, HYPERMAKER_ESPEAK: join(out, 'absent-espeak-ng') };
+const env = { CODEX_BIN: fixture, HYPERMAKER_WORKDIR: ws, NODE_ENV: 'development', HYPERMAKER_RESET_WORKSPACE: '0', HYPERMAKER_CHROME: chrome, HYPERMAKER_ESPEAK: join(out, 'absent-espeak-ng') };
 const engine = spawnSync(process.execPath, ['--input-type=module', '-e', `import { engineStatus } from './voice/engine.mjs'; console.log(JSON.stringify(engineStatus().installed));`], { env: { ...process.env, ...env }, encoding: 'utf8' });
 assert.equal(engine.status, 0, engine.stderr);
 assert.equal(engine.stdout.trim(), 'false', 'the engine cannot be discovered in this fixture');
 const port = await freePort();
-const app = startServer({ cwd: root, port, env });
+let app = startServer({ cwd: root, port, env });
 const base = `http://127.0.0.1:${port}`;
 const fileFor = (id, file) => join(ws, String(id), file);
 const sha = file => createHash('sha256').update(readFileSync(file)).digest('hex');
@@ -42,17 +46,22 @@ const tool = (name, args) => execFileSync(join(root, 'node_modules/@remotion/com
 let browser;
 try {
   await waitReady(port);
-  browser = await chromium.launch({ executablePath: chrome, headless: true });
-  const page = await browser.newPage({ viewport: { width: 1440, height: 970 } });
-  const errors = [], external = [], imports = [];
-  page.on('pageerror', error => errors.push(String(error)));
-  await page.route('**/*', route => {
-    const url = new URL(route.request().url());
-    if (url.origin !== base) { external.push(url.origin); return route.abort(); }
-    if (/^\/api\/(upload|replace)$/.test(url.pathname)) { imports.push(url.pathname); if (!localFiles) return route.abort(); }
-    return route.continue();
-  });
   const nodes = async () => (await (await fetch(`${base}/api/workspace`)).json()).nodes;
+  const errors = [], external = [], imports = [];
+  let page;
+  async function openBrowser() {
+    browser = await chromium.launch({ executablePath: chrome, headless: true });
+    page = await browser.newPage({ viewport: { width: 1440, height: 970 } });
+    page.on('pageerror', error => errors.push(String(error)));
+    await page.route('**/*', route => {
+      const url = new URL(route.request().url());
+      if (url.origin !== base) { external.push(url.origin); return route.abort(); }
+      if (/^\/api\/(upload|replace)$/.test(url.pathname)) { imports.push(url.pathname); if (!localFiles) return route.abort(); }
+      return route.continue();
+    });
+    await page.goto(base);
+  }
+  await openBrowser();
   const node = async id => (await nodes())[id];
   const card = id => page.locator(`.card[data-id="${id}"]`);
   async function until(check, what, ms = 10000) {
@@ -117,8 +126,7 @@ try {
     await page.mouse.up();
     await until(async () => JSON.stringify((await node(to)).inputs) === JSON.stringify(expected), `#${to} gets links ${expected}`);
   }
-  async function play(n, throughEnd = false) {
-    const player = card(n.id).locator('video');
+  async function play(n, throughEnd = false, player = card(n.id).locator('.preview video')) {
     await until(async () => (await player.getAttribute('src', { timeout: 2000 }))?.includes(encodeURIComponent(n.artifact)), `player loads ${n.artifact}`);
     if (localFiles) {
       await until(() => player.evaluate(video => {
@@ -178,7 +186,6 @@ try {
     return { artifact: n.artifact, sha256: sha(file), seconds: n.film.seconds, streams: probe.streams.map(s => s.codec_type), scenes: seen };
   }
 
-  await page.goto(base);
   await page.locator('#cards').waitFor();
   assert.deepEqual(Object.keys(await nodes()), []);
   let text, a, b, film;
@@ -246,10 +253,56 @@ try {
   const old = second.versions.find(v => v.artifact === first.artifact);
   assert.ok(old, 'the earlier cut is offered as a kept version');
   assert.equal(sha(fileFor(film, old.file)), cut.sha256);
-  const diskNode = parseWorkspace(readFileSync(join(ws, 'workspace.yml'), 'utf8'))[film];
-  assert.deepEqual(diskNode.versions.find(v => v.id === old.id).film, first.film);
-  await page.reload();
-  await card(film).locator(`[data-version="${old.id}"]`).click({ timeout: 5000 });
+  let reopened;
+  if (restart) {
+    // Close the whole Chromium process and wait for the server to exit before starting it again.
+    await browser.close();
+    const exited = once(app, 'exit', { signal: AbortSignal.timeout(5000) });
+    assert.ok(app.kill('SIGTERM'), 'stop the first server');
+    await exited;
+    app = startServer({ cwd: root, port, env });
+    await waitReady(port);
+    await openBrowser();
+    await card(film).locator('header').getByText(/v2/).waitFor({ timeout: 5000 });
+    await card(film).locator('.sources-slot').getByText(pictures[2], { exact: true }).waitFor();
+    await page.screenshot({ path: join(evidence, 'canvas-reopened.png') });
+    await card(film).locator('[data-compare]').click({ timeout: 5000 });
+    const current = page.locator('.cmp [data-side="left"]');
+    const previous = page.locator('.cmp [data-side="right"]');
+    for (const [side, image] of [[current, pictures[2]], [previous, pictures[1]]]) {
+      await side.getByText(pictures[0], { exact: true }).waitFor();
+      await side.getByText(image, { exact: true }).waitFor();
+    }
+    await current.getByText('Current on the card · v2', { exact: true }).waitFor();
+    await previous.getByText('kept v1', { exact: true }).waitFor();
+    await page.screenshot({ path: join(evidence, 'compare-reopened.png') });
+    const playOld = await play({ ...first, artifact: old.file }, true, previous.locator('video'));
+    const exports = [];
+    for (const [pane, version, expected] of [[previous, 'v1', cut], [current, 'v2', recut]]) {
+      const [download] = await Promise.all([
+        page.waitForEvent('download', { timeout: 5000 }),
+        pane.getByRole('button', { name: `Download ${version}`, exact: true }).click({ timeout: 5000 })
+      ]);
+      const filename = download.suggestedFilename();
+      assert.equal(filename, `film-${version}.mp4`);
+      const exported = join(evidence, filename);
+      await download.saveAs(exported);
+      assert.equal(sha(exported), expected.sha256);
+      exports.push({ filename, sha256: sha(exported) });
+    }
+    assert.equal((await node(film)).artifact, second.artifact, 'playing and downloading a kept cut does not switch the current film');
+    await previous.getByRole('button', { name: 'Use v1 on canvas', exact: true }).click({ timeout: 5000 });
+    await page.locator('.cmp').waitFor({ state: 'detached', timeout: 5000 });
+    await card(film).locator('header').getByText(/v1/).waitFor({ timeout: 5000 });
+    await card(film).locator('.sources-slot').getByText(pictures[1], { exact: true }).waitFor();
+    await card(film).locator('.next-slot').getByText(pictures[2], { exact: true }).waitFor();
+    reopened = { current: second.artifact, compared: first.artifact, playedPrevious: playOld, exports };
+  } else {
+    const diskNode = parseWorkspace(readFileSync(join(ws, 'workspace.yml'), 'utf8'))[film];
+    assert.deepEqual(diskNode.versions.find(v => v.id === old.id).film, first.film);
+    await page.reload();
+    await card(film).locator(`[data-version="${old.id}"]`).click({ timeout: 5000 });
+  }
   const restored = await until(async () => { const n = await node(film); return n.artifact === old.file && n; }, 'the canvas restores the old MP4');
   assert.deepEqual(restored.inputs, links);
   assert.deepEqual(restored.film, first.film);
@@ -260,11 +313,25 @@ try {
   assert.ok(restored.versions.some(v => v.artifact === second.artifact));
   const restoredPlay = await play(restored);
   await page.screenshot({ path: join(evidence, 'canvas-restored.png') });
+  if (restart) {
+    const revised = 'The night ferry brings the last crew home.';
+    await typeIn(text, [story[0], revised].join('\n'));
+    await make(text);
+    const continued = await make(film);
+    assert.deepEqual(continued.inputs, links);
+    assert.deepEqual(continued.film.scenes.map(s => s.caption), [story[0], revised]);
+    assert.deepEqual(continued.film.scenes.map(s => s.from.artifact), [firstImage.artifact, replacement.artifact]);
+    assert.ok([first.artifact, second.artifact].every(file => continued.versions.some(v => v.artifact === file)));
+    const output = join(evidence, 'continued.mp4');
+    copyFileSync(fileFor(film, continued.artifact), output);
+    reopened.continued = { file: continued.artifact, sha256: sha(output), scenes: continued.film.scenes, links, play: await play(continued, true) };
+    await page.screenshot({ path: join(evidence, 'canvas-continued.png') });
+  }
   assert.deepEqual(errors, []);
   assert.deepEqual(external, []);
   assert.deepEqual(imports, localFiles ? ['/api/upload', '/api/upload', '/api/replace'] : []);
   assert.equal(existsSync(call), false, 'the model command never ran');
-  const receipt = { story, workspace: ws, engineAvailable: false, modelCalls: 0, externalBrowserRequests: external, uploads: imports, cut, recut, restored: { file: restored.artifact, sha256: cut.sha256, play: restoredPlay, links, secondStillKept: second.artifact } };
+  const receipt = { story, workspace: ws, engineAvailable: false, modelCalls: 0, externalBrowserRequests: external, uploads: imports, cut, recut, reopened, restored: { file: restored.artifact, sha256: cut.sha256, play: restoredPlay, links, secondStillKept: second.artifact } };
   copyFileSync(fileFor(film, restored.artifact), join(evidence, 'first.mp4'));
   copyFileSync(fileFor(film, second.artifact), join(evidence, 'recut.mp4'));
   writeFileSync(join(evidence, 'receipt.json'), JSON.stringify(receipt, null, 2) + '\n');

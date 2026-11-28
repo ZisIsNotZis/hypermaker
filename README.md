@@ -253,6 +253,8 @@ On this host the real image request hit route discovery and model-refresh errors
 
 This needs local Chromium for rendering, but no model, speech engine, remote upload or account. Imported pictures stay on your machine; their cards show a replace hint instead of generation controls. If you already have a usable speech engine and want narration, make a `readaloud` take and link that audio to the video instead. [Replay the local-picture walkthrough](docs/evidence/local-picture-cut.md), or [make your own title cards on the canvas](docs/evidence/captions-only.md).
 
+When you return to a saved canvas, open **compare** to see the pictures used in each film version and download either cut. **Use vN on canvas** switches the film and leaves the connected cards ready for your next edit. [Restart and reopen walkthrough](docs/evidence/reopen-film.md).
+
 ## The mental model
 
 | Thing | Meaning |

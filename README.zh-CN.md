@@ -107,6 +107,8 @@ npm run dev
 
 导入图卡有下载、版本和换图提示，不显示生成控件。渲染需要本机已有的 Chromium，不需要语音引擎、模型、登录或远端上传。有可用语音引擎时，仍可把 `readaloud` 做出的音频连到 `firstcut` 来剪有声片。见[实走及复跑说明](docs/evidence/local-picture-cut.md)。
 
+重开画布后，点 **compare** 可以查看每版所用素材并下载对应影片。点 **Use vN on canvas** 才会切换当前片，连线和草稿可接着用。[重启复跑](docs/evidence/reopen-film.md)。
+
 ## 概念模型
 
 | 东西 | 含义 |
