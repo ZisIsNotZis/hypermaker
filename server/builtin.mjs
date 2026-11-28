@@ -64,6 +64,15 @@ export function runBuiltin({ kind, node, sources, prompt, attemptDir, projectRoo
         // film against *this*, so there is one answer in the program to "when is scene 2 on
         // screen" rather than a plan here and a re-derived one there.
         scenes: film.scenes,
+        // THE CUT'S OWN FACTS, AT THE TOP LEVEL. These were first nested inside `film`, which is
+        // where the card reads them from - but the checks in `index.mjs` read `result.placements` and
+        // `result.cues`, and a nested field is `undefined` there. The effect was invisible to any
+        // probe that called `firstCut` directly and fatal through the canvas: a scene's picture was
+        // compared with a re-derived placement (wrong for a panorama, scored -0.391) and the caption
+        // gate was skipped entirely because it was handed no cues. Every check gets the same values
+        // the cut used, from one place.
+        placements: film.placements,
+        cues: film.cues,
         film: {
           seconds: Number(film.seconds.toFixed(2)),
           frames: film.frames,
@@ -76,7 +85,30 @@ export function runBuiltin({ kind, node, sources, prompt, attemptDir, projectRoo
           // Which narration this is a film of, by card and by the file it froze: two takes of one
           // narration card are told apart here, and nowhere else on the film's own record.
           soundtrack: { id: film.soundtrack.id, artifact: film.soundtrack.artifact, file: film.soundtrack.file ?? null },
-          poster: film.poster ? { id: film.poster.id, artifact: film.poster.artifact, file: film.poster.file ?? null } : null
+          poster: film.poster ? { id: film.poster.id, artifact: film.poster.artifact, file: film.poster.file ?? null } : null,
+          // What the words under each scene measured: one cue per spoken phrase, how long it is on
+          // screen, and how fast it has to be read. A film whose caption is on screen for eight
+          // seconds is true but not necessarily followable, and "characters per second" is the
+          // number that says which - it is measured from the cue's own frames, not estimated.
+          // What each scene keeps of its picture, and a sentence when something is cropped. A person
+          // who brought in a portrait deserves to know before the film is a surprise - the report
+          // was "I could not foresee what the film would keep", so the answer travels with the take.
+          placements: Array.isArray(film.placements) ? film.placements.map((p, i) => p ? {
+            scene: i,
+            source: p.source,
+            fit: p.fit,
+            kept: Number(p.kept.toFixed(3)),
+            ...(p.notice ? { notice: p.notice } : {}),
+          } : null) : null,
+          cropped: (film.placements || []).some(p => p && p.kept < 0.995),
+          captions: film.cues.length ? {
+            cues: film.cues.map(({ scene, seconds, charactersPerSecond }) => ({ scene, seconds, charactersPerSecond })),
+            worst: Math.max(...film.cues.map(c => c.charactersPerSecond)),
+            // Stated with the number rather than left to the reader: the threshold above which text
+            // is hard to follow at speed. A card that printed a bare number would make a person
+            // guess whether 21 is good.
+            comfortable: 20
+          } : null
         }
       };
     }

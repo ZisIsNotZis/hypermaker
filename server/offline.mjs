@@ -27,13 +27,25 @@
 //
 // A refusal is a sentence the person can act on, and it never publishes: the error goes back
 // through the same branch that keeps the previous take on the card.
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { wavSamples } from "../voice/wav.mjs";
 import { audit } from "../voice/lexicon.mjs";
 import { paceOf } from "../voice/synth.mjs";
 import { planScenes } from "./film.mjs";
+import { placePicture, placementNotice } from "./framing.mjs";
+
+// A picture's real pixel size, from the file itself. The card records what the method claimed; this
+// is what the bytes are, and the placement is computed from it because a wrong number here crops
+// somebody's head.
+function pictureSize(file) {
+  const ffprobe = join(process.cwd(), "node_modules/@remotion/compositor-linux-x64-gnu/ffprobe");
+  const probe = JSON.parse(execFileSync(ffprobe, ["-v", "error", "-print_format", "json", "-show_streams", file], { encoding: "utf8" }));
+  const stream = (probe.streams || []).find(s => s.codec_type === "video");
+  if (!stream) throw new Error(`${basename(file)} holds no picture stream, so it cannot be a scene`);
+  return { width: Number(stream.width), height: Number(stream.height) };
+}
 
 // A Stop is a Stop, whether it arrived while a renderer was running or between two renders. The
 // caller answers it with `cancelled` and the previous take intact, which is what every other
@@ -272,30 +284,82 @@ export async function firstCut({ attemptDir, sources = [], cancelRef = {} }) {
   // under them. React escapes nothing in a text node built from a template, so text is escaped here.
   const escape = text => JSON.stringify(String(text)).slice(1, -1).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   const entry = join(attemptDir, "first-cut.jsx");
+  // A scene is one picture, but the voice inside it is usually several sentences. A single caption
+  // for the whole scene is unreadable when the scene holds eight seconds of speech: either it is
+  // truncated to fit, or it stays on screen while three different sentences are spoken and the
+  // viewer stops being able to tell which words are being said. So each scene carries *cues*, one per
+  // measured phrase, and each cue is on screen from the moment its phrase starts until the next one
+  // does. The reading time of a cue is therefore a fact about the narration, not a number someone
+  // chose, and it is measured below rather than assumed.
+  //
+  // Cues tile the scene with no gaps on purpose: reading continues through the pause between two
+  // sentences, and a caption that vanished in every gap would flicker.
+  const cuesFor = scene => {
+    const words = (scene.phrases || []).filter(p => String(p.text || "").trim() && Number.isFinite(Number(p.start)));
+    const start = Number(scene.start) || 0, end = Number(scene.end) || start;
+    if (!words.length) return scene.caption ? [{ from: 0, duration: Math.max(1, Math.round((end - start) * fps)), text: scene.caption }] : [];
+    return words.map((phrase, i) => {
+      const at = Math.max(start, Number(phrase.start));
+      const until = i + 1 < words.length ? Math.max(at, Number(words[i + 1].start)) : Math.max(at, end);
+      return { from: Math.max(0, Math.round((at - start) * fps)), duration: Math.max(1, Math.round((until - at) * fps)), text: String(phrase.text).trim(), at, until };
+    });
+  };
+  // HOW EACH PICTURE SITS IN THE FRAME. A real report: a 640x700 portrait was filled into the
+  // 1280x720 frame with `objectFit: cover`, and both people in it lost their heads and feet. The
+  // rule and the arithmetic live in `server/framing.mjs`; here each picture is measured and placed
+  // once, and the answer travels into the composition and onto the card, so what a scene keeps is a
+  // fact rather than a surprise after the render.
+  const placements = shownScenes.map((scene, i) => {
+    if (!scene.picture) return null;
+    const size = pictureSize(scene.picture.frozen);
+    const place = placePicture(size, { width: 1280, height: 720 });
+    return { source: size, ...place, notice: placementNotice(size, place) };
+  });
   const sequence = shownScenes.map((scene, i) => ({
     from: Math.max(0, Math.round(scene.start * fps)),
     duration: Math.max(1, Math.round((scene.end - scene.start) * fps)),
-    file: sceneFiles[i], caption: scene.caption
+    file: sceneFiles[i], caption: scene.caption, cues: cuesFor(scene).map(({ from, duration, text }) => ({ from, duration, text })),
+    // `objectFit` and the crop the rule chose. `contain` shows the whole picture; `cover` fills the
+    // frame and would crop, which is only chosen when the loss is a sliver.
+    placement: placements[i] ? { fit: placements[i].fit, kept: Number(placements[i].kept.toFixed(3)) } : null,
   }));
+  // What a viewer has to read, per cue: characters per second, measured from the cue's own on-screen
+  // time. It is published with the film so the card can say whether the words are followable rather
+  // than only that they are there - and so a test can hold the story to a number instead of an
+  // impression. 20 characters a second is the upper end of what a reader tracks comfortably.
+  const cues = sequence.flatMap((scene, s) => scene.cues.map(cue => ({
+    scene: s,
+    text: cue.text,
+    seconds: Number((cue.duration / fps).toFixed(2)),
+    charactersPerSecond: Number((cue.text.length / Math.max(0.01, cue.duration / fps)).toFixed(1))
+  })));
   // A scene's frame range is derived from the same second values the checker measures against, so
   // "when scene 2 starts" has one answer in this program rather than two.
   writeFileSync(entry, [
     "import React from 'react';",
     "import { AbsoluteFill, Audio, Composition, Img, Sequence, interpolate, registerRoot, staticFile, useCurrentFrame } from 'remotion';",
     `const SCENES = ${JSON.stringify(sequence, null, 2)};`,
-    "const Scene = ({ file, caption, length }) => {",
+    "// A cue is one measured phrase of the narration, on screen while it is spoken. The size steps",
+    "// down for a long phrase, because a two-line caption at 44px runs off a 1280px frame and a",
+    "// caption nobody can finish reading is not a caption. Nothing is ever shortened: the words on",
+    "// screen are the words being said.",
+    "const captionSize = text => text.length > 110 ? 32 : text.length > 76 ? 36 : text.length > 44 ? 40 : 44;",
+    "const Scene = ({ file, cues, length, placement }) => {",
     "  const frame = useCurrentFrame();",
     "  const fade = interpolate(frame, [0, 10], [0, 1], { extrapolateRight: 'clamp' });",
+    "  const cue = cues.find(c => frame >= c.from && frame < c.from + c.duration) || cues[cues.length - 1];",
+    "  // A picture that is not frame-shaped is shown WHOLE, with dark bars, because cropping a portrait",
+    "  // to 16:9 took the heads and feet off a real one. Frame-shaped pictures still fill the frame.",
     "  return <AbsoluteFill style={{ background: '#0d0f13' }}>",
-    "    {file ? <Img src={staticFile(file)} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }} />",
+    "    {file ? <Img src={staticFile(file)} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: placement === 'contain' ? 'contain' : 'cover' }} />",
     "      : <AbsoluteFill style={{ background: 'radial-gradient(circle at 30% 20%, #1d2733, #0d0f13 70%)' }} />}",
-    "    <AbsoluteFill style={{ justifyContent: 'flex-end', padding: 56, background: 'linear-gradient(to top, rgba(0,0,0,0.72), rgba(0,0,0,0))', opacity: fade }}>",
-    "      <div style={{ color: '#f2f4f7', fontFamily: 'Arial, Helvetica, sans-serif', fontSize: 44, lineHeight: 1.2, maxWidth: '86%', textShadow: '0 2px 12px rgba(0,0,0,0.6)' }}>{caption}</div>",
+    "    <AbsoluteFill style={{ justifyContent: 'flex-end', padding: 56, background: 'linear-gradient(to top, rgba(0,0,0,0.78), rgba(0,0,0,0))', opacity: fade }}>",
+    "      {cue ? <div style={{ color: '#f5f7fa', fontFamily: 'Arial, Helvetica, sans-serif', fontSize: captionSize(cue.text), lineHeight: 1.22, maxWidth: '88%', textShadow: '0 2px 12px rgba(0,0,0,0.75)' }}>{cue.text}</div> : null}",
     "    </AbsoluteFill>",
     "  </AbsoluteFill>;",
     "};",
     "const Film = () => <AbsoluteFill style={{ background: '#0d0f13' }}>",
-    "  {SCENES.map((scene, i) => <Sequence key={i} from={scene.from} durationInFrames={scene.duration}><Scene file={scene.file} caption={scene.caption} length={scene.duration} /></Sequence>)}",
+    "  {SCENES.map((scene, i) => <Sequence key={i} from={scene.from} durationInFrames={scene.duration}><Scene file={scene.file} cues={scene.cues} length={scene.duration} placement={scene.placement?.fit} /></Sequence>)}",
     "  <Audio src={staticFile('track.wav')} />",
     "</AbsoluteFill>;",
     `const Root = () => <Composition id="Film" component={Film} width={1280} height={720} fps={${fps}} durationInFrames={${durationInFrames}} />;`,
@@ -345,12 +409,15 @@ export async function firstCut({ attemptDir, sources = [], cancelRef = {} }) {
     `// track.wav${sceneFiles.filter(Boolean).length ? ` and ${sceneFiles.filter(Boolean).join(", ")}` : ""}, then render composition Film.`,
     `// soundtrack: ${basename(audio.frozen)} (${seconds.toFixed(2)} s at ${rate} Hz)`,
     `// ${fps} fps, ${durationInFrames} frames, 1280x720, h264 with an AAC track`,
-    ...shownScenes.map((s, i) => `// scene ${i + 1}: ${s.start.toFixed(2)}-${s.end.toFixed(2)} s${sceneFiles[i] ? ` over ${sceneFiles[i]}` : ", no picture"}${s.caption ? ` - "${s.caption}"` : ""}`),
+    ...shownScenes.map((s, i) => `// scene ${i + 1}: ${s.start.toFixed(2)}-${s.end.toFixed(2)} s${sceneFiles[i] ? ` over ${sceneFiles[i]}` : ", no picture"}${placements[i] ? ` (${placements[i].source.width}x${placements[i].source.height}, ${placements[i].fit}, ${Math.round(placements[i].kept * 100)}% of it on screen)` : ""}${s.caption ? ` - "${s.caption}"` : ""}`),
+    // The cues are the part a viewer actually reads, so the record names them with the time each is
+    // on screen - the same facts the readability number in the card is computed from.
+    ...cues.map(c => `// cue in scene ${c.scene + 1}: ${c.seconds}s on screen, ${c.charactersPerSecond} chars/s - "${c.text}"`),
     title ? `// title: ${title}` : "// no title: no linked text card",
     ""
   ].join("\n");
   writeFileSync(script, provenance + readFileSync(entry, "utf8"), "utf8");
   // The bundle's own entry is not kept: it is the same composition without the header, and two
   // copies of one source is how they drift. The published file is this one.
-  return { artifact, script, seconds, frames: durationInFrames, rate, soundtrack: audio, poster: posters[0] ?? null, title, scenes: shownScenes };
+  return { artifact, script, seconds, frames: durationInFrames, rate, soundtrack: audio, poster: posters[0] ?? null, title, scenes: shownScenes, cues, placements };
 }

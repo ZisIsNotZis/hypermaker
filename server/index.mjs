@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { createReadStream, existsSync, mkdirSync, readFileSync, copyFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createReadStream, createWriteStream, existsSync, mkdirSync, readFileSync, copyFileSync, readdirSync, renameSync, rmdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, extname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readWorkspace, writeWorkspace, nodeRecord } from "./workspace.mjs";
@@ -8,7 +8,7 @@ import { assemblePrompt, materialText } from "./prompt.mjs";
 import { generate as runCodex } from "./codex.mjs";
 import { verifyNarration } from "./narration.mjs";
 import { readTake, renderAt, reproducesPrevious, writeScript, stopped, isStopped } from "./repace.mjs";
-import { verifyFilm, verifyPicture } from "./film.mjs";
+import { verifyCaptions, verifyFilm, verifyPicture } from "./film.mjs";
 import { runBuiltin } from "./builtin.mjs";
 import { beginRun, damageReason, endRun, guardCard, guardName, guardNotice, keepCard, pruneRuns, recoverRun, runsRoot } from "./runs.mjs";
 
@@ -59,6 +59,37 @@ const slot = (dir, id) => `${dir}\u0000${id}`;
 const attemptDirs = new Map();
 const json = (res, status, value) => { res.writeHead(status, { "content-type": "application/json" }); res.end(JSON.stringify(value)); };
 const body = req => new Promise((ok, no) => { let data = ""; req.on("data", x => data += x); req.on("end", () => { try { ok(data ? JSON.parse(data) : {}); } catch (e) { no(e); } }); });
+// A person's own file does not arrive as JSON: base64 in a body would inflate it by a third and
+// hold the whole thing in memory before the disk ever sees it. The bytes are streamed to a
+// temporary file beside the workspace and only then moved into a card, so a dropped connection
+// leaves no half-written take that a later run would read as material.
+//
+// The limit is the copy limit `runs.mjs` already uses for the guard, and it is stated rather than
+// discovered: a body larger than that is refused by name instead of filling the disk.
+const UPLOAD_LIMIT = 512 * 1024 * 1024;
+// Where an arriving file is written before it is a card's material. One directory per workspace,
+// named by nothing a person sees (it starts with a dot and is swept when the workspace is opened),
+// so an interrupted upload is recoverable rather than a stray file in a card. It is created only
+// while a request is using it and removed afterwards, so a workspace that never had an upload has
+// no such directory at all.
+const UPLOAD_STAGING = ".upload-tmp";
+// A directory that is only meaningful while a request is writing into it. `rmdirSync` is used on
+// purpose: it refuses a non-empty directory, so a second upload in flight is never deleted by the
+// first one finishing.
+const dropStagingRoot = dir => { try { rmdirSync(join(dir, UPLOAD_STAGING)); } catch {} };
+const saveStream = (req, file) => new Promise((ok, no) => {
+  const out = createWriteStream(file);
+  let size = 0, failed = false;
+  const stop = message => { if (failed) return; failed = true; out.destroy(); req.destroy(); no(new Error(message)); };
+  req.on("data", chunk => {
+    size += chunk.length;
+    if (size > UPLOAD_LIMIT) return stop(`The file is larger than ${Math.round(UPLOAD_LIMIT / (1024 * 1024))} MiB, so it was not imported. Nothing was written to the workspace.`);
+    if (!out.write(chunk)) { req.pause(); out.once("drain", () => req.resume()); }
+  });
+  req.on("end", () => { if (failed) return; out.end(() => ok(size)); });
+  req.on("error", error => stop(`The upload did not finish (${error.message}), so nothing was imported.`));
+  out.on("error", error => stop(`The file could not be written (${error.message}), so nothing was imported.`));
+});
 const nextId = () => ++idCounter;
 // Every finished run is published under a name no later run can write to. The card
 // then points at that published file, so two things fall out of one mechanism:
@@ -74,6 +105,18 @@ const nextId = () => ++idCounter;
 // `from` is where the bytes being published are, when that is not the card's own
 // directory: a finished run leaves its output in its attempt directory, and only
 // the copy under versions/ outlives it.
+// A browser sends the name the person's file has on their own disk, and a name is not a path.
+//
+// Keep the display name while constraining the stored filename to the card directory.
+function safeUploadName(given, type) {
+  const ext = extname(String(given)).toLowerCase(), stem = basename(String(given), ext)
+    .normalize("NFKD")
+    .replace(/[^\w.-]+/g, "-")
+    .replace(/-{2,}/g, "-")
+    .replace(/^[-.]+|[-.]+$/g, "")
+    .slice(0, 60) || "file";
+  return `${stem}${ext}`;
+}
 function publish(workdir, id, artifact, from = join(workdir, String(id))) {
   if (!artifact) return null;
   const dir = join(workdir, String(id)), source = join(from, basename(artifact));
@@ -356,6 +399,12 @@ function openWorkspace(dir) {
     // the switch atomic from the outside: the path and the cards become the new ones
     // together, after the new file exists.
     writeWorkspace(dir, graph);
+    // Anything left in `.uploads/` belongs to a request that did not finish - this server writes
+    // there only for the length of one upload, and deletes the directory it used. A process that
+    // died mid-upload (or was killed) cannot clean up after itself, so the stale directory is
+    // swept when the workspace is opened, exactly as an interrupted run is recovered then. Only
+    // the staging root is touched; a card's own files are never in it.
+    rmSync(join(dir, UPLOAD_STAGING), { recursive: true, force: true });
     workdir = dir;
     nodes = graph;
     idCounter = Math.max(0, ...Object.keys(graph).map(Number));
@@ -416,7 +465,82 @@ const server = createServer(async (req, res) => { try {
     const fallback = defaultMethodFor(b.type || "text");
     nodes[id] = nodeRecord(id, { ...b, inputs: [], method: b.method || fallback, quality: b.quality || "standard" }); save(); return json(res, 200, view());
   }
-  if (url.pathname === "/api/import" && req.method === "POST") { const b = await body(req), id = nextId(), type = typeForFile(b.path); if (!type) throw new Error("Unsupported asset type"); const name = String(b.path).split(/[\\/]/).pop(); mkdirSync(join(workdir, String(id)), { recursive: true }); copyFileSync(resolve(b.path), join(workdir, String(id), name)); nodes[id] = nodeRecord(id, { x: b.x, y: b.y, type, inputs: [], artifact: name }); save(); return json(res, 200, view()); }
+  if (url.pathname === "/api/import" && req.method === "POST") { const b = await body(req), id = nextId(), type = typeForFile(b.path); if (!type) throw new Error("Unsupported asset type"); const name = String(b.path).split(/[\/]/).pop(); mkdirSync(join(workdir, String(id)), { recursive: true }); copyFileSync(resolve(b.path), join(workdir, String(id), name)); nodes[id] = nodeRecord(id, { x: b.x, y: b.y, type, inputs: [], artifact: name }); save(); return json(res, 200, view()); }
+  // BRINGING A FILE IN FROM THE BROWSER.
+  //
+  // `/api/import` above takes a path on the *server's* disk, which is a developer's gesture: a
+  // person sitting at the canvas has a file on their own machine and no way to name it. So the
+  // one thing every film is made of - the material - could only be brought in by leaving the app.
+  // This is the browser's half of it: the card's `file` input uploads the bytes, the name the
+  // person sees is kept as the card's artifact, and the file becomes a constant card (no method,
+  // no Generate) exactly like an imported one.
+  //
+  // Keep the format's extension and normalize the filename before storage.
+  if (url.pathname === "/api/upload" && req.method === "POST") {
+    const query = url.searchParams, given = String(query.get("name") || ""), type = typeForFile(given);
+    if (!type) return json(res, 400, { ...view(), error: `A ${extname(given) || "file with no extension"} file is not one of the types this canvas holds (text, image, audio, video). Nothing was imported.` });
+    const safeName = safeUploadName(given, type), id = nextId(), dir = join(workdir, String(id)), staged = join(workdir, UPLOAD_STAGING, `${id}-${process.pid}`);
+    mkdirSync(staged, { recursive: true }); mkdirSync(dir, { recursive: true });
+    try {
+      const size = await saveStream(req, join(staged, safeName));
+      if (!size) throw new Error("The file arrived empty, so nothing was imported.");
+      // Copied into the card only after the last byte: a card is saved pointing at a name that exists.
+      copyFileSync(join(staged, safeName), join(dir, safeName));
+    } catch (error) {
+      rmSync(dir, { recursive: true, force: true });
+      throw error;
+    } finally { rmSync(staged, { recursive: true, force: true }); dropStagingRoot(workdir); }
+    nodes[id] = nodeRecord(id, { x: Number(query.get("x")) || 0, y: Number(query.get("y")) || 0, type, inputs: [], artifact: safeName });
+    save(); return json(res, 200, view());
+  }
+  // REPLACING THE MATERIAL ON A CARD THAT IS ALREADY THERE.
+  //
+  // "Use my own two pictures" is not only "bring two files in": it is also "that scene, but with
+  // this photo instead". Doing that by importing a new card and re-drawing the link by hand costs
+  // the person their links and the film's record of what it was cut from. The bytes are published
+  // as a new kept version of the *same* card, so the links stay, the previous file becomes a
+  // version that can be restored, and everything downstream sees an ordinary new take.
+  //
+  // Only a constant card is replaced this way. A generated card's bytes are the output of a
+  // method; handing it a file would claim that method produced it, so the refusal says where to
+  // put the file instead (drop it on the canvas, or on a constant card).
+  if (url.pathname === "/api/replace" && req.method === "POST") {
+    const query = url.searchParams, id = Number(query.get("id")), given = String(query.get("name") || "");
+    if (!nodes[id]) return json(res, 404, { ...view(), error: `Card #${id} is not on this canvas, so nothing was replaced.` });
+    const n = getNode(id);
+    if (claimFor(id)) return json(res, 409, { ...view(), error: `Card #${id} is generating; stop it before replacing its file.` });
+    // The file is read first, because the most actionable refusal comes from it: a picture dropped
+    // on a sound card is "that is the wrong kind of file", which is a fact about the drop. Only once
+    // the kinds agree does "this card's bytes are a method's output" become the honest answer -
+    // otherwise a person who dropped a PNG on a tone card would be told about the method and not
+    // about the mistake they can actually see.
+    const type = typeForFile(given);
+    if (!type) return json(res, 400, { ...view(), error: `A ${extname(given) || "file with no extension"} file is not one of the types this canvas holds. Card #${id} was not changed.` });
+    if (type !== n.type) return json(res, 409, { ...view(), error: `Card #${id} holds ${n.type} material, and the file you dropped is ${type}. Nothing was replaced; drop it on the canvas to make a new card instead.` });
+    if (n.method) return json(res, 409, { ...view(), error: `Card #${id} is made by ${n.method}, so its file is that method's output rather than material you supply. Import the file as its own card, or link it from there.` });
+    const safeName = safeUploadName(given, type), dir = join(workdir, String(id));
+    // One staging directory, deleted whichever way this ends. It is inside the workspace (so the
+    // move stays on one filesystem) and outside the card (so nothing half-arrived is ever read as
+    // that card's material).
+    const staged = join(workdir, UPLOAD_STAGING, `${id}-${process.pid}`);
+    mkdirSync(staged, { recursive: true }); mkdirSync(join(dir, "versions"), { recursive: true });
+    // The file the card holds now becomes a kept version before the new bytes take its place, so
+    // this is reversible exactly like every other take: the old picture is one restore away. The
+    // record is built first because `publish` below mints a fresh name and the card must keep a
+    // reference to the old one.
+    const list = [...(n.versions || [])], ordinal = Math.max(0, ...list.map(v => Number(v.id) || 0)) + 1;
+    const previous = n.artifact ? { id: ordinal, artifact: n.artifact, file: n.artifact, sources: [], prompt: null, narration: n.narration ?? null } : null;
+    let published;
+    try {
+      const size = await saveStream(req, join(staged, safeName));
+      if (!size) throw new Error(`The file arrived empty, so card #${id} still holds what it held.`);
+      published = publish(workdir, id, safeName, staged);
+    } finally { rmSync(staged, { recursive: true, force: true }); dropStagingRoot(workdir); }
+    if (!published) throw new Error(`The file for card #${id} could not be published beside it, so the card still holds what it held.`);
+    nodes[id] = nodeRecord(id, { ...n, artifact: published, versions: previous ? [...list, previous] : list, status: "idle", error: null });
+    save(); emit({ kind: "uploaded", id });
+    return json(res, 200, view());
+  }
   if (url.pathname === "/api/link" && req.method === "POST") { const b = await body(req), target = getNode(b.target); if (Number(b.source) !== Number(b.target) && !target.inputs.includes(Number(b.source))) target.inputs.push(Number(b.source)); nodes[b.target] = target; save(); return json(res, 200, view()); }
   if (url.pathname === "/api/unlink" && req.method === "POST") { const b = await body(req), target = getNode(b.target); target.inputs = target.inputs.filter(id => id !== Number(b.source)); nodes[b.target] = target; save(); return json(res, 200, view()); }
   // status/error belong to the run, not to the client: a card's prompt or position
@@ -659,6 +783,14 @@ const server = createServer(async (req, res) => { try {
     // the agent's own message about a missing file - after an attempt directory and a
     // run marker had already been made. Say which file is missing, before anything
     // exists, and point at the method that does work.
+    // A constant card is a file the person supplied, not something a method produces. Pressing
+    // Generate used to fall through to the agent path with `method: null`, which either failed
+    // obscurely or let an agent write over material that is not its output. The card says what to
+    // do instead, because the person is usually one gesture away from what they meant.
+    if (!n.method) {
+      releaseClaim(claim);
+      return json(res, 409, { ...view(), error: `Card ${n.id} holds a file you supplied, not the output of a method, so there is nothing to generate. Change its type and pick a method, or drop another file on it to replace it.` });
+    }
     const chosen = methodFor(n.type, n.method);
     if (chosen && chosen.available === false) {
       // Nothing was started, so the claim goes back before the refusal is written:
@@ -865,9 +997,14 @@ const server = createServer(async (req, res) => { try {
       // other check: it is a real film with the right voice, and the only thing wrong with it is
       // the thing a viewer would notice first.
       const film = chosen?.builtin === "firstcut"
-        ? verifyFilm({ file: result.artifact, soundtrackFile: runSources.find(s => s.type === "audio")?.frozen ?? null, projectRoot: root, scenes: result.scenes ?? null })
+        ? verifyFilm({ file: result.artifact, soundtrackFile: runSources.find(s => s.type === "audio")?.frozen ?? null, projectRoot: root, scenes: result.scenes ?? null, placements: result.placements ?? null })
         : null;
       if (film && !film.ok) throw new Error(`This film is not the one it claims to be: ${film.problems.join("; ")}`);
+      // And the words under it have to be readable at the pace it speaks them. This is a check of
+      // its own, not part of the film's, because it is about a different person: the sound and the
+      // pictures are for the ear and the eye, and this is about whether the eye can keep up.
+      const captions = chosen?.builtin === "firstcut" ? verifyCaptions({ cues: result.cues ?? null }) : null;
+      if (captions && !captions.ok) throw new Error(`The words under this film cannot be read at the pace it speaks them: ${captions.problems.join("; ")}. Read the narration more slowly (Read again with a lower pace), or split the sentence into shorter lines, then press Make again. Nothing was published.`);
       // A picture is checked before it is published, for the same reason: a method that reports
       // success and leaves an empty or wrong-sized file must be an error card now rather than a
       // film that fails its scene check later with a sentence about the wrong card.

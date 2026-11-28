@@ -22,8 +22,18 @@ import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 import { wavSamples } from "../voice/wav.mjs";
 import { correlation } from "../voice/bind.mjs";
+import { placePicture } from "./framing.mjs";
 
 const tool = (projectRoot, name) => join(projectRoot || process.cwd(), "node_modules/@remotion/compositor-linux-x64-gnu", name);
+
+// A picture's real pixel size, read from the file rather than from the card's claim, because the
+// placement is computed from it and a wrong number here is a cropped head.
+function pictureSize(ffprobe, file) {
+  const probe = JSON.parse(execFileSync(ffprobe, ["-v", "error", "-print_format", "json", "-show_streams", file], { encoding: "utf8" }));
+  const stream = (probe.streams || []).find(s => s.codec_type === "video");
+  if (!stream) throw new Error(`${basename(file)} holds no picture stream`);
+  return { width: Number(stream.width), height: Number(stream.height) };
+}
 
 // SCENES. One picture is one scene, and the cut between two of them is a measured fact about the
 // narration rather than a number someone typed.
@@ -94,13 +104,92 @@ export function planScenes({ pictures = [], phrases = [], seconds = 0 }) {
 // rather than `stretch`, because that is what the composition does with a poster whose aspect is
 // not the frame's: scaling differently on each side would compare two different crops and call a
 // correct film wrong.
-function asGrid(tool, file, { at = null, scratch, crop } = {}) {
+// A small colour grid of one frame of the film, from its TOP TWO THIRDS.
+//
+// The caption is drawn across the bottom of the frame, so the bottom third is text over the picture
+// rather than the picture alone. Comparing it depresses the score of a *correct* film (measured:
+// 0.785 for scenes that score 0.86 over the band above the caption), which pushes a working check
+// toward loosening its bar - the wrong direction. So the band is excluded on BOTH sides: the frame
+// here, and the picture it is compared with in `asSceneGrid`. The 2/3 split is a constant in one
+// place for that reason.
+const CUE_BAND = 2 / 3;
+// The grid a frame and a picture are both reduced to. Its aspect is the frame's, so one cell is the
+// same number of frame pixels in both directions (`32/1280 === 12/480`) - a contained picture can
+// then be placed at its true position instead of being scaled to fit the grid, which is what made a
+// correct panorama read as -0.39.
+const FRAME = { width: 1280, height: 720 };
+const GRID_W = 32, GRID_H = 12;
+function asGrid(tool, file, { at = null, scratch } = {}) {
   const out = join(scratch, `f${Math.random().toString(36).slice(2)}.rgb`);
-  const filters = [crop ? "crop=iw:ih*2/3:0:0" : null, "scale=32:18:force_original_aspect_ratio=increase", "crop=32:18"].filter(Boolean).join(",");
+  const filters = `crop=iw:ih*${CUE_BAND.toFixed(4)}:0:0,scale=${GRID_W}:${GRID_H}`;
   const args = ["-hide_banner", "-loglevel", "error", "-y"];
   if (at != null) args.push("-ss", Number(at).toFixed(3));
   args.push("-i", file, "-frames:v", "1", "-vf", filters, "-pix_fmt", "rgb24", "-c:v", "rawvideo", "-f", "image2", out);
   execFileSync(tool, args, { stdio: "pipe" });
+  return readFileSync(out);
+}
+
+// The grid of exactly what a scene puts on screen: the picture's own `crop` according to its
+// placement, then letterboxed into the frame the way the composition letterboxes it. Without the
+// placement the source is used whole, which is the old behaviour and correct for a film made before
+// placements existed (those films all filled the frame).
+function asSceneGrid({ ffprobe, ffmpeg }, path, scene, scratch) {
+  const { width, height } = pictureSize(ffprobe, path);
+  const place = scene.placement?.crop
+    ? scene.placement
+    : placePicture({ width, height }, { width: 1280, height: 720 }, scene.placement?.fit || (width / height > 1.7 ? "cover" : "contain"));
+  const c = place.crop;
+  const out = join(scratch, `p${Math.random().toString(36).slice(2)}.rgb`);
+  // `crop` takes integer pixels; the aspect after cropping is the frame's own for a filled scene and
+  // the picture's for a contained one, and either way the 32x18 grid is taken with `pad` rather than
+  // `increase`, so a contained picture keeps the dark bars the viewer sees instead of being
+  // stretched to the frame's edges.
+  // The top two-thirds of the visible picture, which is the band the frame grid covers: the bottom
+  // third of a scene carries the caption, so comparing it would compare text with no text.
+  const w = Math.max(1, Math.round(c.width)), h = Math.max(1, Math.round(c.height * CUE_BAND)), x = Math.max(0, Math.round(c.x)), y = Math.max(0, Math.round(c.y));
+  // The Remotion ffmpeg build has no `pad` filter (measured: `No option name near '32:18:(ow-iw)…'`),
+  // and the grid has to be the same shape as the frame grid whatever the picture's shape, or it
+  // cannot be compared with a frame at all. So a contained picture is scaled *inside* that shape
+  // here, and the bars the composition draws are filled in black - in the same place, because both
+  // are centred. The grid is the top two-thirds of the frame (32x12), the same band `asGrid` uses,
+  // so the caption text is excluded from both sides of the comparison.
+  if (place.fit === "contain") {
+    // THE PICTURE GOES WHERE IT ACTUALLY SITS. The first version of this scaled the picture to fill
+    // the grid and centred it there, which is not what the composition does: a 1440x180 panorama is
+    // placed at y=280..440 in a 720-tall frame, so most of the top band is BLACK. Filling the grid
+    // with the picture and comparing it with a frame that is two-thirds black scored -0.39 for a
+    // film that was correct to three places - the operator measured 0.9999 independently - and the
+    // check refused a good film. The reference has to be the frame, not the picture.
+    const grid = Buffer.alloc(GRID_W * GRID_H * 3);
+    const rect = place.rect;
+    // The band is the top CUE_BAND of the frame; a picture entirely below it contributes nothing.
+    const bandHeight = FRAME.height * CUE_BAND;
+    const top = Math.max(0, rect.y), bottom = Math.min(bandHeight, rect.y + rect.height);
+    if (bottom <= top) return grid;
+    // Both axes of the grid are the same scale (32/1280 === 12/480), so frame pixels map directly.
+    const scale = GRID_W / FRAME.width;
+    const gx = Math.max(0, Math.round(rect.x * scale));
+    const gw = Math.min(GRID_W - gx, Math.max(1, Math.round(rect.width * scale)));
+    const gy = Math.max(0, Math.round(top * scale));
+    const gh = Math.min(GRID_H - gy, Math.max(1, Math.round((bottom - top) * scale)));
+    if (gw < 1 || gh < 1) return grid;
+    // Which part of the source is on screen in those rows: the placement's crop box, narrowed to the
+    // vertical slice the band covers.
+    const fromY = c.y + ((top - rect.y) / rect.height) * c.height;
+    const toY = c.y + ((bottom - rect.y) / rect.height) * c.height;
+    const sw = Math.max(1, Math.round(c.width)), sh = Math.max(1, Math.round(toY - fromY)), sx0 = Math.max(0, Math.round(c.x)), sy0 = Math.max(0, Math.round(fromY));
+    const inner = join(scratch, `q${Math.random().toString(36).slice(2)}.rgb`);
+    execFileSync(ffmpeg, ["-hide_banner", "-loglevel", "error", "-y", "-i", path, "-frames:v", "1", "-vf", `crop=${sw}:${sh}:${sx0}:${sy0},scale=${gw}:${gh}`, "-pix_fmt", "rgb24", "-c:v", "rawvideo", "-f", "image2", inner], { stdio: "pipe" });
+    const small = readFileSync(inner);
+    for (let row = 0; row < gh; row++) {
+      for (let col = 0; col < gw; col++) {
+        const from = (row * gw + col) * 3, to = ((row + gy) * GRID_W + col + gx) * 3;
+        grid[to] = small[from]; grid[to + 1] = small[from + 1]; grid[to + 2] = small[from + 2];
+      }
+    }
+    return grid;
+  }
+  execFileSync(ffmpeg, ["-hide_banner", "-loglevel", "error", "-y", "-i", path, "-frames:v", "1", "-vf", `crop=${w}:${h}:${x}:${y},scale=32:12`, "-pix_fmt", "rgb24", "-c:v", "rawvideo", "-f", "image2", out], { stdio: "pipe" });
   return readFileSync(out);
 }
 
@@ -128,22 +217,29 @@ function asGrid(tool, file, { at = null, scratch, crop } = {}) {
 //
 // When a film has only one picture the ranking is vacuous - there is nothing to confuse it with - so
 // the absolute floor alone decides, and it is stated as such rather than pretended to be stronger.
-function verifyScenes({ file, scenes, tool }) {
+function verifyScenes({ file, scenes, tool, placements = null, ffprobe = null }) {
+  // A scene may carry its placement from the cut (`scene.placement`), which is what the composition
+  // used; the parallel `placements` array is accepted for a caller that has the cut's own list.
+  if (Array.isArray(placements)) scenes = scenes.map((s, i) => placements[i] ? { ...s, placement: placements[i] } : s);
   const usable = scenes.filter(s => s.picture && (s.picture.frozen || s.picture.file) && existsSync(s.picture.frozen || s.picture.file));
   if (!usable.length) return { problems: [], evidence: null };
   const scratch = mkdtempSync(join(tmpdir(), "hypermaker-scenes-"));
   const problems = [], measured = [];
   try {
-    // Each distinct picture once: a picture used by two scenes is one candidate, not two.
+    // Each distinct picture once: a picture used by two scenes is one candidate, not two. The grid
+    // is taken from the part of the picture the placement says is on screen, because a `contain`
+    // scene shows the whole picture and a `cover` scene shows its middle - comparing either against
+    // the uncropped source would score a correct film low and, worse, would score a wrong picture
+    // high often enough to hide the mistake.
     const pictures = new Map();
     for (const scene of usable) {
       const path = scene.picture.frozen || scene.picture.file;
-      if (!pictures.has(path)) pictures.set(path, asGrid(tool, path, { scratch, crop: true }));
+      if (!pictures.has(path)) pictures.set(path, asSceneGrid({ ffprobe: ffprobe || tool, ffmpeg: tool }, path, scene, scratch));
     }
     for (const scene of usable) {
       const mid = (Number(scene.start) + Number(scene.end)) / 2;
       const own = scene.picture.frozen || scene.picture.file;
-      const frame = asGrid(tool, file, { at: mid, scratch, crop: true });
+      const frame = asGrid(tool, file, { at: mid, scratch });
       // Every candidate, in one pass, so the ranking is over the same pixels the ratio uses.
       const scores = [...pictures].map(([path, grid]) => ({ path, score: correlation(frame, grid) })).sort((a, b) => b.score - a.score);
       const mine = scores.find(s => s.path === own).score;
@@ -168,14 +264,49 @@ function verifyScenes({ file, scenes, tool }) {
           const rivalBy = card(rival.path);
           problems.push(`at ${mid.toFixed(2)}s scene ${scene.index + 1} cannot be told apart from card #${rivalBy?.id ?? "?"}'s picture in the same film (${mine.toFixed(3)} against ${rival.score.toFixed(3)}), so it cannot be shown to show the picture it names`);
         }
-      } else if (mine < 0.8) {
-        problems.push(`at ${mid.toFixed(2)}s scene ${scene.index + 1} does not show the picture it was cut from (agreement ${mine.toFixed(2)} with ${basename(own)})`);
+      }
+      // THE ABSOLUTE FLOOR, for every film, not only a one-picture one. This used to apply only when
+      // there was nothing to rank against - and a real two-picture film then published with its
+      // scenes measuring 0.282 and 0.580, because "your picture is the better of the two" is true
+      // of a scene showing neither of them. A picture shown whole with bars against a frame that
+      // fills the frame is a *different crop* of the same bytes, so the comparison above is made
+      // against the placed crop; this floor is what says the comparison is about the same picture
+      // at all. 0.6 is well below an honest scene (0.88 to 0.95 measured on real films) and well
+      // above what two unrelated pictures score (0.28 measured on the reported one).
+      if (mine < 0.6) {
+        problems.push(`at ${mid.toFixed(2)}s scene ${scene.index + 1} does not show the picture it was cut from (agreement ${mine.toFixed(2)} with ${basename(own)}${rival ? ", even though it is the closer of the film's pictures" : ""})`);
       }
     }
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }
   return { problems, evidence: measured };
+}
+
+// WHAT THE VIEWER HAS TO READ, measured from the cue's own frames.
+//
+// A caption can be perfectly truthful and still useless: a sentence that is on screen for 0.6 s is
+// a sentence nobody finishes, and the film looks like it is flashing words rather than telling a
+// story. The rate is characters per second *of this cue*, so a short sentence spoken slowly is not
+// punished for the length of the scene around it, and the bar is stated (`comfortable`) instead of
+// being a magic number a person has to guess at.
+//
+// Refusing is the point. The card reporting "41 chars/s" is a number next to a finished film; a
+// person who is not looking at the card still plays the film. So a film whose words cannot be read
+// at the pace it speaks them is not published, and the sentence names the cue, the number and the
+// thing to change.
+const COMFORTABLE_CPS = 20;
+export function verifyCaptions({ cues = null } = {}) {
+  if (!Array.isArray(cues) || !cues.length) return { ok: true, problems: [], evidence: null };
+  const problems = [];
+  for (const cue of cues) {
+    if (Number(cue.charactersPerSecond) > COMFORTABLE_CPS) {
+      const text = String(cue.text || "").replace(/\s+/g, " ").slice(0, 60);
+      problems.push(`in scene ${Number(cue.scene) + 1} the caption "${text}${String(cue.text || "").length > 60 ? "..." : ""}" is on screen ${cue.seconds}s, which is ${cue.charactersPerSecond} characters a second - above the ${COMFORTABLE_CPS} this build treats as comfortable to read`);
+    }
+  }
+  const worst = Math.max(...cues.map(c => Number(c.charactersPerSecond) || 0));
+  return { ok: problems.length === 0, problems, evidence: { cues: cues.length, worst: Number(worst.toFixed(1)), comfortable: COMFORTABLE_CPS } };
 }
 
 // A picture that a film is about to use has to be a real picture, and it has to be the size the
@@ -309,7 +440,7 @@ function everyPart(heard, wanted, rate, lag, { seconds = 0.25, hopSeconds = 0.1,
 // scenes existed is still measured by everything above; a film that claims scenes is also measured
 // on its pictures, because "the right narration over a real video stream" is true of a film that
 // shows the first picture for its whole length.
-export function verifyFilm({ file, soundtrackFile, projectRoot, scenes = null }) {
+export function verifyFilm({ file, soundtrackFile, projectRoot, scenes = null, placements = null }) {
   const problems = [];
   if (!file || !existsSync(file)) return { ok: false, problems: [`${file || "no film"} is not a file`], evidence: null };
   const ffmpeg = tool(projectRoot, "ffmpeg"), ffprobe = tool(projectRoot, "ffprobe");
@@ -416,7 +547,7 @@ export function verifyFilm({ file, soundtrackFile, projectRoot, scenes = null })
   // check per scene, at its middle, against the frozen bytes of the picture that scene names.
   // A film that shows scene one's picture for its whole length passes every check above - it is
   // a real film carrying the right voice - so this is the only thing that can see it.
-  const pictures = scenes ? verifyScenes({ file, scenes, tool: ffmpeg }) : { problems: [], evidence: null };
+  const pictures = scenes ? verifyScenes({ file, scenes, tool: ffmpeg, ffprobe, placements }) : { problems: [], evidence: null };
   if (pictures.problems.length) return { ok: false, problems: pictures.problems, evidence: { peak, correlation: Number(parts.worst.score.toFixed(3)), scenes: pictures.evidence } };
   return {
     ok: true,

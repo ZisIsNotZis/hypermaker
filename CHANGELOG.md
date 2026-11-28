@@ -67,7 +67,7 @@ graph over HTTP would pass with the drag gesture broken, and would be evidence f
 walks. It now creates each card by double-clicking where it should stay, links by dragging title
 bars, and asserts the dragged card returns to its place - all with the mouse.
 
-`test/scenes.test.mjs` and `test/scenes-canvas.test.mjs`; `npm test` is **192/192** with a browser.
+`test/scenes.test.mjs` and `test/scenes-canvas.test.mjs`; `npm test` was **192/192** with a browser at that commit. The same day added bringing your own file in from the canvas, per-phrase caption cues and picture framing, and the suite is **205/205**.
 
 ## Unreleased — the film check hears the whole narration, and an old take keeps its old measurement, 2026-11-28
 

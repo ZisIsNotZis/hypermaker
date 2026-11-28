@@ -43,6 +43,13 @@ test("two pictures made on the canvas become a film of two scenes, and the card 
       // Wide and tall enough that five cards fit without overlapping, because every one of them has
       // to be reachable for a drag: a card hidden under another is not something a person could use.
       const page = await browser.newPage({ viewport: { width: 2000, height: 1100 } });
+      // ANY uncaught error in the canvas fails this test. A real workspace lost its film card this
+      // way - `Cannot access 'shown' before initialization`, a local variable shadowing a helper -
+      // and every assertion here still passed while the card was simply absent from the DOM, because
+      // nothing was watching the page's own errors. The server was right, the file was on disk, and
+      // only the browser could see the defect.
+      const pageErrors = [];
+      page.on("pageerror", error => pageErrors.push(String(error)));
       await page.goto(`http://127.0.0.1:${port}/`);
       // Each card is created where it should stay, by double-clicking an empty part of the canvas -
       // the gesture the product documents for making a card. That is both what a person does and
@@ -208,6 +215,10 @@ test("two pictures made on the canvas become a film of two scenes, and the card 
       await page.evaluate(({ s, t }) => fetch("/api/unlink", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ source: +s, target: +t }) }), { s: secondId, t: filmId });
       await page.reload();
       await page.waitForFunction(() => document.querySelector("#cards").children.length > 0);
+      // The canvas never threw while painting any of this. Checked here, after the last reload, so a
+      // card carrying the newest record fields - a film with scenes, captions and placements - is
+      // painted from scratch by a client that has never seen it.
+      assert.deepEqual(pageErrors, [], "the canvas painted every card without an uncaught error");
     } finally {
       await browser.close();
     }
