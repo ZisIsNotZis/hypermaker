@@ -333,7 +333,7 @@ try {
     const compareButton = card(film).getByRole('button', { name: 'compare', exact: true });
     await compareButton.focus();
     await page.keyboard.press('Enter');
-    const dialog = page.getByRole('dialog', { name: 'film.mp4 — two takes' });
+    const dialog = page.getByRole('dialog', { name: 'film.mp4 — compare takes' });
     await dialog.waitFor();
     assert.equal(await dialog.locator('summary').evaluate(el => el === document.activeElement), true);
     for (let i = 0; i < 20; i++) {
