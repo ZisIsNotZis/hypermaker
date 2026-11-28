@@ -116,6 +116,14 @@ function render(args, cancelRef) {
 export async function renderAt({ projectRoot, scriptFile, outDir, wpm, voice = null, cancelRef = {} }) {
   const out = join(outDir, "narration.wav"), timeline = join(outDir, "timeline.json");
   const args = [join(projectRoot, "voice", "render.mjs"), "--file", scriptFile, "--out", out, "--timeline", timeline, "--wpm", String(wpm)];
+  // The mouth travels with the pace, for the same reason the reading table does and more strongly:
+  // re-reading a take that an engine spoke with the built-in voice would be a different recording
+  // of the same words, and the card would say "only the pace changed" about a take where the voice
+  // did too. `pitch` is on the engine's 0-99 scale here and on hertz for the built-in voice, which
+  // is why the engine is named before the pitch is passed.
+  if (voice?.engine) args.push("--engine", String(voice.engine));
+  if (voice?.engineVersion != null) args.push("--engine-version", String(voice.engineVersion));
+  if (voice?.engineVoice != null) args.push("--engine-voice", String(voice.engineVoice));
   if (voice?.pitch != null) args.push("--pitch", String(voice.pitch));
   // The reading table travels with the pace. Re-reading with today's table would change which
   // syllables are stressed, which is a different take wearing the same pace - exactly the
@@ -133,9 +141,15 @@ export async function renderAt({ projectRoot, scriptFile, outDir, wpm, voice = n
 // `same: false` with the reason, never an assumption.
 export async function reproducesPrevious({ projectRoot, scriptFile, previousFile, timeline, scratch, cancelRef = {} }) {
   if (!previousFile || !existsSync(previousFile)) return { same: false, why: "there is no earlier take to compare with" };
-  if (!timeline?.voice || timeline.voice.rate == null) return { same: false, why: "the earlier take records no voice settings to reproduce it with" };
+  if (!timeline?.voice || (timeline.voice.rate == null && !timeline.voice.engine)) return { same: false, why: "the earlier take records no voice settings to reproduce it with" };
   const out = join(scratch, "previous.wav");
-  const args = [join(projectRoot, "voice", "render.mjs"), "--file", scriptFile, "--out", out, "--rate", String(timeline.voice.rate)];
+  // An engine take is reproduced by its engine's own settings - `--speed`, not `--rate`: the engine
+  // was never given a duration multiplier, and passing rate 1 would produce the engine's default
+  // speed, which is a different recording from the one on the card.
+  const engine = timeline.voice.engine ? ["--engine", String(timeline.voice.engine), "--speed", String(timeline.voice.speed ?? "")] : ["--rate", String(timeline.voice.rate)];
+  if (timeline.voice.engineVersion != null && timeline.voice.engine) engine.push("--engine-version", String(timeline.voice.engineVersion));
+  if (timeline.voice.engineVoice != null && timeline.voice.engine) engine.push("--engine-voice", String(timeline.voice.engineVoice));
+  const args = [join(projectRoot, "voice", "render.mjs"), "--file", scriptFile, "--out", out, ...engine];
   if (timeline.voice.pitch != null) args.push("--pitch", String(timeline.voice.pitch));
   if (timeline.voice.readings != null) args.push("--readings", String(timeline.voice.readings));
   try { await render(args, cancelRef); }

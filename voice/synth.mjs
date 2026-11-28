@@ -20,6 +20,7 @@
 // an opinion.
 
 import { tokenize, checkReadings, CURRENT_READINGS } from "./lexicon.mjs";
+import { ENGINE, ENGINE_VOICE, DEFAULT_SPEED, DEFAULT_PITCH, clampSpeed, clampPitch, renderWithEngine } from "./engine.mjs";
 
 export const RATE = 22050; // Speech energy is under 8 kHz; 44.1 kHz would double the file
                           // for nothing. The WAV this writes is still ordinary 16-bit PCM.
@@ -228,15 +229,44 @@ export function synthesize(tokens, options = {}) {
 // build that reads words from the dictionary, and without this field the record could not say
 // which one made the audio. It is validated where it is used, so a typo is a refusal and not a
 // silent fallback to whatever this build happens to default to.
+//
+// `engine` is the same kind of field, one level up: WHICH MOUTH spoke is as much a fact about the
+// bytes as the rate is, and a build that gained an engine must not start rendering an older take
+// with it. So `engine` absent means the built-in formant voice, always and without exception -
+// that is what keeps every take made before this field existed reproducing byte for byte on a
+// machine that has an engine installed. Only a caller that names an engine gets one.
+// `pitch` is read on the scale of the mouth that spoke: hertz for the built-in voice, eSpeak's
+// 0-99 for the engine. `engine` is what says which scale a `pitch` is on, which is why nothing
+// may read one without the other.
 export function effectiveVoice(options = {}) {
+  // Refused rather than defaulted. `options.readings` unset means "whatever this build
+  // reads with"; a *named* table this build does not have is a typo or a newer build's
+  // audio, and quietly substituting today's would make the one field that explains the
+  // bytes into a field nothing enforces. `pronounce` raises the same error.
+  const readings = options.readings == null ? CURRENT_READINGS : checkReadings(options.readings);
+  if (options.engine != null) {
+    // A named engine this build does not have is refused where the bytes would have been made,
+    // rather than falling back to the built-in voice: a take that says it was spoken by an
+    // engine and was not is exactly the mismatch the record exists to prevent. `engine.mjs`
+    // names it, and `checkEngine` also refuses an engine *version* that differs from the one the
+    // take records - a later eSpeak is a different voice.
+    if (String(options.engine) !== ENGINE) throw new Error(`this build has no speech engine called ${JSON.stringify(options.engine)} (it speaks with ${JSON.stringify(ENGINE)} only when one is installed)`);
+    return {
+      engine: ENGINE,
+      ...(options.engineVersion ? { engineVersion: String(options.engineVersion) } : {}),
+      // Which voice *inside* the engine spoke. `en` and `en-us` are two voices of the same program,
+      // and the measurement that picked this one is in `engine.mjs`. A take recorded without it is
+      // read as the pinned voice, which is what every take before the field existed was made with.
+      engineVoice: options.engineVoice == null ? ENGINE_VOICE : String(options.engineVoice),
+      speed: clampSpeed(options.speed),
+      pitch: clampPitch(options.pitch),
+      readings
+    };
+  }
   return {
     rate: clamp(Number(options.rate) || 1, 0.5, 2.5),
     pitch: clamp(Number(options.pitch) || 112, 70, 240),
-    // Refused rather than defaulted. `options.readings` unset means "whatever this build
-    // reads with"; a *named* table this build does not have is a typo or a newer build's
-    // audio, and quietly substituting today's would make the one field that explains the
-    // bytes into a field nothing enforces. `pronounce` raises the same error.
-    readings: options.readings == null ? CURRENT_READINGS : checkReadings(options.readings)
+    readings
   };
 }
 
@@ -267,10 +297,18 @@ export function rateForWpm(segments, wpm) {
 // is absent - which is every shipped path - the tokens carry whatever their reading table
 // said, and the bytes are whatever they were.
 export function renderParagraph(phrases, options = {}) {
+  const voice = effectiveVoice(options);
+  // One voice for the whole paragraph, decided once: a paragraph that switched mouths between
+  // phrases would be a take no single record could describe.
   const parts = [], segments = [];
-  let cursor = 0, seen = 0;
+  let cursor = 0, seen = 0, version = voice.engineVersion ?? null;
   for (const phrase of phrases) {
-    const { tokens, unreadable } = tokenize(phrase.text, effectiveVoice(options).readings);
+    // The words are checked with this repository's lexicon whatever the mouth, so "every symbol
+    // this product cannot say is refused by name" and "the script is the card's words" do not
+    // weaken when an engine is installed. The engine is handed the *phrase*, not the token list:
+    // it has its own front end and re-splitting the words for it would be a second, quieter
+    // reading of the same sentence - the exact thing that made the timeline unfalsifiable before.
+    const { tokens, unreadable } = tokenize(phrase.text, voice.readings);
     if (unreadable.length) throw new Error(`the offline voice cannot say ${unreadable.map(w => `"${w}"`).join(", ")}`);
     if (!tokens.length) continue;
     if (Array.isArray(options.notes)) {
@@ -281,7 +319,17 @@ export function renderParagraph(phrases, options = {}) {
       });
     }
     seen += tokens.length;
-    const pcm = synthesize(tokens, options);
+    let pcm;
+    if (voice.engine) {
+      const said = renderWithEngine(phrase.text, { ...options, engine: voice.engine, engineVersion: version, engineVoice: voice.engineVoice, speed: voice.speed, pitch: voice.pitch });
+      // A plain array, not the reader's `Float32Array`: `parts.flat()` below flattens arrays and
+      // would leave a typed array whole, so the paragraph would come back as a list of chunks and
+      // every caller's `.length` and index would mean something else.
+      pcm = Array.from(said.samples);
+      version = said.version;
+    } else {
+      pcm = synthesize(tokens, options);
+    }
     segments.push({ text: phrase.text, start: cursor / RATE, duration: pcm.length / RATE, words: tokens.length });
     parts.push(pcm);
     cursor += pcm.length;
@@ -291,7 +339,10 @@ export function renderParagraph(phrases, options = {}) {
   // that cannot reproduce its own audio, and a checker that trusts the record then refuses
   // an honest take. Measured: `--rate 1.23456` recorded as 1.235 re-rendered to a signal that
   // drifted far enough to fail two of five phrases.
-  return { samples: parts.flat(), rate: RATE, segments, voice: effectiveVoice(options) };
+  // The engine's version joins the record for the same reason: `espeak-ng 1.52.0` and a later
+  // build are two different voices, and a take that did not say which one spoke could only be
+  // re-checked against whichever happens to be installed.
+  return { samples: parts.flat(), rate: RATE, segments, voice: { ...voice, ...(voice.engine && version ? { engineVersion: version } : {}) } };
 }
 
 // 16-bit little-endian mono RIFF/WAVE, header included: the same shape `synth` asks an

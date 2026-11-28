@@ -1,5 +1,73 @@
 # Changelog
 
+## Unreleased — the narration is understood when the machine has a speech engine, measured from a published film's own track, 2026-11-28
+
+**The open defect was that a listener could not follow the words.** A recognizer transcribed this
+repository's narration as nothing at all - 0 segments, WER 1.0 on the project's own 69-word corpus -
+while transcribing eSpeak on the same words at 0.043. Every signal check the project had passed that
+voice, which was the lesson: they were never evidence of comprehension.
+
+So a take can now be spoken by a real engine, and says which one. `voice/engine.mjs` discovers
+eSpeak NG (`HYPERMAKER_ESPEAK`, else PATH; the library and data prefix is derived from the binary, so
+an unpacked `.deb` works with no root and no second variable), and `voice/synth.mjs` dispatches to it.
+The server asks for it when one is installed, so this needs no new control: press Generate and the
+take speaks with the engine; the card says `voice: espeak-ng (en-us) 1.52.0 at 132 words/min`.
+
+**The evidence is a real film, transcribed from its own audio track.** `test/story-engine-voice.mjs`
+starts from a blank workspace, brings in two pictures with + File, types a four-line two-act story,
+narrates it at 150 words a minute (asked 150, **reads 149.7**), drags both pictures and the voice onto
+a film card, and presses Make. The published MP4 is decoded and its AAC track transcribed: **27 of 30
+words recovered, WER 0.100, verdict `understood`** (the first measurement of this walk read 26 of 30,
+0.133 - one of those errors turned out to be this repository's own rounding; see the section at the
+top of this changelog). The same walk with the built-in voice is 1.0. The
+film also measures as a film: h264/AAC, plays in the canvas, its track correlates 1.000 with the take
+it names, each act's frame scores 0.909 and 0.972 against its own picture (the other picture 0.507
+and 0.547), and the worst caption reads at 13.3 characters a second where 20 is comfortable.
+
+**No stored take changed, and that was the constraint.** `engine` is a recorded field like the reading
+table, and **absent means the built-in voice, always** - so every take made before the field existed
+reproduces byte for byte on a machine that has an engine installed, which is checked by running the
+the voice tests with one present (34 tests across `narration`, `voice`, `voice-takes-still-verify`
+and `engine`, including the fixture take that must reproduce to 1.000 and the old-rules take; 25 pass
+and 9 skip without an engine, and none skip with one). A take that names an engine is **refused by
+name** when that engine, its
+version, or its voice inside it is missing, never silently re-rendered by another.
+
+Three details were decided by measurement rather than preference:
+
+* **The engine's American voice.** On the 69-word corpus at 150 wpm: `en` 0.116, `en-gb` 0.116,
+  `en-us` **0.043** - which reproduces the recorded eSpeak reference exactly. Three times fewer
+  misheard words on the same audio. The voice name is recorded in every take for the same reason the
+  engine is: swapping it later must not silently change the sound of a take that named the old one.
+* **The pace.** eSpeak's `-s` is not this project's words per minute - it pads every phrase with
+  about a third of a second of silence, which is real audio this take's pace is measured over - so
+  `--wpm` is met by measuring and correcting, up to six passes at 3%. Measured: 120 -> 117.1,
+  150 -> 148.5, 200 -> 202.1. The first version corrected in the wrong direction and diverged to the
+  engine's ceiling, reporting a reachable 150 as unreachable; that is why the sign is commented.
+* **What the residual three words are.** NOT the pace: an earlier version of this entry said "four
+  paces, same errors" and that was false - re-measured on this story at 100, 132, 175 and 200 wpm
+  the WER is 0.067, 0.100, 0.200 and 0.167 with **different words failing each time**, so what survives is
+  only that these substitutions are not caused *at 150 wpm*. Also not the AAC encoder (the raw WAV
+  transcribes identically). **The phrase silence is not settled, and an earlier version of this file
+  was wrong about it.** At engine speed 116 the product's own inter-phrase tail costs the word "By"
+  (eSpeak's single call 0.067, the product's per-phrase join 0.100, the tails trimmed 0.067); at the
+  132 this build actually speaks, none of the tested tail caps reduces WER and
+  eSpeak's own single call also says "A evening", while "By evening the last boat turns for home."
+  alone is heard as "My evening". So it is not a defect this build can remove at its own pace. `gull` is heard
+  as "girl" and `drops` as "raps" in every position, including alone - that is the engine's front end
+  and a small recognizer. And **one of the four was ours**: see the rounding fix at the top of this
+  changelog, which recovered "harbour" and took the walk from 0.133 to 0.100. A larger recognizer
+  would measure what is left better; there is none offline here.
+
+**Not done, and not claimed.** Whether a *person* follows it - a recognizer is strong evidence and not
+a listener, and `voice/listening-test.mjs` still has no answer on it. A machine with no engine still
+makes a film nobody can follow, and its card says `the built-in voice` so that is visible rather than
+mysterious. The built-in voice itself is untouched.
+
+`docs/evidence/voice-not-intelligible.md` is now `voice-not-understood.md`: the old numbers are kept
+in it unchanged, because they are what a future change is judged against, and the new ones sit beside
+them.
+
 ## Unreleased — a film can have more than one picture, and a picture that has gone is refused instead of quietly dropped, 2026-11-28
 
 **The next step the project index named was continuing with independently editable scenes, and the
@@ -67,7 +135,7 @@ graph over HTTP would pass with the drag gesture broken, and would be evidence f
 walks. It now creates each card by double-clicking where it should stay, links by dragging title
 bars, and asserts the dragged card returns to its place - all with the mouse.
 
-`test/scenes.test.mjs` and `test/scenes-canvas.test.mjs`; `npm test` was **192/192** with a browser at that commit. The same day added bringing your own file in from the canvas, per-phrase caption cues and picture framing, and the suite is **205/205**.
+`test/scenes.test.mjs` and `test/scenes-canvas.test.mjs`; `npm test` was **192/192** with a browser at that commit. The same day added bringing your own file in from the canvas, per-phrase caption cues and picture framing, and the suite is **213/213**.
 
 ## Unreleased — the film check hears the whole narration, and an old take keeps its old measurement, 2026-11-28
 
@@ -1418,3 +1486,57 @@ with a number instead of an opinion.
   renderable-symbol coverage, the regenerable table's kept/dropped counts, the measurement
   script's agreement and separation of unreadable words, the listening sheet containing no word
   of the script, and the scorer's sound-based comparison and blank-line accounting.
+## Unreleased — a swapped picture is measured in the re-cut film's own pixels, and the model route was re-checked once, 2026-11-28
+
+**A person asked to keep control of choosing and replacing the material a film is made of.** Choosing
+was walked already: `+ File` brings their pictures onto a blank canvas and a film is cut from them.
+Replacing was checked only at its HTTP endpoint - the card's bytes change, the link survives, the old
+file is kept - and that is a different claim from the one a person makes when they judge the result:
+*press Make again and the film shows the new picture*. This project has been bitten by exactly that
+gap before, when a take's record named the right source while the published film showed another
+picture; every check that reads the record passes that.
+
+`test/story-replace-material.mjs` walks the gesture and measures the pixels. Blank canvas, two
+pictures via `+ File`, a four-line two-act story, narration at 150 words a minute, a film of the two
+pictures. Then a **third, visibly different picture is dropped on one of them** - a real `File`, a
+real `DataTransfer`, a real `Drop` event at the card's own coordinates, which is the listener the
+canvas actually has - and Make is pressed again with nothing re-wired. Decoded from the new film's
+own frames:
+
+| | act one | act two |
+| --- | --- | --- |
+| first film, against its own pictures | 0.909 (`dawn`) | 0.972 (`dusk`) |
+| first film, against the other picture | 0.507 | 0.547 |
+| re-cut film, against the picture just dropped | — | **0.905** (`nightferry`) |
+| re-cut film, against the picture it replaced | 0.909 | **-0.056** (`dusk`) |
+
+Both halves are asserted: the frame has to *start* matching the new picture by a margin and *stop*
+matching the old one, because a scene that merely broke would satisfy only the second. The same walk
+holds that the swapped card keeps the replaced file as one version with its bytes still on disk, that
+the film's links are untouched, that the canvas says `Card #2 now holds ferry crossing at night.png`
+and the film card's `next Generate uses ... (v1)` names the picture *and* the version the next press
+would freeze, that the **narration is the same take byte for byte** (a picture swap costs no voice),
+and that the earlier cut and the replaced picture are both still there to go back to. `npm test` is
+**225/225**; the walk is run by hand like the other story walks, and its receipt is written to
+`.tmp/story-replace-material/`.
+
+**The first version of that probe was worthless and passing.** It replaced the picture with another
+*identical* one and asserted success, which proved the plumbing (banner, kept version, surviving
+link, a new cut) and nothing about what the film shows - the film could have gone on showing the old
+bytes and every assertion would have passed. That is why the third drawing (`nightferry`: a much
+lower horizon, empty sky where no caption sits, no headland, boat and gull at opposite ends) exists,
+and why the decisive check decodes the film rather than reading its record. The pictures are drawn by
+`test/harbour.mjs`, not photographed, so this establishes that the person's chosen bytes reach the
+right scene, not that a photograph composes well; and no person has watched the result.
+
+**The model route was re-checked, once, because the request asked for a film with real model
+participation.** The answer is no on this host, and it is measured rather than assumed: the installed
+`codex-cli 0.172.0` is not on `PATH` but runs, its `exec` succeeds as a command, and one
+`exec --json` probe ended **exit 124 after 180 s** with `workspace routing discovery timed out` and
+`failed to refresh available models: request timed out` - the same discovery failure recorded on this
+date, not a reachable hostname and not a missing credential. There is no local runtime to fall back
+on either (no `ollama`/`llama-server`/`vllm` binary, no `*.gguf`, nothing listening on the usual
+ports). So the half of the request that needs a model cannot be delivered here, and no receipt claims
+it: both walks run with an agent binary that is a probe which must never be called, and assert that
+it was not. One probe was spent and not repeated. `docs/evidence/README.md` carries the table and says
+this is a fact about the host, worth re-checking where discovery completes.

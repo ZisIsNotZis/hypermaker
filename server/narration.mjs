@@ -150,6 +150,20 @@ export function verifyNarration({ attemptDir, artifact, material = null, from = 
       // rounded record was an exact one.
       realigned: Math.max(0, ...(bound?.phrases || []).map(p => Math.abs(p.slip ?? 0)))
     },
+    // WHICH VOICE SPOKE. A person opening their own film needs to know whether they are listening
+    // to the built-in formant voice or to a real speech engine, because only one of the two is
+    // understood by a listener who has not learned it - measured, see
+    // `docs/evidence/voice-not-understood.md`. It is read from the take's own record and states the
+    // engine's version, so a take made by a build that later changed engines can be recognised as
+    // older rather than as identical. A take made before this field existed has no engine in its
+    // record, and that is exactly what `builtin: true` means here - not a guess about it.
+    voice: (() => {
+      const spoken = timeline?.voice && typeof timeline.voice === "object" ? timeline.voice : {};
+      if (typeof spoken.engine === "string" && spoken.engine) {
+        return { engine: spoken.engine, ...(spoken.engineVersion ? { version: String(spoken.engineVersion) } : {}), ...(spoken.engineVoice ? { engineVoice: String(spoken.engineVoice) } : {}), speed: spoken.speed ?? null, pitch: spoken.pitch ?? null };
+      }
+      return { builtin: true, pitch: spoken.pitch ?? null, rate: spoken.rate ?? null };
+    })(),
     // Which card was read, when there was one. Provenance the creator asked for: reopening
     // the workspace must say both what was said and where the words came from.
     source: from ? { id: Number(from.id), artifact: from.artifact ?? null } : null,

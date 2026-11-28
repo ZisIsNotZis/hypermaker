@@ -43,6 +43,27 @@ import { readFileSync } from "node:fs";
 import { renderParagraph, RATE } from "./synth.mjs";
 import { wavSamples } from "./wav.mjs";
 import { tokenize, CURRENT_READINGS, READING_SETS } from "./lexicon.mjs";
+import { DEFAULT_SPEED, DEFAULT_PITCH, ENGINE_VOICE } from "./engine.mjs";
+
+// Which mouth spoke, if the take says. Absent means the built-in formant voice - the same rule
+// `effectiveVoice` applies, stated once here because three functions below need it and a second
+// copy of the rule is how a take ends up re-rendered by a voice it did not name.
+const engineOf = voice => (voice && typeof voice.engine === "string" && voice.engine ? voice.engine : null);
+
+// The settings an engine take has to be re-rendered with, on the engine's own scales. `pitch` is
+// eSpeak's 0-99 here and hertz in the built-in voice, so the two must never be swapped: a take
+// rendered at hertz 112 on a scale that stops at 99 is a different voice, and the frame check
+// would blame the script for it.
+const engineSettings = (voice = {}) => ({
+  engine: String(voice.engine),
+  ...(voice.engineVersion != null ? { engineVersion: String(voice.engineVersion) } : {}),
+  // `en` and `en-us` are two voices of one engine, so a take that does not record which one is read
+  // as the pinned voice - the same default `renderWithEngine` applies to a missing field.
+  engineVoice: voice.engineVoice == null ? ENGINE_VOICE : String(voice.engineVoice),
+  speed: voice.speed == null ? DEFAULT_SPEED : Number(voice.speed),
+  pitch: voice.pitch == null ? DEFAULT_PITCH : Number(voice.pitch),
+  readings: voice.readings == null ? CURRENT_READINGS : voice.readings
+});
 
 // The worst frame of a phrase that is still this phrase. An honest take measures 1.000 on
 // every frame; any edited phrase measured below zero on its worst frame.
@@ -224,6 +245,14 @@ function locateElsewhere({ mine, samples, rate }) {
 // audio it says so instead of accusing the script. This only chooses the wording; `ok` was
 // already false, so a near-miss in the band never accepts anything.
 function describeMismatch({ index, phrase, mine, slices, samples, rate, start, score, at, voice }) {
+  // An engine take has no rate to be wrong about, and its pitch is on a scale of 0-99 - so the
+  // "same words at nearby settings" probe below, which sweeps a duration multiplier and applies
+  // hertz pitch offsets, is about the built-in voice and would be nonsense here. What *can* be
+  // wrong about an engine take is the engine and its version, and `checkEngine` already refuses
+  // those by name before anything reaches this function.
+  if (engineOf(voice)) {
+    return `phrase ${index + 1} ("${phrase.text}") is not the sound ${engineOf(voice)} makes from those words: at ${(start + at).toFixed(2)}s it scores ${score.toFixed(3)}, where the same words re-rendered score 1.000. Nothing in this build reproduces that stretch of audio from the words the timeline records`;
+  }
   const base = { rate: Number(voice?.rate) || 1, pitch: Number(voice?.pitch) || 112, readings: voice?.readings || CURRENT_READINGS };
   const tried = [];
   for (const dr of [0, -0.0005, 0.0005, -0.001, 0.001, -0.002, 0.002, -0.005, 0.005, -0.01, 0.01, -0.02, 0.02])
@@ -419,11 +448,28 @@ export function bindTake({ file, timeline }) {
     ? [claimed, ...READING_SETS.filter(s => s !== claimed)]
     : [CURRENT_READINGS, ...READING_SETS.filter(s => s !== CURRENT_READINGS)];
   const voiceWith = readings => ({ ...timeline?.voice, readings });
-  const settingsWith = (readings, rate) => ({
-    rate: Number(rate ?? timeline?.voice?.rate) || 1,
-    pitch: Number(timeline?.voice?.pitch) || 112,
-    readings
-  });
+  // An engine take is reproduced by its engine, its speed and its pitch - there is no duration
+  // multiplier in it at all - so the settings this function reports and re-renders with are the
+  // engine's, and the `rate` argument stays unused for them. Reporting hertz pitch and rate 1 for
+  // a take spoken at speed 165 would be a record of settings that never made these bytes.
+  const settingsWith = (readings, rate) => {
+    if (engineOf(timeline?.voice)) {
+      const at = engineSettings(timeline.voice);
+      return { ...at, readings };
+    }
+    return {
+      rate: Number(rate ?? timeline?.voice?.rate) || 1,
+      pitch: Number(timeline?.voice?.pitch) || 112,
+      readings
+    };
+  };
+  // Which tables are worth trying. For the built-in voice the table changes the sound, so a record
+  // naming the wrong one has to be recoverable - that is what the list is for. An engine take is
+  // handed the phrase text and pronounces it with its own front end, so the table cannot change a
+  // single sample; trying five of them would only relabel a take with a table that did not make
+  // it. So an engine take is checked against the table it records, and against nothing else.
+  const engineTake = engineOf(timeline?.voice);
+  const tables = engineTake ? [claimed ?? CURRENT_READINGS] : tries;
 
   // One table at a time, because the two things that can be wrong are independent: *which*
   // table made the audio, and whether the record states that take's rate precisely enough.
@@ -452,7 +498,7 @@ export function bindTake({ file, timeline }) {
   const better = (a, b) => !b
     || a.problems.length < b.problems.length
     || (a.problems.length === b.problems.length && worstOf(a.report) > worstOf(b.report));
-  for (const readings of tries) {
+  for (const readings of tables) {
     const at = compareAt({ samples, rate, phrases, voice: voiceWith(readings) });
     if (better(at, best)) best = { ...at, readings };
     // Exact: every phrase reproduces, frame for frame.
@@ -460,6 +506,10 @@ export function bindTake({ file, timeline }) {
     // Not exact. If the only complaint is the sound, the same words may still be in the file
     // at a rate the record states imprecisely - so search, and accept nothing on a near miss.
     if (!at.problems.every(p => p.kind === "sound")) continue;
+    // An engine take's speed is an integer in words per minute, so there is no rounded setting to
+    // search for: either the record reproduces the bytes or it does not. Searching would also be
+    // the wrong question - the search sweeps a duration multiplier the engine was never given.
+    if (engineTake) continue;
     const targets = at.problems.length
       ? at.problems.map(p => ({ phrase: p.phrase, slices: p.slices }))
       // Nothing failed outright, so the phrases to re-examine are the ones that did not agree

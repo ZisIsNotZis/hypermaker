@@ -33,6 +33,7 @@ import { basename, join } from "node:path";
 import { wavSamples } from "../voice/wav.mjs";
 import { audit } from "../voice/lexicon.mjs";
 import { paceOf } from "../voice/synth.mjs";
+import { engineStatus } from "../voice/engine.mjs";
 import { planScenes } from "./film.mjs";
 import { placePicture, placementNotice } from "./framing.mjs";
 
@@ -83,6 +84,41 @@ export function scriptFor({ sources = [], prompt = "" }) {
   return { script: lines.join("\n"), from: text ? { id: Number(text.id), artifact: text.artifact } : null };
 }
 
+// Which mouth a NEW take should be made with. This is the one place the product opts in to a real
+// speech engine, and it is deliberately opt-in rather than a change of default: a stored take is
+// re-rendered from its own record, and a build that started speaking differently would make every
+// take made before the change refuse to reproduce. The record is what keeps the two apart - a take
+// made here says `engine: espeak-ng` and the ones before it say nothing, which means the built-in
+// voice, and both keep verifying.
+//
+// When no engine is installed this returns null and the built-in formant voice speaks, exactly as
+// it always has. That is not a fallback pretending to be a choice: a machine with no engine has no
+// other voice, and the card says which one read the take so a person can see it.
+let engineAsked = null;
+export function voiceForNewTake() {
+  if (engineAsked === null) {
+    const status = engineStatus();
+    // `voice` is verified by the engine module, not assumed, so an engine that runs but cannot say
+    // the pinned voice does NOT become a take with `engineVoice: null` - that would ask the renderer
+    // for an engine without saying which voice, and the answer would depend on the next default.
+    // A machine in that state speaks with the built-in voice and its card says so, because the
+    // alternative was a take that failed inside eSpeak with a version-shaped complaint.
+    engineAsked = status.installed && status.voice ? { engine: status.name, engineVersion: status.version, engineVoice: status.voice } : null;
+  }
+  return engineAsked;
+}
+
+// The arguments that name WHICH ENGINE on the renderer's command line - the engine, its version and
+// the voice inside it. Deliberately not the speed or the pitch: those are settings of a specific
+// take, and a *new* take has none of them yet (it asks for a pace in words per minute and the
+// renderer derives the speed). Mixing the two made a new take pass `--speed ""`, which the renderer
+// rightly refused. A re-render of a recorded take does pass them, in `server/repace.mjs`, where the
+// record is.
+export function engineArgs(voice) {
+  if (!voice?.engine) return [];
+  return ["--engine", String(voice.engine), ...(voice.engineVersion ? ["--engine-version", String(voice.engineVersion)] : []), ...(voice.engineVoice ? ["--engine-voice", String(voice.engineVoice)] : [])];
+}
+
 // One child process for `voice/render.mjs`, cancellable, so Stop reaches the renderer the same
 // way it reaches an agent. The renderer's own sentence is carried out rather than "Command
 // failed": `200 words per minute is outside what this voice can do for this script` names both
@@ -120,6 +156,9 @@ export async function readAloud({ projectRoot, attemptDir, script, wpm = null, c
   writeFileSync(scriptFile, `${script}\n`, "utf8");
   const out = join(attemptDir, "narration.wav"), timeline = join(attemptDir, "timeline.json");
   const args = [join(projectRoot || process.cwd(), "voice", "render.mjs"), "--file", scriptFile, "--out", out, "--timeline", timeline];
+  // A new take speaks with the engine when this machine has one. `voiceForNewTake` decides once
+  // per process; the take records what it got, so the card can say which voice spoke.
+  args.push(...engineArgs(voiceForNewTake()));
   if (wpm != null) args.push("--wpm", String(wpm));
   await render(args, cancelRef);
   if (!existsSync(out) || !existsSync(timeline)) throw new Error("the renderer reported success but wrote no take");

@@ -36,7 +36,12 @@ test("two pictures made on the canvas become a film of two scenes, and the card 
         if (n && n.status !== "running" && (n.artifact || n.error)) return n;
         await new Promise(r => setTimeout(r, 100));
       }
-      throw new Error(`node ${id} never settled: ${JSON.stringify((await workspace()).nodes[id])}`);
+      // A card that never settles is a failure with a cause, and the server knows it even when the
+      // card does not: a renderer that died, a browser that could not start, a refused press. The
+      // bare state was all this used to say, which is a message a person cannot act on - and it is
+      // what a loaded machine produced once, on a run that passes alone.
+      const log = app.log().split("\n").filter(l => /error|Error|refus|stderr|did not render/i.test(l)).slice(-8).join("\n");
+      throw new Error(`node ${id} never settled: ${JSON.stringify((await workspace()).nodes[id])}\nserver said:\n${log || "(nothing)"}`);
     };
     const browser = await launchBrowser();
     try {

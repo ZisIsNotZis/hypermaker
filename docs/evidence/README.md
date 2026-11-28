@@ -1,5 +1,30 @@
 # Evidence kept outside the tests
 
+## `voice-not-understood.md`
+
+An automatic recognizer transcribes the built-in voice's narration as **nothing at all** (zero
+segments, WER 1.0 on the project's own 69-word corpus) while transcribing eSpeak on the same words
+at WER 0.043. The file records both measurements, the 69 words, the two repairs to the synthesizer
+that were tried and reverted because the number did not move, and the regression that makes changing
+the synthesizer dangerous: an in-progress edit made a stored, approved take score 0.435 against its
+own words instead of 1.000.
+
+It now also records the fix and its measurement: a take spoken by an installed eSpeak NG, walked
+through the canvas into a real film, is transcribed **from the published film's own audio track** at
+WER 0.100 (27 of 30 words recovered) with the verdict `understood`, where the built-in voice's is
+1.0. The file keeps its first reading (0.133, 26 of 30) beside it, because one of those four
+errors turned out to be this repository's arithmetic rather than the engine's: the WAV reader
+decoded at `/32768` while the writer encoded at `*32767`, and that one-step difference cost
+`harbour` on a take that otherwise reproduced the engine. That includes why the engine's American
+voice was chosen (`en-us` 0.043 against `en` 0.116 on the same corpus, both measured), what the
+residual three words are - including that "not the pace" was measured false (100/132/175/200 wpm
+score 0.067/0.100/0.200/0.167 with different words failing) - and what is still true on a machine
+with no engine. `node voice/asr-check.mjs` reproduces the measurement;
+`test/story-engine-voice.mjs` walks the whole product.
+
+The earlier verdict is kept, not overwritten: "not intelligible" was true of the built-in voice and
+is still true of a machine that has no engine. It was never true of a machine that has one.
+
 ## `repace-operator-findings.md`
 
 Three defects in the first version of the "read this take again at another pace" route, found by
@@ -98,3 +123,28 @@ The evidence to keep: the narration card's `codex.jsonl` (did the model pass `--
 take's `timeline.json` (`pace.askedWpm` against `pace.wpm`), and a person's answer on the
 listening sheet. The mechanics can be rehearsed with no model using
 `test/film-story.mjs`'s stand-in agent, which is what the suite already covers.
+
+## The model route, re-checked 2026-11-28 (later the same day)
+
+Asked to judge whether a supported route existed before promising a film with real model
+participation, rather than assuming. **One** probe was spent; it reproduced the earlier failure
+exactly, so no further rounds were run to "confirm" it.
+
+| What was checked | Result |
+| --- | --- |
+| `codex` on `PATH` | **not present** (the binary is installed, just not exposed there) |
+| the installed binary | `~/.codex/packages/app-server-daemon/current/codex`, `codex-cli 0.172.0`, `exec` subcommand present |
+| `codex exec --json 'Reply with the single word: ready'` | **exit 124 after 180 s**; `workspace routing discovery timed out`, then `failed to refresh available models: request timed out` |
+| a local runtime as an alternative | no configured local model runtime was available on the validation machine |
+
+We did not find a working, supported real-model route on this host. This probe timed out at discovery, consistent with the earlier record; it did not establish the cause or test another authorized provider.
+What follows from it: the half of the request that asks for "a film in which a real model takes
+part" cannot be delivered here, and no receipt may claim it. The other half - a short film a
+person composes from two of their own materials, where both acts read at ordinary speed - is
+delivered and measured without a model, and its receipts name the model-free path explicitly
+(`test/story-engine-voice.mjs`, `test/story-replace-material.mjs`).
+
+This is a fact about **this host**, not about the product: `server/codex.mjs` matches the real
+binary's contract and the route has worked before (2026-11-27). It is worth re-checking on a host
+where discovery completes; the receipt has to name which route it went through, because the
+routes answer very differently.

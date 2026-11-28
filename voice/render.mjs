@@ -15,6 +15,7 @@ import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { audit } from "./lexicon.mjs";
 import { renderParagraph, toWav, RATE, paceOf, rateForWpm } from "./synth.mjs";
+import { ENGINE, DEFAULT_SPEED, DEFAULT_PITCH, clampSpeed, clampPitch, engineStatus, checkEngine } from "./engine.mjs";
 import { measure } from "./measure.mjs";
 import { bindTake } from "./bind.mjs";
 
@@ -47,6 +48,20 @@ export function judge(file, words = "") {
 }
 
 if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith("render.mjs")) {
+  // Which mouth speaks. `--engine` is opt-in on purpose: a build that gains an engine must not
+  // quietly start rendering differently, because a stored take's bytes are what its record is
+  // checked against. `--engine-check` is how a caller asks whether this machine has one at all,
+  // so the server can decide without guessing and without a stack trace. It is answered before
+  // the text is demanded, because the question is about this machine and not about a script.
+  if (argv.includes("--engine-check")) {
+    const status = engineStatus();
+    console.log(JSON.stringify(status, null, 2));
+    // The status is "can this machine speak the take's voice", not "is a package installed". An
+    // engine that runs but does not carry the pinned voice cannot speak, and a shell caller reading
+    // only the exit status (which is the documented way to ask) was told 0 - yes - and then had the
+    // first render refuse. `voice: null` plus a zero status were two answers that disagreed.
+    process.exit(status.installed && status.voice ? 0 : 3);
+  }
   const check = arg("check");
   if (check) {
     const report = judge(check, arg("words") || "");
@@ -92,7 +107,14 @@ if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith
   // and miss for another; one correction pass lands within a couple of per cent because the
   // renderer scales every duration linearly. The recorded `rate` is still the multiplier the
   // bytes were made with, so every existing check and every past take is unaffected.
-  const pitch = Number(arg("pitch")) || 112, readings = arg("readings") || undefined;
+  const engine = arg("engine") || undefined;
+  const engineVersion = arg("engine-version") || undefined;
+  const engineVoiceName = arg("engine-voice") || undefined;
+  // On an engine take the pitch is eSpeak's 0-99, and on the built-in voice it is hertz. Reading
+  // one number on the wrong scale is how a take ends up a different voice than its record says,
+  // so the two paths never share the parse.
+  const pitch = engine ? clampPitch(arg("pitch") ?? DEFAULT_PITCH) : Number(arg("pitch")) || 112;
+  const readings = arg("readings") || undefined;
   const askedWpm = arg("wpm") == null ? null : Number(arg("wpm"));
   if (askedWpm != null && (!(askedWpm > 0) || !Number.isFinite(askedWpm))) {
     console.error(`--wpm must be a positive number of words per minute, got ${JSON.stringify(arg("wpm"))}`);
@@ -100,7 +122,64 @@ if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith
   }
   let rendered;
   try {
-    if (askedWpm == null) {
+    if (engine) {
+      // Refused here, before a second of rendering, when the engine is named and absent or is a
+      // different build than the one a take records. The sentence names the problem and the fix.
+      if (engine !== ENGINE) throw new Error(`this build has no speech engine called ${JSON.stringify(engine)}; it speaks with ${JSON.stringify(ENGINE)} when one is installed, and with its own voice otherwise`);
+      checkEngine(engine, engineVersion, engineVoiceName ?? null);
+      const askedSpeed = arg("speed") == null ? null : Number(arg("speed"));
+      if (askedSpeed != null && (!Number.isFinite(askedSpeed) || askedSpeed <= 0)) {
+        console.error(`--speed must be a positive number of words per minute, got ${JSON.stringify(arg("speed"))}`);
+        process.exit(1);
+      }
+      const base = { engine, engineVersion, ...(engineVoiceName ? { engineVoice: engineVoiceName } : {}), speed: askedSpeed == null ? DEFAULT_SPEED : clampSpeed(askedSpeed), pitch, readings };
+      if (askedWpm == null) {
+        rendered = renderParagraph(phrases, base);
+      } else {
+        // `--wpm` is the pace a person asked for, and the engine's own `-s` is not that number.
+        // Two reasons, both measured rather than assumed: eSpeak's `-s` counts the syllables of
+        // its own reading, and it pads every phrase with about a third of a second of silence
+        // which is real audio this take's pace is measured over. So the speed is corrected by
+        // measuring, pass by pass, until it lands.
+        //
+        // It needs more than one pass. The fixed silence per phrase does not shrink with speed, so
+        // the map from speed to measured pace is affine, not proportional: one proportional
+        // correction overshoots and the shorter the script the wider it misses - on a six-word
+        // line, setting 192 landed at 205 against a request of 150, which a one-pass version
+        // published as a failure it could have avoided. Six passes with a stop at 3% converge on
+        // every script measured here, and a genuinely unreachable pace still fails loudly.
+        let speed = base.speed;
+        rendered = renderParagraph(phrases, base);
+        let landed = paceOf(rendered.segments).wpm;
+        for (let pass = 0; pass < 6 && Math.abs(landed - askedWpm) / askedWpm > 0.03; pass++) {
+          // Asked over landed, not landed over asked: a higher `-s` reads *faster*, so a take that
+          // came out above the requested pace needs a lower speed. Getting that the wrong way round
+          // does not converge slowly, it diverges - measured, it walked 165 -> 192 -> 262 -> the
+          // engine's ceiling and reported a 150-word request as unreachable.
+          const next = clampSpeed(speed * askedWpm / landed);
+          // Clamping is the engine's own limit, so a pass that does not move any more is the
+          // answer: asking again would render the same bytes and spend the time twice.
+          if (next === speed) break;
+          speed = next;
+          rendered = renderParagraph(phrases, { ...base, speed });
+          landed = paceOf(rendered.segments).wpm;
+        }
+        // A request the engine cannot meet is said out loud rather than published with a number
+        // beside it. 12% is deliberate slack for a very short script, where one phrase's trailing
+        // silence is most of the take; 40 words per minute on a six-word line is not slack, it is
+        // a pace no engine reading of those words reaches.
+        //
+        // The sentence is the built-in voice's sentence, because a person reading a refusal should not
+        // have to work out which voice refused them from the wording: "outside what this voice can do
+        // for this script" plus the pace it *does* reach, with the engine named as the subject so the
+        // limit is attributed to something. A test caught the first version saying "outside what
+        // espeak-ng can do" and "its closest reading", which reads as a second, parallel product.
+        if (Math.abs(landed - askedWpm) / askedWpm > 0.12) {
+          console.error(`${askedWpm} words per minute is outside what this voice can do for this script: ${engine} at its fastest reads this script at ${Math.round(landed)} words per minute. Nothing was recorded.`);
+          process.exit(2);
+        }
+      }
+    } else if (askedWpm == null) {
       rendered = renderParagraph(phrases, { rate: Number(arg("rate")) || 1, pitch, readings });
     } else {
       const probe = renderParagraph(phrases, { rate: 1, pitch, readings });

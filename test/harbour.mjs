@@ -116,6 +116,12 @@ export function harbourPng(kind) {
     // the boat moved to the left with the lamps on the far bank. Two pictures separated only by hue
     // would make "which scene is which" easy for a pixel check and useless as a test of it.
     dusk: { sky: [[14, 18, 44], [148, 92, 66]], water: [[20, 22, 40], [8, 8, 18]], sun: { x: 1280 * 0.82, y: 720 * 0.13 }, horizon: 0.42, night: true, seed: 29, boatX: 0.18, gullX: 0.66, gullY: 0.46, shore: false },
+    // A third picture, because a swap has to be told apart from what it replaced. This one is
+    // composed to differ in the band a caption does NOT cover: the horizon is much lower, most of
+    // the upper frame is empty night sky, there is no headland, and the boat and gull have moved to
+    // the opposite ends from `dawn`. Two pictures that differ only in hue make "the film shows the
+    // new one" a check of the encoder rather than of the product.
+    nightferry: { sky: [[6, 8, 18], [30, 34, 60]], water: [[10, 12, 24], [4, 4, 10]], sun: { x: 1280 * 0.12, y: 720 * 0.09 }, horizon: 0.70, night: true, seed: 41, boatX: 0.80, gullX: 0.25, gullY: 0.40, shore: false },
   };
   const look = looks[kind];
   if (!look) throw new Error(`no such picture: ${kind}`);

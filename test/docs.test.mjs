@@ -202,3 +202,58 @@ test("the capability list matches the registry it describes", async () => {
   }
   assert.ok(new RegExp(`${counted}(?:个|种)方法`).test(line), `README.zh-CN.md's method count matches the registry (${all.length}); it says: ${line}`);
 });
+
+test("no document states a word error rate the suite does not stand behind", () => {
+  // Why this exists. `npm test` was 223/223 while README.md stated the same walk's result two
+  // different ways in two places - "26 of 30 words (WER 0.133)" in the capability list and "27 of 30
+  // (WER 0.100)" under Verification limits - with no marker that one was history. Nothing caught it:
+  // the count guard above reads pass counts, not measurements, and an independent review found the
+  // contradiction by reading. A measured number is exactly the kind of claim that goes stale
+  // silently, so the *current* claim is pinned here and any other figure has to be marked as
+  // superseded.
+  //
+  // What is allowed:
+  //   * 0.100 / 27 of 30 - the walk's present result, from the published film's own AAC track;
+  //   * 0.043 / 66 of 69 - the eSpeak reference on the project's own corpus;
+  //   * 0.116 - `en` and `en-gb` on that corpus;
+  //   * 1.0 - the built-in voice, which is the defect;
+  //   * an OLD figure only in a sentence that says it is old ("the first measurement read ...").
+  const CURRENT = new Set(["0.100", "0.043", "0.116", "1.0", "1.00"]);
+  const OLD_MARKERS = /first (?:measurement|reading)|superseded|an earlier version|used to|was wrong|no longer|has been corrected|keeps? (?:its|the) (?:first|earlier)/i;
+  const files = ["README.md", "README.zh-CN.md", "docs/project-status.md", "docs/evidence/README.md", "docs/evidence/voice-not-understood.md", "CHANGELOG.md"];
+  for (const name of files) {
+    const text = doc(name);
+    for (const m of text.matchAll(/\bWER\s+(\d+\.\d+)/g)) {
+      if (CURRENT.has(m[1])) continue;
+      // The sentence the figure sits in decides. A changelog entry is history by construction, but
+      // it still has to say so, because a reader takes the newest section as the present.
+      const start = Math.max(0, text.lastIndexOf("\n", m.index));
+      const end = text.indexOf("\n", m.index);
+      const line = text.slice(start, end === -1 ? undefined : end);
+      if (OLD_MARKERS.test(line)) continue;
+      const where = text.slice(0, m.index).split("\n").length;
+      assert.fail(`${name}:${where} states WER ${m[1]} as if it were current; the measured result is 0.100 (27 of 30 from the film's own track). Mark an old figure as old, or correct it.`);
+    }
+  }
+  // And the present claim has to stay, in both languages and in the status document, or a future
+  // edit could drop the number rather than fix it and leave the guard above trivially green.
+  assert.match(doc("README.md"), /27 of 30 words \(WER 0\.100\)/, "README.md states the measured result");
+  assert.match(doc("README.zh-CN.md"), /WER 0\.100/, "README.zh-CN.md states the measured result");
+  assert.match(doc("docs/project-status.md"), /27 of 30 words \(WER 0\.100\)/, "project-status.md states the measured result");
+  // The other half - that a machine without an engine is still not understood - must not be lost
+  // while correcting the first. Measured, and the defect a reader most needs to know about.
+  assert.match(doc("docs/project-status.md"), /WER 1\.0/, "the built-in voice's measurement is still stated");
+});
+
+test("the suite total is stated the same way in the changelog as in the READMEs", () => {
+  // The count guard above reads README.md, README.zh-CN.md and docs/project-status.md and stops
+  // there, so `CHANGELOG.md` said "npm test is 220/220" while the suite declared 223 and the green
+  // build said nothing. A changelog entry is history, but its newest section is read as the present,
+  // so a total stated there is held to the same number.
+  const declared = readdirSync(join(root, "test")).filter(f => f.endsWith(".test.mjs"))
+    .flatMap(f => [...readFileSync(join(root, "test", f), "utf8").matchAll(/^\s*(?:canvasTest|test)\(/gm)]).length;
+  const newest = doc("CHANGELOG.md").split(/^## /m)[1] ?? "";
+  for (const m of newest.matchAll(/(\d+)\s*\/\s*(\d+)\b/g)) {
+    assert.equal(Number(m[1]), declared, `CHANGELOG.md's newest section states ${m[0]} but the suite declares ${declared} tests`);
+  }
+});
