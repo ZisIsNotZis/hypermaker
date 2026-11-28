@@ -1,5 +1,9 @@
 # Evidence kept outside the tests
 
+## `local-picture-cut.md`
+
+[Local pictures → handwritten captions → replace act II](local-picture-cut.md) uses the file chooser twice, plays both versions through to the end, and checks that replacing the second picture and restoring the first film do not change the links.
+
 ## `captions-only.md`
 
 [Two handwritten lines → captions-only film](captions-only.md) replays the blank canvas with no speech engine, no model and no uploads. It checks the actual video stream and caption timing, replaces only act II, then plays the restored first cut.

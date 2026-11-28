@@ -1,5 +1,6 @@
-// Blank canvas → two local title cards + handwritten text → play → recut → restore.
-// No uploads, engine, agent, model downloads or account. Run from the repository root.
+// Blank canvas → two pictures + handwritten text → play → recut → restore.
+// Default: generated title cards. --local-files: choose and replace ordinary local PNGs.
+// No engine, model, account or remote requests. Run from the repository root.
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -7,17 +8,25 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFi
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { chromium } from 'playwright';
+import { harbourPng } from './harbour.mjs';
 import { parseWorkspace } from '../server/workspace.mjs';
 import { freePort, startServer, stopServer, waitReady } from './server.mjs';
 
+const localFiles = process.argv.includes('--local-files');
 const root = process.cwd();
 const chrome = process.env.HYPERMAKER_CHROME || process.env.CHROME_BIN;
 assert.ok(chrome && existsSync(chrome), 'set HYPERMAKER_CHROME to an existing Chromium executable');
 const out = mkdtempSync(join(tmpdir(), 'hyper-captions-'));
 const ws = join(out, 'workspace');
-const evidence = process.env.STORY_OUT || join(root, '.tmp/story-captions-only');
+const evidence = process.env.STORY_OUT || join(root, localFiles ? '.tmp/story-local-pictures' : '.tmp/story-captions-only');
 mkdirSync(evidence, { recursive: true });
-const story = ['The flood washes the market road away.', 'By dawn, the village takes the high crossing.'];
+const story = localFiles ? ['The harbour wakes before the sun.', 'The last boat crosses as the lights come on.']
+  : ['The flood washes the market road away.', 'By dawn, the village takes the high crossing.'];
+const pictures = ['harbour-dawn.png', 'harbour-dusk.png', 'night-ferry.png'];
+if (localFiles) for (const [i, drawing] of ['dawn', 'dusk', 'nightferry'].entries()) {
+  writeFileSync(join(out, pictures[i]), harbourPng(drawing));
+  copyFileSync(join(out, pictures[i]), join(evidence, pictures[i]));
+}
 const fixture = join(out, 'no-codex.mjs'), call = join(out, 'codex-called');
 writeFileSync(fixture, `import { writeFileSync } from 'node:fs';\nwriteFileSync(${JSON.stringify(call)}, 'unexpected Codex invocation');\nprocess.exit(1);\n`);
 const env = { CODEX_BIN: fixture, HYPERMAKER_WORKDIR: ws, HYPERMAKER_RESET_WORKSPACE: '1', HYPERMAKER_CHROME: chrome, HYPERMAKER_ESPEAK: join(out, 'absent-espeak-ng') };
@@ -40,7 +49,7 @@ try {
   await page.route('**/*', route => {
     const url = new URL(route.request().url());
     if (url.origin !== base) { external.push(url.origin); return route.abort(); }
-    if (/^\/api\/(upload|replace)$/.test(url.pathname)) { imports.push(url.pathname); return route.abort(); }
+    if (/^\/api\/(upload|replace)$/.test(url.pathname)) { imports.push(url.pathname); if (!localFiles) return route.abort(); }
     return route.continue();
   });
   const nodes = async () => (await (await fetch(`${base}/api/workspace`)).json()).nodes;
@@ -79,6 +88,27 @@ try {
     assert.equal(result.error, null, `#${id} failed: ${result.error}`);
     return result;
   }
+  async function choose(name) {
+    const [chooser] = await Promise.all([page.waitForEvent('filechooser'), page.locator('#add-file').click()]);
+    await chooser.setFiles(join(out, name));
+    const n = await until(async () => Object.values(await nodes()).find(n => n.artifact === name), `file ${name} is imported`);
+    await card(n.id).getByRole('img').waitFor();
+    assert.equal(n.method, null);
+    assert.equal(sha(fileFor(n.id, n.artifact)), sha(join(out, name)));
+    return n.id;
+  }
+  async function dropOn(id, name) {
+    const {x, y, width, height} = await card(id).locator('header').boundingBox();
+    const result = await page.evaluate(({x, y, name, bytes}) => {
+      const target = document.elementFromPoint(x, y);
+      const dataTransfer = new DataTransfer();
+      dataTransfer.items.add(new File([Uint8Array.from(atob(bytes), c => c.charCodeAt(0))], name, {type: 'image/png'}));
+      const dispatch = type => !target.dispatchEvent(new DragEvent(type, {clientX:x, clientY:y, dataTransfer, bubbles:true, cancelable:true}));
+      return {card: Number(target.closest('.card')?.dataset.id), over: dispatch('dragover'), drop: dispatch('drop')};
+    }, {x: x + width / 2, y: y + height / 2, name, bytes: readFileSync(join(out, name)).toString('base64')});
+    assert.deepEqual(result, {card: id, over: true, drop: true});
+    return until(async () => { const n = await node(id); return n.artifact.includes(name) && n; }, 'act II card changes its file');
+  }
   async function link(from, to, expected) {
     const [a, b] = await Promise.all([card(from).locator('header').boundingBox(), card(to).locator('header').boundingBox()]);
     await page.mouse.move(a.x + 35, a.y + a.height / 2);
@@ -90,8 +120,18 @@ try {
   async function play(n, throughEnd = false) {
     const player = card(n.id).locator('video');
     await until(async () => (await player.getAttribute('src', { timeout: 2000 }))?.includes(encodeURIComponent(n.artifact)), `player loads ${n.artifact}`);
-    const played = await player.evaluate(async (video, throughEnd) => {
-      await video.play();
+    if (localFiles) {
+      await until(() => player.evaluate(video => {
+        if (video.error) throw new Error(`Video failed to load (${video.error.code}): ${video.error.message}`);
+        return video.readyState >= 1;
+      }, undefined, { timeout: 2000 }), `video metadata for ${n.artifact}`, 5000);
+      // The lower-left native control is Chromium's Play button at this card size.
+      const box = await player.boundingBox();
+      await player.click({ position: { x: 24, y: box.height - 47 }, timeout: 5000 });
+    }
+    const played = await player.evaluate(async (video, {throughEnd, localFiles}) => {
+      if (!localFiles) await video.play();
+      if (video.paused) throw new Error('The canvas player did not start');
       if (throughEnd) {
         await new Promise((resolve, reject) => {
           const timer = setTimeout(() => reject(new Error('Video never reached its end')), 12000);
@@ -100,7 +140,7 @@ try {
       } else await new Promise(resolve => setTimeout(resolve, 500));
       video.pause();
       return { at: video.currentTime, duration: video.duration, ended: video.ended, width: video.videoWidth, height: video.videoHeight };
-    }, throughEnd);
+    }, {throughEnd, localFiles});
     if (throughEnd) assert.ok(played.ended, JSON.stringify(played));
     assert.ok(played.at >= 0.25 && played.width === 1280 && played.height === 720, JSON.stringify(played));
     assert.ok(Math.abs(played.duration - n.film.seconds) <= 0.04, JSON.stringify(played));
@@ -141,17 +181,35 @@ try {
   await page.goto(base);
   await page.locator('#cards').waitFor();
   assert.deepEqual(Object.keys(await nodes()), []);
-  const text = await add(75, 150, 'text', 'plain');
-  const a = await add(400, 150, 'image', 'titlecard');
-  const b = await add(725, 150, 'image', 'titlecard');
-  const film = await add(1050, 150, 'video', 'firstcut');
+  let text, a, b, film;
+  if (localFiles) {
+    a = await choose(pictures[0]);
+    b = await choose(pictures[1]);
+    for (const id of [a, b]) {
+      await card(id).getByText(/Imported file.*without changing its links/).waitFor();
+      assert.equal(await card(id).getByRole('button', { name: 'Generate', exact: true }).isVisible(), false);
+      assert.equal(await card(id).getByLabel('Generation method').isVisible(), false);
+      const {x, y, width, height} = await card(id).locator('header').boundingBox();
+      assert.equal(await page.evaluate(({x, y}) => Number(document.elementFromPoint(x, y)?.closest('.card')?.dataset.id),
+        {x: x + width / 2, y: y + height / 2}), id, `imported card #${id} has a reachable header`);
+    }
+    text = await add(75, 150, 'text', 'plain');
+    film = await add(420, 150, 'video', 'firstcut');
+  } else {
+    text = await add(75, 150, 'text', 'plain');
+    a = await add(400, 150, 'image', 'titlecard');
+    b = await add(725, 150, 'image', 'titlecard');
+    film = await add(1050, 150, 'video', 'firstcut');
+  }
   await card(film).getByText(/No speech engine needed/).waitFor({ timeout: 5000 });
   await typeIn(text, story.join('\n'));
   const script = await make(text);
   assert.equal(readFileSync(fileFor(text, script.artifact), 'utf8').trim(), story.join('\n'));
-  await typeIn(a, 'Market road closed\nThe river has cut the valley in two.');
-  await typeIn(b, 'High bridge open\nThe first walkers cross above the flood.');
-  const firstImage = await make(a), secondImage = await make(b);
+  if (!localFiles) {
+    await typeIn(a, 'Market road closed\nThe river has cut the valley in two.');
+    await typeIn(b, 'High bridge open\nThe first walkers cross above the flood.');
+  }
+  const firstImage = localFiles ? await node(a) : await make(a), secondImage = localFiles ? await node(b) : await make(b);
   const links = [text, a, b];
   for (const [i, id] of links.entries()) await link(id, film, links.slice(0, i + 1));
   await card(film).locator('.method-slot').filter({ hasText: /Captions only \(no audio\)/ }).waitFor({ timeout: 5000 });
@@ -162,15 +220,28 @@ try {
   await page.screenshot({ path: join(evidence, 'canvas-first.png') });
 
   // Edit only act II's picture card. Recut, then use the visible kept-version button.
-  await typeIn(b, 'Crossing at sunrise\nLanterns go out as the last walker reaches the ridge.');
-  const replacement = await make(b);
+  let replacement;
+  if (localFiles) {
+    replacement = await dropOn(b, pictures[2]);
+    assert.equal(sha(fileFor(b, replacement.artifact)), sha(join(out, pictures[2])));
+    const oldPicture = replacement.versions.find(v => v.artifact === secondImage.artifact);
+    assert.ok(oldPicture);
+    assert.equal(sha(fileFor(b, oldPicture.file)), sha(join(out, pictures[1])));
+    assert.deepEqual((await node(film)).inputs, links);
+    assert.equal((await node(film)).artifact, first.artifact);
+    assert.equal(sha(fileFor(film, first.artifact)), cut.sha256);
+    await card(film).locator('.next-slot').filter({ hasText: pictures[2] }).waitFor({ timeout: 5000 });
+  } else {
+    await typeIn(b, 'Crossing at sunrise\nLanterns go out as the last walker reaches the ridge.');
+    replacement = await make(b);
+  }
   assert.notEqual(sha(fileFor(b, replacement.artifact)), sha(fileFor(b, secondImage.artifact)));
   const second = await make(film);
   const recut = measure(second, [firstImage.artifact, replacement.artifact], 'recut');
   assert.notEqual(recut.sha256, cut.sha256);
   assert.equal(sha(join(evidence, 'recut-act-1.png')), sha(join(evidence, 'first-act-1.png')));
   assert.notEqual(sha(join(evidence, 'recut-act-2.png')), sha(join(evidence, 'first-act-2.png')));
-  recut.play = await play(second);
+  recut.play = await play(second, localFiles);
   assert.deepEqual(second.inputs, links);
   const old = second.versions.find(v => v.artifact === first.artifact);
   assert.ok(old, 'the earlier cut is offered as a kept version');
@@ -191,7 +262,7 @@ try {
   await page.screenshot({ path: join(evidence, 'canvas-restored.png') });
   assert.deepEqual(errors, []);
   assert.deepEqual(external, []);
-  assert.deepEqual(imports, []);
+  assert.deepEqual(imports, localFiles ? ['/api/upload', '/api/upload', '/api/replace'] : []);
   assert.equal(existsSync(call), false, 'the model command never ran');
   const receipt = { story, workspace: ws, engineAvailable: false, modelCalls: 0, externalBrowserRequests: external, uploads: imports, cut, recut, restored: { file: restored.artifact, sha256: cut.sha256, play: restoredPlay, links, secondStillKept: second.artifact } };
   copyFileSync(fileFor(film, restored.artifact), join(evidence, 'first.mp4'));

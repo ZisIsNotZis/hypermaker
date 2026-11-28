@@ -145,11 +145,13 @@ try {
     assert.ok(n.artifact, `card ${id} holds a file`);
   }
   note("the person's pictures are on the canvas", pictureIds.map(id => ({ id, artifact: graph.nodes[id].artifact, type: graph.nodes[id].type })));
-  // One press on a supplied card must refuse with a sentence, not spend a model on material a
-  // method did not make - and it must leave the card holding its file.
-  await card(pictureIds[0]).locator("[data-generate]").click().catch(() => {});
-  await page.waitForTimeout(400);
-  const suppliedSays = await card(pictureIds[0]).locator(".supplied, .notice, .error").first().innerText().catch(() => "");
+  // A supplied card offers no press that could spend a model on material a method did not make.
+  // The controls that only describe generated output are absent, not merely refused after a click.
+  const suppliedSays = await card(pictureIds[0]).locator(".supplied").innerText().catch(() => "");
+  assert.match(suppliedSays, /Imported file\. Drop another file/, `a supplied card says what it is: ${suppliedSays}`);
+  for (const control of ["[data-generate]", "[data-prompt]", "[data-field=method]"]) {
+    assert.equal(await card(pictureIds[0]).locator(control).isVisible(), false, `a supplied card hides ${control}`);
+  }
   note("a supplied card says what it is", suppliedSays);
   assert.equal(existsSync(called), false, "no agent was run for the person's own pictures");
 

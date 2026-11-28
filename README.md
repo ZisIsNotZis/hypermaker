@@ -245,12 +245,13 @@ On this host the real image request hit route discovery and model-refresh errors
 
 ## Make a two-act film without a speech engine
 
-1. In a `plain` text card, write two short lines, one per act, and press **Make**.
-2. Make two `titlecard` image cards locally (one per scene), or use picture cards already on your canvas. Link the text and both pictures to a `firstcut` video card, with the pictures in act order. Do not link an audio card.
-3. The video card says **Captions only (no audio)**. Press **Make**, then play or download the MP4. The captions are part of the picture; no separate subtitle file is needed. Each line has at least three seconds on screen; keep each line within 112 characters.
-4. Change the second image card and press **Make** on the video again. Use the **kept** version button to bring back the original movie; the newer picture link stays in place for your next cut.
+1. Press **+ File** and choose two of your own PNG/JPEG pictures, one at a time or both at once. Each becomes a picture card, and choosing again finds free space instead of stacking on the first.
+2. In a `plain` text card, write two short lines, one per act, and press **Make**.
+3. Link the text and then both pictures to a `firstcut` video card, with the pictures in act order. Do not link an audio card.
+4. The video card says **Captions only (no audio)**. Press **Make**, then play or download the MP4. The captions are part of the picture; no separate subtitle file is needed. Each line has at least three seconds on screen; keep each line within 112 characters.
+5. Drop a different picture on the second picture card and press **Make** on the video again. The links and the first scene stay put. Use the **kept** version button to bring back the original movie; the newer picture stays in place for your next cut.
 
-This needs local Chromium for rendering, but no model, speech engine, image upload or account. If you already have a usable speech engine and want narration, make a `readaloud` take and link that audio to the video instead. [Replay the offline canvas walkthrough](docs/evidence/captions-only.md).
+This needs local Chromium for rendering, but no model, speech engine, remote upload or account. Imported pictures stay on your machine; their cards show a replace hint instead of generation controls. If you already have a usable speech engine and want narration, make a `readaloud` take and link that audio to the video instead. [Replay the local-picture walkthrough](docs/evidence/local-picture-cut.md), or [make your own title cards on the canvas](docs/evidence/captions-only.md).
 
 ## The mental model
 
