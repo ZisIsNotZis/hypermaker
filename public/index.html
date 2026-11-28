@@ -486,11 +486,25 @@ function setView(){const w=$('#world');w.style.transform=`translate(${ox}px,${oy
 // The spread is bounded to the header band (the top ~30px a card always has) so an anchor is never
 // below the visible card top on a source with a short body, and it is measured in world units so
 // it does not change with zoom.
-function linkEnds(a, t, index, count) {
+// Two links must never leave the same point, and fanning per TARGET was not enough: a supervisor
+// drew the common shape - one text card feeding both a narration and a film, all three cards at the
+// same height - and the two links left the text card at the same point and ran on top of each other
+// for their first stretch. A right-click there removed the narration without asking, which was the
+// third report of the same complaint.
+//
+// So a link's offset is decided twice and the larger requirement wins: it has to be separated from
+// its source's other outgoing links AND from its target's other incoming links. Using the max of the
+// two fans, rather than one index, is what makes "no two links share an anchor" true by
+// construction: at a card with k links touching it, the k offsets are distinct whether they all
+// leave it, all arrive at it, or split between the two.
+function linkEnds(a, t, outIndex, outCount, inIndex, inCount) {
   // Fan symmetrically around the header line: one link starts at the header, two straddle it.
-  const step = 9, spread = (count - 1) * step;
-  const offset = index * step - spread / 2;
-  return { sx: a.x + 250, sy: a.y + 15 + offset, tx: t.x, ty: t.y + 15 + offset };
+  const step = 9;
+  const offset = (index, count) => index * step - (count - 1) * step / 2;
+  // The source's end follows its own ordering and the target's its own. They differ only when the
+  // link sits at a different rank at each end, which is exactly when a single index would put two
+  // links at one point.
+  return { sx: a.x + 250, sy: a.y + 15 + offset(outIndex, outCount), tx: t.x, ty: t.y + 15 + offset(inIndex, inCount) };
 }
 function draw() {
   const s = $('.edges');
@@ -499,11 +513,23 @@ function draw() {
   // and each source's outgoing links likewise. Numbering per (target) is what makes the four links
   // into one film card separate at the film's edge, which is where the right-click lands.
   const incoming = new Map();
+  // Every source's outgoing links, in the order they are drawn, so one card's fan is spread over the
+  // links that actually leave it.
+  const outgoing = new Map();
+  Object.values(state.nodes).forEach(t => {
+    for (const id of (t.inputs || [])) {
+      if (!state.nodes[id]) continue;
+      if (!outgoing.has(id)) outgoing.set(id, []);
+      outgoing.get(id).push(t.id);
+    }
+  });
   Object.values(state.nodes).forEach(t => {
     const ids = (t.inputs || []).filter(id => state.nodes[id]);
     ids.forEach((id, i) => {
       const a = state.nodes[id];
-      const { sx, sy, tx, ty } = linkEnds(a, t, i, ids.length);
+      const mine = outgoing.get(id) || [];
+      const outIndex = Math.max(0, mine.indexOf(t.id));
+      const { sx, sy, tx, ty } = linkEnds(a, t, outIndex, mine.length, i, ids.length);
       const m = (sx + tx) / 2, d = `M${sx} ${sy} C${m} ${sy},${m} ${ty},${tx} ${ty}`;
       for (const c of ['edge', 'edge-hit']) {
         const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
@@ -571,18 +597,33 @@ function nearestLink(x, y) {
   cards.classList.remove('probing');
   return best ? { source: Number(best.path.dataset.source), target: Number(best.path.dataset.target), distance: best.distance } : null;
 }
-// What is about to be removed is said before it is removed: the source card's own name and the
-// target's. A right-click that unlinks silently gives a person nothing to check against.
+// What was removed is said afterwards, and it has to name BOTH ends.
+//
+// A supervisor removed each of the two links coming out of one text card - to a narration and to a
+// film - to check the fan, and reported that both notes said only "card #1", so the message could
+// not tell them apart even though the clicks did. A sentence that is identical for two different
+// actions is not a receipt. Each end is named by what it holds (the artifact name a person
+// recognises, with its version) and by its card number, which is the thing a person can click and
+// see - a type alone would read "text → audio", true of either link from that card.
+function cardName(id) {
+  const node = state.nodes[id];
+  if (!node) return `card #${id} (gone)`;
+  const file = node.artifact ? shown(node.artifact) : null;
+  const version = node.artifact ? badge(node.artifact) : null;
+  return `card #${id}${file ? ` ${file}${version ? ` (${version})` : ''}` : ` (${node.type || 'empty'})`}`;
+}
 function linkSentence(link) {
-  const from = state.nodes[link.source], to = state.nodes[link.target];
-  const name = node => node ? (shown(node.artifact) || `${node.type || 'card'} #${node.id}`) : 'a missing card';
-  return `${name(from)} (card #${link.source}) → this card's input`;
+  return `${cardName(link.source)} → ${cardName(link.target)}`;
 }
 function unlinkUnderCursor(x, y) {
-  const cards = $('#cards'); cards.classList.add('probing'); const hit = document.elementsFromPoint(x, y).map(e => e.closest('.edge-hit')).find(Boolean); cards.classList.remove('probing'); const link = nearestLink(x, y);
+  const link = nearestLink(x, y);
   if (!link) return false;
+  // The sentence is built before the unlink, while both cards are still on the canvas and their
+  // names are still the ones the person is looking at. `badge` already carries its `v`, so it is
+  // interpolated as it is: `v${version}` was the first version and it read `vv1`.
+  const sentence = linkSentence(link);
   safe(() => api('/api/unlink', { source: link.source, target: link.target }).then(() => {
-    note(`Removed the link from card #${link.source}${state.nodes[link.source]?.artifact ? ` (${shown(state.nodes[link.source].artifact)})` : ''}.`);
+    note(`Removed the link ${sentence}.`);
   }));
   return true;
 }

@@ -174,6 +174,75 @@ canvasTest("the link under the pointer and the link nearest to it can differ, an
   await page.close();
 });
 
+canvasTest("two links out of one card to cards at the same height do not share a line, and a right-click removes the one aimed at", async () => {
+  // The supervisor's third report, and the commonest canvas there is: one text card feeding both a
+  // narration and a film, three cards at one height. Both links left the text card at the same point
+  // and ran on top of each other for their first stretch, so a right-click at (325,160) removed the
+  // narration without saying which link it meant.
+  //
+  // The earlier fix fanned a card's *incoming* links, which handled four sources into one film and
+  // left this shape untouched: the two links here share a source, not a target. A link's offset is
+  // now decided against both ends, so no two links can share an anchor at either.
+  //
+  // Asserted the way the person measures it - on the drawing and on what a right-click does - with
+  // the aimed-at link taken from geometry, so it holds whichever end carries the wider spread.
+  const page = await blankPage({ width: 1200, height: 700 });
+  await post("/api/node", { x: 40, y: 120, type: "text" });
+  const [text] = Object.keys((await workspace()).nodes).map(Number);
+  await post("/api/node", { x: 420, y: 120, type: "audio" });
+  const audio = Math.max(...Object.keys((await workspace()).nodes).map(Number));
+  await post("/api/node", { x: 820, y: 120, type: "video" });
+  const film = Math.max(...Object.keys((await workspace()).nodes).map(Number));
+  await post("/api/link", { source: text, target: audio });
+  await post("/api/link", { source: text, target: film });
+  await page.reload();
+  await page.waitForFunction(() => document.querySelectorAll(".edge").length === 2);
+
+  // The two links leave different points on the text card's edge.
+  const ends = await page.evaluate(() => [...document.querySelectorAll(".edge")].map(path => {
+    const ctm = path.getScreenCTM();
+    const at = length => { const p = path.getPointAtLength(length); return { x: p.x * ctm.a + ctm.e, y: p.y * ctm.d + ctm.f }; };
+    return { start: at(0), end: at(path.getTotalLength()) };
+  }));
+  const startYs = ends.map(e => e.start.y).sort((a, b) => a - b);
+  assert.ok(startYs[1] - startYs[0] >= 6, `the two links must leave the text card at different points, got ${JSON.stringify(startYs)}`);
+
+  // Aim at each link's own quarter-length point and require that link - and only it - to go. The
+  // quarter is used rather than the middle because the near stretch is where they used to overlap.
+  const sources = { [audio]: "audio", [film]: "video" };
+  const said = [];
+  for (const [target, kind] of Object.entries(sources)) {
+    const point = await page.evaluate(t => {
+      const paths = [...document.querySelectorAll(".edge-hit")].map(p => {
+        const ctm = p.getScreenCTM(), total = p.getTotalLength();
+        const samples = Array.from({ length: 401 }, (_, i) => { const q = p.getPointAtLength(total * i / 400); return { x: q.x * ctm.a + ctm.e, y: q.y * ctm.d + ctm.f }; });
+        return { target: Number(p.dataset.target), samples };
+      });
+      const mine = paths.find(p => p.target === t);
+      const at = mine.samples[100];
+      const nearest = paths.map(p => ({ target: p.target, d: Math.min(...p.samples.map(q => Math.hypot(q.x - at.x, q.y - at.y))) })).sort((a, b) => a.d - b.d)[0];
+      return { x: at.x, y: at.y, nearest: nearest.target, distance: nearest.d };
+    }, Number(target));
+    assert.equal(point.nearest, Number(target), `the point aimed at on the ${kind} link must be nearest that link, not #${point.nearest}`);
+    const before = (await workspace()).nodes[target].inputs;
+    assert.ok(before.includes(text));
+    await page.mouse.click(point.x, point.y, { button: "right" });
+    await page.waitForTimeout(350);
+    const after = (await workspace()).nodes[target].inputs;
+    assert.deepEqual(after, [], `right-clicking the ${kind} link at (${Math.round(point.x)},${Math.round(point.y)}) removes that link, got ${JSON.stringify(after)}`);
+    const line = await page.locator("#canvas-note").innerText();
+    // BOTH ends are named. A supervisor removed these two links and got two identical notes - "card
+    // #1" both times - so the receipt could not tell the narration's link from the film's even
+    // though the clicks had. A sentence that is the same for two different actions is not a receipt.
+    assert.match(line, new RegExp(`#${text}\\b`), `the canvas says which link went: ${line}`);
+    assert.match(line, new RegExp(`#${target}\\b`), `and names the card it came off, not only the one it came from: ${line}`);
+    said.push(line.trim());
+  }
+  assert.equal(said.length, 2);
+  assert.notEqual(said[0], said[1], `two links out of one card must not produce the same sentence: ${JSON.stringify(said)}`);
+  await page.close();
+});
+
 canvasTest("drag links two cards and right-click removes the link", async () => {
   const page = await blankPage();
   await page.mouse.dblclick(120, 120); await page.waitForTimeout(150);

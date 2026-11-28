@@ -55,6 +55,10 @@ Four links leaving one card towards four cards at the same height were drawn fro
 
 That was not enough, and the supervisor said so with the coordinates: right-clicking nearer picture #4's line at (1327,164) still unlinked text card #1. The pick was paint order - `elementsFromPoint()[0]`, whichever 20 px hit stroke was painted last - and every hit path also carried its own `oncontextmenu`, so the path under the pointer answered before any smarter rule could run. The pick is now the curve nearest the pointer by sampled distance, the per-path handler is gone, and the canvas says which link went.
 
+A fifth report was about the sentence rather than the drawing: removing each of those two links produced `Removed the link from card #1.` both times, so the receipt could not tell the narration's link from the film's. It now names both ends, by card and by the artifact each holds.
+
+A fourth report found the other end of the same mistake. Fanning a card's *incoming* links fixed four sources into one film and left the commonest canvas there is untouched: one text card feeding both a narration and a film, three cards at one height. Those two links share a source, so they left the same point and ran on top of each other for their first stretch, and a right-click at (325,160) removed the narration without saying which link it meant. A link's offset is now decided against both ends - its source's other outgoing links and its target's other incoming ones - so no two links share an anchor either way.
+
 Most of the work was the test, and two earlier versions of it were wrong in ways worth writing down. Clicking exactly on a line proves nothing: measured at each curve's midpoint, the topmost stroke is the right one, so a paint-order build passes. Scanning along a line can never disagree either, since a line is zero px from itself - the second version failed on its own precondition. The shipped test finds a point where one stroke is under the pointer while a different curve is nearer (which needs a card-free band, hence sources in a column), asserts that disagreement, clicks it for real and requires the nearest link to go. It fails on the paint-order build at `at (804,454) the nearest link is #2 (9.00px) and the strokes under the pointer start with #3 ... Inputs were [1,2,3], are [1,2]`, and passes on the shipped one.
 
 That supervisor also caught the test's description being wrong: `test/scenes-canvas.test.mjs`
@@ -63,7 +67,7 @@ graph over HTTP would pass with the drag gesture broken, and would be evidence f
 walks. It now creates each card by double-clicking where it should stay, links by dragging title
 bars, and asserts the dragged card returns to its place - all with the mouse.
 
-`test/scenes.test.mjs` and `test/scenes-canvas.test.mjs`; `npm test` is **191/191** with a browser.
+`test/scenes.test.mjs` and `test/scenes-canvas.test.mjs`; `npm test` is **192/192** with a browser.
 
 ## Unreleased — the film check hears the whole narration, and an old take keeps its old measurement, 2026-11-28
 

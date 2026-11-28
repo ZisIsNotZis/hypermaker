@@ -1,6 +1,6 @@
 **English** | [简体中文](README.zh-CN.md)
 
-> **Status: an ordinary creative session works, and is now what the tests follow (0.1.0, 2026-11-27).** You can make a film from canvas material, change the material, keep the take you approved, compare two takes, go back to one, and survive a failure, a Stop or a restart without losing the one you liked. `npm test` passes **191/191** with a usable Chromium, and a blank canvas can make its first playable film with no model and no account at all (see **The first film needs no account**); [Verification limits](#verification-limits) separates what is real from what a fixture stands in for, says what the offline voice was **measured** to do and that a *natural* voice is still unproven, and that nothing here has been judged on *taste*. A listening sheet is kept as the listener leaves it: an answer on a line, a note that they heard nothing but machine noise, or both. Notes are kept as written and never scored - only the transcript decides what was heard, and the score says which fraction of which words it is.
+> **Status: an ordinary creative session works, and is now what the tests follow (0.1.0, 2026-11-27).** You can make a film from canvas material, change the material, keep the take you approved, compare two takes, go back to one, and survive a failure, a Stop or a restart without losing the one you liked. `npm test` passes **192/192** with a usable Chromium, and a blank canvas can make its first playable film with no model and no account at all (see **The first film needs no account**); [Verification limits](#verification-limits) separates what is real from what a fixture stands in for, says what the offline voice was **measured** to do and that a *natural* voice is still unproven, and that nothing here has been judged on *taste*. A listening sheet is kept as the listener leaves it: an answer on a line, a note that they heard nothing but machine noise, or both. Notes are kept as written and never scored - only the transcript decides what was heard, and the score says which fraction of which words it is.
 
 <div align="center">
   <img src="docs/logo.svg" alt="Hypermaker logo" width="112" />
@@ -300,7 +300,7 @@ HYPERMAKER_CHROME=/path/to/chrome npm test
 On WSL the checkout may live on a Windows drive (`/mnt/d/…`), but the suite's scratch space must not: Chromium cannot create its profile there, so if `TMPDIR` points into the checkout every browser case fails to launch with `Target page, context or browser has been closed` — measured as 137 pass / 39 fail / 1 skip — which reads like broken code. Point it at a Linux filesystem instead:
 
 ```bash
-TMPDIR=$(mktemp -d /var/tmp/hypermaker-XXXX) npm test     # measured: 191/191, nothing skipped
+TMPDIR=$(mktemp -d /var/tmp/hypermaker-XXXX) npm test     # measured: 192/192, nothing skipped
 ```
 
 Two details make that one line copyable. The directory is created by the command, because `TMPDIR` naming a path that does not exist fails before any test starts. And the template is given explicitly, because bare `mktemp -d` honours an existing `TMPDIR` — if yours already points at the Windows mount, the new directory would be created there and every browser case would still fail. To keep one directory across runs instead: `mkdir -p /var/tmp/hypermaker-tmp` once, then `TMPDIR=/var/tmp/hypermaker-tmp npm test`.
